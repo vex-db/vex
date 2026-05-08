@@ -147,7 +147,7 @@ Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operati
 | Neighbors | **35 ns** | CSR O(1) lookup |
 | BFS Traverse (depth 4) | **4.5 us** | avg 95 nodes visited |
 | Shortest Path | **30 us** | Bidirectional BFS |
-| Weighted Path | 187 us | Dijkstra |
+| Weighted Path | **149 us** | Bidirectional Dijkstra |
 
 ---
 

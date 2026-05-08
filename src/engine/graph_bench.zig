@@ -92,7 +92,8 @@ pub fn main(_: std.process.Init) !void {
         for (0..NODES) |i| {
             for (0..EDGES_PER_NODE) |j| {
                 const target = (i + j * 7 + 1) % NODES;
-                _ = g.addEdge(keys[i], keys[target], "calls", 1.0) catch continue;
+                const weight: f64 = @as(f64, @floatFromInt((i * 7 + j * 13) % 10 + 1));
+                _ = g.addEdge(keys[i], keys[target], "calls", weight) catch continue;
                 added += 1;
             }
         }

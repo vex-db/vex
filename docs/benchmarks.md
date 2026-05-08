@@ -82,37 +82,37 @@ All values in requests per second. TCP from host, UDS inside Docker via `docker 
 
 ## Internal Engine Benchmarks (no network)
 
-Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operations per benchmark, `ReleaseFast` optimization.
+Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operations per benchmark, `ReleaseFast` optimization. Numbers are median of 5 runs.
 
 ### KV Strings (`zig build bench-kv -Doptimize=ReleaseFast`)
 
 | Operation | Latency |
 |---|---|
-| GET (hit) | **30 ns** |
-| EXISTS | 30 ns |
-| SET (insert) | 93 ns |
-| SET (update) | 93 ns |
-| DEL (tombstone) | 67 ns |
-| SET (reuse tombstone) | 52 ns |
+| GET (hit) | **22 ns** |
+| EXISTS | 19 ns |
+| SET (insert) | 73 ns |
+| SET (update) | 79 ns |
+| DEL (tombstone) | 35 ns |
+| SET (reuse tombstone) | 45 ns |
 
 ### Lists — Quicklist (`zig build bench-ds -Doptimize=ReleaseFast`)
 
 | Operation | Latency | Notes |
 |---|---|---|
-| RPUSH | **44 ns** | O(1) append to tail block |
-| LPUSH | **24 ns** | O(1) prepend to head block |
+| RPUSH | **29 ns** | O(1) append to tail block |
+| LPUSH | **22 ns** | O(1) prepend to head block |
 | LPOP | **4 ns** | O(1) pop from head block |
-| RPOP | **5 ns** | O(1) trailer-based reverse pop |
-| LLEN | 6 ns | |
-| LINDEX | 601 ns | O(blocks) — scan through block chain |
+| RPOP | **4 ns** | O(1) trailer-based reverse pop |
+| LLEN | 3 ns | |
+| LINDEX | 509 ns | O(blocks) — scan through block chain |
 
 ### Hashes
 
 | Operation | Latency |
 |---|---|
-| HGET | **31 ns** |
-| HSET | 80 ns |
-| HDEL | 55 ns |
+| HGET | **30 ns** |
+| HSET | 73 ns |
+| HDEL | 48 ns |
 | HLEN | 3 ns |
 
 ### Sets
@@ -120,29 +120,34 @@ Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operati
 | Operation | Latency |
 |---|---|
 | SISMEMBER | **29 ns** |
-| SADD | 53 ns |
-| SREM | 39 ns |
+| SADD | 51 ns |
+| SREM | 36 ns |
 | SCARD | 3 ns |
 
 ### Sorted Sets
 
 | Operation | Latency | Notes |
 |---|---|---|
-| ZSCORE | **28 ns** | O(1) HashMap lookup |
-| ZADD | 71 ns | |
-| ZREM | 39 ns | |
+| ZSCORE | **29 ns** | O(1) HashMap lookup |
+| ZADD | 61 ns | |
+| ZREM | 29 ns | |
 | ZCARD | 3 ns | |
-| ZRANGE(top 10) | **8.7 us** | Lazy sorted cache |
-| ZRANK | **0.6 us** | Lazy sorted cache |
+| ZRANGE(top 10) | **7.8 us** | Lazy sorted cache |
+| ZRANK | **0.5 us** | Lazy sorted cache |
 
-### Graph Engine (50K nodes / 500K edges)
+### Graph Engine (`zig build bench-graph -Doptimize=ReleaseFast`, 50K nodes / 500K edges / 5 props each)
 
-| Operation | Latency |
-|---|---|
-| BFS Traverse (depth 4) | 64 us |
-| Shortest Path | 146 us |
-| Neighbors | <0.1 us |
-| Memory | 19 MB (4.3x less than naive) |
+| Operation | Latency | Notes |
+|---|---|---|
+| ADDNODE | 56 ns | |
+| SETPROP | **78 ns** | O(1) HashMap + per-entity index |
+| GETNODE | **198 ns** | O(1) countProps + O(k) collectAll |
+| ADDEDGE | 53 ns | |
+| COMPACT | 2.2 ms | CSR rebuild |
+| Neighbors | **35 ns** | CSR O(1) lookup |
+| BFS Traverse (depth 4) | **4.5 us** | avg 95 nodes visited |
+| Shortest Path | **30 us** | Bidirectional BFS |
+| Weighted Path | 187 us | Dijkstra |
 
 ---
 
@@ -250,6 +255,7 @@ docker compose -f docker-compose.graph-bench.yml down -v
 # Internal engine benchmarks (no network)
 zig build bench-kv -Doptimize=ReleaseFast
 zig build bench-ds -Doptimize=ReleaseFast
+zig build bench-graph -Doptimize=ReleaseFast
 ```
 
 **Important**: Stop all unrelated Docker containers before benchmarking. Background containers competing for CPU will skew results.

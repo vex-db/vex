@@ -88,6 +88,21 @@ pub fn build(b: *std.Build) void {
     const bench_ds_step = b.step("bench-ds", "Benchmark data structures (list/hash/set/zset)");
     bench_ds_step.dependOn(&run_ds_bench.step);
 
+    // Graph engine benchmark
+    const graph_bench = b.addExecutable(.{
+        .name = "graph_bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/engine/graph_bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    const run_graph_bench = b.addRunArtifact(graph_bench);
+    if (b.args) |args| run_graph_bench.addArgs(args);
+    const bench_graph_step = b.step("bench-graph", "Benchmark graph engine (nodes/edges/traversal/path)");
+    bench_graph_step.dependOn(&run_graph_bench.step);
+
     const persistence_bench = b.addExecutable(.{
         .name = "persistence_bench",
         .root_module = b.createModule(.{

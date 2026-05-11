@@ -1,0 +1,20 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update -qq && apt-get install -y -qq curl xz-utils ca-certificates > /dev/null 2>&1 \
+    && arch="$(dpkg --print-architecture)" \
+    && if [ "$arch" = "arm64" ]; then zig_pkg="zig-aarch64-linux-0.16.0-dev.3153+d6f43caad"; else zig_pkg="zig-x86_64-linux-0.16.0-dev.3153+d6f43caad"; fi \
+    && curl -sL "https://ziglang.org/builds/${zig_pkg}.tar.xz" | tar xJ -C /opt \
+    && ln -s "/opt/${zig_pkg}/zig" /usr/local/bin/zig \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . .
+
+# Compile only — build the install target + bench binary
+RUN zig build -Doptimize=ReleaseFast 2>&1 || true
+
+# Build bench binary separately, just compile the executable (the step also tries to run it)
+# We use install to get it, or find it in cache
+RUN find .zig-cache -name 'graph_bench' -type f -perm +111 2>/dev/null | head -1 > /tmp/bench_path || true
+
+ENTRYPOINT ["sh"]

@@ -6,6 +6,7 @@ const TypeMask = string_intern.TypeMask;
 const PropertyStore = @import("property_store.zig").PropertyStore;
 pub const VectorStore = @import("vector_store.zig").VectorStore;
 pub const HnswIndex = @import("hnsw.zig").HnswIndex;
+pub const ch_mod = @import("ch.zig");
 
 pub const NodeId = u32;
 pub const EdgeId = u32;
@@ -102,9 +103,6 @@ pub const GraphEngine = struct {
     vec_store: ?VectorStore,
     vec_indices: ?std.StringHashMap(*HnswIndex),
 
-    // ─── Contraction Hierarchies (built during compact for weighted graphs) ──
-    ch_index: ?*@import("contraction.zig").CHIndex,
-
     // ─── Compaction state ───────────────────
     needs_compact: bool,
     /// Monotonically increasing mutation counter. Incremented on every
@@ -117,6 +115,10 @@ pub const GraphEngine = struct {
     /// Set true during bulk loading to skip per-edge bookkeeping.
     /// Call compact() after bulk loading completes.
     bulk_loading: bool,
+
+    // ─── Contraction Hierarchies (built on compact) ──
+    ch: ?ch_mod.CHData,
+    ch_query_engine: ?ch_mod.CHQueryEngine,
 
     pub fn init(allocator: Allocator) GraphEngine {
         return .{
@@ -143,11 +145,12 @@ pub const GraphEngine = struct {
             .edge_props = PropertyStore.init(allocator),
             .vec_store = null,
             .vec_indices = null,
-            .ch_index = null,
             .needs_compact = false,
             .mutation_seq = 0,
             .all_base_edges_alive = true,
             .bulk_loading = false,
+            .ch = null,
+            .ch_query_engine = null,
         };
     }
 
@@ -182,10 +185,8 @@ pub const GraphEngine = struct {
             vi.deinit();
         }
         if (self.vec_store) |*vs| vs.deinit();
-        if (self.ch_index) |ch| {
-            ch.deinit();
-            self.allocator.destroy(ch);
-        }
+        if (self.ch_query_engine) |*qe| qe.deinit();
+        if (self.ch) |*c| c.deinit();
     }
 
     // ─── Node Operations ──────────────────────────────────────────────
@@ -657,28 +658,33 @@ pub const GraphEngine = struct {
         self.all_base_edges_alive = true;
         self.needs_compact = false;
 
-        // Build Contraction Hierarchies for weighted graphs (>1000 nodes)
-        const contraction = @import("contraction.zig");
-        if (self.ch_index) |old| {
-            old.deinit();
-            self.allocator.destroy(old);
-            self.ch_index = null;
+        // Invalidate stale CH (user must call rebuildCH explicitly)
+        self.invalidateCH();
+    }
+
+    /// Invalidate CH (called on any mutation or compact).
+    fn invalidateCH(self: *GraphEngine) void {
+        if (self.ch_query_engine) |*qe| {
+            qe.deinit();
+            self.ch_query_engine = null;
         }
-        const node_count = self.node_keys.items.len;
-        if (!self.flags.uniform_weights and node_count >= 1000) {
-            const ch = try self.allocator.create(contraction.CHIndex);
-            ch.* = try contraction.build(
-                self.allocator,
-                &self.base_out,
-                &self.base_in,
-                self.edge_weight.items,
-                self.node_alive,
-                self.edge_alive,
-                @intCast(self.node_keys.items.len),
-                self.mutation_seq,
-            );
-            self.ch_index = ch;
+        if (self.ch) |*c| {
+            c.deinit();
+            self.ch = null;
         }
+    }
+
+    /// Build Contraction Hierarchies for accelerated WPATH queries.
+    /// Call explicitly via GRAPH.CHBUILD — not automatic (can be memory-intensive).
+    pub fn rebuildCH(self: *GraphEngine) !void {
+        self.invalidateCH();
+
+        self.ch = try ch_mod.build(self, self.allocator);
+        self.ch_query_engine = ch_mod.CHQueryEngine.init(self.allocator, &self.ch.?) catch |err| {
+            self.ch.?.deinit();
+            self.ch = null;
+            return err;
+        };
     }
 
     // ─── View Types ───────────────────────────────────────────────────
@@ -789,6 +795,8 @@ test "graph_v2 compact moves delta to base" {
     try std.testing.expectEqual(@as(usize, 1), g.base_out.neighbors(0).len);
     try std.testing.expectEqual(@as(NodeId, 1), g.base_out.neighbors(0)[0]);
     try std.testing.expect(g.all_base_edges_alive);
+    // CH is not auto-built on compact (must call rebuildCH explicitly)
+    try std.testing.expect(g.ch == null);
 }
 
 test "graph_v2 type interning" {

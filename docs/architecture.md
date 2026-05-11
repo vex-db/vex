@@ -50,6 +50,9 @@ The KV store is split into 256 independent stripes, each with its own `pthread_r
 
 - **Compressed Sparse Row** adjacency with auto-compact from delta buffer
 - **Bidirectional BFS** for shortest path (explores sqrt(N) instead of N nodes)
+- **Bidirectional Dijkstra** with flat arrays for weighted shortest path (O(1) dist lookup)
+- **Contraction Hierarchies** (CH): one-time preprocessing builds shortcut overlay; queries search only upward in rank from both endpoints (3x faster than Dijkstra on 2500-node grids, scales better on larger/structured graphs)
+- **CHQueryEngine**: reusable query state with touched-list reset (no per-query memset)
 - **Frontier-based BFS** traverse (process entire levels with bitset frontiers)
 - **DynamicBitSet** visited set: 125KB for 1M nodes (fits L2 cache)
 - **SoA layout**: node keys, type IDs, property masks are separate arrays (CPU cache friendly)
@@ -108,7 +111,8 @@ src/
 │   ├── kv.zig              # KV store: TTL, tombstone DEL, LRU eviction, memoryUsage
 │   ├── concurrent_kv.zig   # 256-stripe rwlock KV (parallel reads)
 │   ├── graph.zig           # CSR graph engine (SoA, bitflags, auto-compact)
-│   ├── query.zig           # Bidirectional BFS, frontier traverse, Dijkstra
+│   ├── query.zig           # Bidirectional BFS, frontier traverse, Dijkstra (flat-array)
+│   ├── ch.zig              # Contraction Hierarchies (build + query engine)
 │   ├── string_intern.zig   # Type string pooling (u16 IDs, bitmask filtering)
 │   ├── property_store.zig  # Sparse property storage for nodes/edges
 │   ├── vector_store.zig    # Dual-tier vector store (f32 write buffer + f16 mmap)

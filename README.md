@@ -42,6 +42,11 @@ Redis is single-threaded. To scale, you add more instances. Vex does the same --
 | **[Deployment](docs/deployment.md)** | Production checklist, systemd, Docker, tuning |
 | **[Vector Search & GRAPH.RAG](docs/vector-search.md)** | HNSW vector search, f16 mmap storage, RAG pipeline examples |
 | **[Vector Benchmarks](docs/vector-benchmarks.md)** | Benchmark design: Vex vs Redis+RediSearch vs Qdrant vs Weaviate |
+| **[LLM Ecosystem](docs/llm-ecosystem.md)** | How Vex fits into LLM infrastructure: GraphRAG, semantic cache, agent memory, MCP |
+| **[GraphRAG](docs/graphrag.md)** | Enhanced vector search + knowledge graph traversal for RAG pipelines |
+| **[Semantic Cache](docs/semantic-cache.md)** | Cache LLM responses by query meaning, not exact match |
+| **[Agent Memory](docs/agent-memory.md)** | Persistent memory primitives for LLM agents with decay and relationships |
+| **[MCP Server](docs/mcp-server.md)** | Model Context Protocol support -- LLMs use Vex as a tool directly |
 | **[Testing](docs/testing.md)** | 168 tests, coverage table, test patterns |
 
 ---
@@ -183,6 +188,10 @@ See [Vector Search & GRAPH.RAG](docs/vector-search.md) for full RAG pipeline exa
 | **Sorted Sets** | ZADD/ZREM/ZRANGE/ZSCORE/ZRANK/ZCARD/ZINCRBY/ZCOUNT |
 | **Graph** | ADDNODE/ADDEDGE/TRAVERSE/PATH/WPATH/NEIGHBORS + 6 more |
 | **Vector Search** | GRAPH.SETVEC/GETVEC/VECSEARCH + GRAPH.RAG (search + traverse in one call) |
+| **GraphRAG** | GRAPH.RAG (subgraph returns) + GRAPH.COOCCUR (auto entity linking) |
+| **Semantic Cache** | CACHE.SEMSET/SEMGET -- cache LLM responses by query meaning |
+| **Agent Memory** | MEMORY.STORE/RECALL/RELATE/CONTEXT/DECAY -- persistent agent memory |
+| **MCP Server** | Native Model Context Protocol -- LLMs use Vex as a tool directly |
 | **Transactions** | MULTI/EXEC/DISCARD + WATCH/UNWATCH optimistic locking |
 | **Pub/Sub** | SUBSCRIBE/PUBLISH/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE |
 | **Persistence** | Snapshot (CRC-32) + AOF with group commit + BGSAVE |
@@ -277,7 +286,16 @@ Redis-compatible KV + graph DB with multi-reactor architecture.
 
 ## Roadmap
 
-### v0.7 -- Partitioned Graph & Graph Query
+### v0.7 -- LLM Ecosystem ([details](docs/llm-ecosystem.md))
+- HNSW index persistence (`.vhi` files, mmap on load, skip rebuild on startup)
+- `GRAPH.RAG` v2 -- subgraph returns (nodes + edges + scores, not flat list)
+- `GRAPH.COOCCUR` -- auto-create edges between entities sharing context
+- `CACHE.SEMSET/SEMGET/SEMINVAL/SEMCLEAR/SEMSTATS` -- semantic LLM response cache
+- `MEMORY.STORE/RECALL/RELATE/CONTEXT/DECAY` -- agent memory with temporal decay
+- Native MCP server (`--mcp` flag) -- LLMs use Vex as a tool via Model Context Protocol
+- Ecosystem: [langchain-vex](https://github.com/pratyush-sngh/langchain-vex), [llama-index-vex](https://github.com/pratyush-sngh/llama-index-vex)
+
+### v0.8 -- Partitioned Graph & Graph Query
 - Hash-partition graph nodes across machines
 - Ghost nodes for 1-hop boundary cache
 - BSP BFS for cross-partition traversals
@@ -289,14 +307,14 @@ Redis-compatible KV + graph DB with multi-reactor architecture.
 - `GRAPH.DEGREE key [IN|OUT]` — node degree count
 - `GRAPH.COMMON from to` — common neighbors
 
-### v0.8 -- Engine Internals
+### v0.9 -- Engine Internals
 - Custom concurrent hashmap (replace Zig std HashMap for thread-safe resize)
 - Dual encoding for small collections (ziplist for lists/sets < 128 items)
 - Sorted set skip list (O(log n) ZRANGE/ZRANK)
 - Streams (`XADD`/`XREAD`/`XRANGE`/`XLEN`)
 - Persistence for lists, hashes, sets, sorted sets (snapshot + AOF)
 
-### v0.9 -- DPDK, Scripting & Query
+### v0.10 -- DPDK, Scripting & Query
 - DPDK kernel bypass networking (optional, Linux)
 - Full io_uring event loop with connection lifecycle management (accept, close)
 - Lua scripting (`EVAL`/`EVALSHA`)

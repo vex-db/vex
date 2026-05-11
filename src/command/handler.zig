@@ -311,7 +311,11 @@ pub const CommandHandler = struct {
                     if (std.mem.eql(u8, sub, "PATHS")) return self.cmdGraphPaths(args, w);
                 },
                 'W' => if (std.mem.eql(u8, sub, "WPATH")) return self.cmdGraphWPath(args, w),
-                'C' => if (std.mem.eql(u8, sub, "COMPACT")) return self.cmdGraphCompact(w),
+                'C' => {
+                    if (std.mem.eql(u8, sub, "COMPACT")) return self.cmdGraphCompact(w);
+                    if (std.mem.eql(u8, sub, "CHBUILD")) return self.cmdGraphCHBuild(w);
+                    if (std.mem.eql(u8, sub, "CHSTATS")) return self.cmdGraphCHStats(w);
+                },
                 'V' => if (std.mem.eql(u8, sub, "VECSEARCH")) return self.cmdGraphVecSearch(args, w),
                 'R' => if (std.mem.eql(u8, sub, "RAG")) return self.cmdGraphRag(args, w),
                 else => {},
@@ -2240,6 +2244,15 @@ pub const CommandHandler = struct {
         return CHResult{ .weight = r.weight, .nodes = r.nodes };
     }
 
+    /// GRAPH.CHBUILD -- build Contraction Hierarchies for accelerated WPATH
+    fn cmdGraphCHBuild(self: *CommandHandler, w: *std.Io.Writer) !void {
+        self.graph.rebuildCH() catch |err| {
+            try resp.serializeError(w, @errorName(err));
+            return;
+        };
+        try resp.serializeSimpleString(w, "OK");
+    }
+
     /// GRAPH.COMPACT -- rebuild CSR from delta edges for fast traversals
     fn cmdGraphCompact(self: *CommandHandler, w: *std.Io.Writer) !void {
         self.graph.compact() catch |err| {
@@ -2247,6 +2260,34 @@ pub const CommandHandler = struct {
             return;
         };
         try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// GRAPH.CHSTATS — report Contraction Hierarchies status
+    fn cmdGraphCHStats(self: *CommandHandler, w: *std.Io.Writer) !void {
+        const ch_data = self.graph.ch;
+        const fresh = if (ch_data) |c| c.mutation_seq == self.graph.mutation_seq else false;
+        const node_count: i64 = if (ch_data) |c| @intCast(c.node_count) else 0;
+
+        // Count shortcut edges (edges with middle != INVALID)
+        var shortcuts: i64 = 0;
+        if (ch_data) |c| {
+            for (c.up_out_middles) |m| {
+                if (m != graph_mod.INVALID_ID) shortcuts += 1;
+            }
+        }
+        const total_up_edges: i64 = if (ch_data) |c| @intCast(c.up_out_targets.len) else 0;
+
+        try resp.serializeMapOrArrayHeader(w, 5, self.protocol_version);
+        try resp.serializeBulkString(w, "status");
+        try resp.serializeBulkString(w, if (ch_data == null) "none" else if (fresh) "fresh" else "stale");
+        try resp.serializeBulkString(w, "nodes");
+        try resp.serializeInteger(w, node_count);
+        try resp.serializeBulkString(w, "up_edges");
+        try resp.serializeInteger(w, total_up_edges);
+        try resp.serializeBulkString(w, "shortcuts");
+        try resp.serializeInteger(w, shortcuts);
+        try resp.serializeBulkString(w, "original");
+        try resp.serializeInteger(w, total_up_edges - shortcuts);
     }
 
     fn cmdGraphStats(self: *CommandHandler, w: *std.Io.Writer) !void {

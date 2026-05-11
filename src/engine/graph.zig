@@ -658,28 +658,12 @@ pub const GraphEngine = struct {
         self.all_base_edges_alive = true;
         self.needs_compact = false;
 
-        // Rebuild CH if graph is small enough for practical build time
-        self.rebuildCH();
+        // Invalidate stale CH (user must call rebuildCH explicitly)
+        self.invalidateCH();
     }
 
-    /// Build (or rebuild) Contraction Hierarchies for accelerated WPATH queries.
-    /// Only builds for graphs <= 5000 nodes (larger graphs fall back to Dijkstra).
-    pub fn rebuildCH(self: *GraphEngine) void {
-        const max_ch_nodes: usize = 5000;
-        if (self.node_keys.items.len > max_ch_nodes) {
-            // Too large — free existing CH and skip
-            if (self.ch_query_engine) |*qe| {
-                qe.deinit();
-                self.ch_query_engine = null;
-            }
-            if (self.ch) |*c| {
-                c.deinit();
-                self.ch = null;
-            }
-            return;
-        }
-
-        // Free old CH
+    /// Invalidate CH (called on any mutation or compact).
+    fn invalidateCH(self: *GraphEngine) void {
         if (self.ch_query_engine) |*qe| {
             qe.deinit();
             self.ch_query_engine = null;
@@ -688,13 +672,18 @@ pub const GraphEngine = struct {
             c.deinit();
             self.ch = null;
         }
+    }
 
-        // Build new CH
-        self.ch = ch_mod.build(self, self.allocator) catch return;
-        self.ch_query_engine = ch_mod.CHQueryEngine.init(self.allocator, &self.ch.?) catch {
+    /// Build Contraction Hierarchies for accelerated WPATH queries.
+    /// Call explicitly via GRAPH.CHBUILD — not automatic (can be memory-intensive).
+    pub fn rebuildCH(self: *GraphEngine) !void {
+        self.invalidateCH();
+
+        self.ch = try ch_mod.build(self, self.allocator);
+        self.ch_query_engine = ch_mod.CHQueryEngine.init(self.allocator, &self.ch.?) catch |err| {
             self.ch.?.deinit();
             self.ch = null;
-            return;
+            return err;
         };
     }
 
@@ -806,9 +795,8 @@ test "graph_v2 compact moves delta to base" {
     try std.testing.expectEqual(@as(usize, 1), g.base_out.neighbors(0).len);
     try std.testing.expectEqual(@as(NodeId, 1), g.base_out.neighbors(0)[0]);
     try std.testing.expect(g.all_base_edges_alive);
-    // CH should be built after compact (small graph)
-    try std.testing.expect(g.ch != null);
-    try std.testing.expect(g.ch_query_engine != null);
+    // CH is not auto-built on compact (must call rebuildCH explicitly)
+    try std.testing.expect(g.ch == null);
 }
 
 test "graph_v2 type interning" {

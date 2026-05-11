@@ -476,31 +476,27 @@ pub fn weightedShortestPath(
         return PathResult{ .nodes = path, .total_weight = 0 };
     }
 
-    const n = g.node_keys.items.len;
     const INF = std.math.inf(f64);
 
-    // Flat arrays for O(1) dist/parent access
-    const fwd_dist = try allocator.alloc(f64, n);
-    defer allocator.free(fwd_dist);
-    const fwd_parent = try allocator.alloc(NodeId, n);
-    defer allocator.free(fwd_parent);
-    const bwd_dist = try allocator.alloc(f64, n);
-    defer allocator.free(bwd_dist);
-    const bwd_parent = try allocator.alloc(NodeId, n);
-    defer allocator.free(bwd_parent);
-
-    @memset(fwd_dist, INF);
-    @memset(bwd_dist, INF);
-    @memset(fwd_parent, graph_mod.INVALID_ID);
-    @memset(bwd_parent, graph_mod.INVALID_ID);
+    // HashMaps: only allocate proportional to visited nodes, not total graph size
+    var fwd_dist = std.AutoHashMap(NodeId, f64).init(allocator);
+    defer fwd_dist.deinit();
+    var fwd_parent = std.AutoHashMap(NodeId, NodeId).init(allocator);
+    defer fwd_parent.deinit();
+    var bwd_dist = std.AutoHashMap(NodeId, f64).init(allocator);
+    defer bwd_dist.deinit();
+    var bwd_parent = std.AutoHashMap(NodeId, NodeId).init(allocator);
+    defer bwd_parent.deinit();
 
     var fwd_pq = DijkPQ.initContext({});
     defer fwd_pq.deinit(allocator);
     var bwd_pq = DijkPQ.initContext({});
     defer bwd_pq.deinit(allocator);
 
-    fwd_dist[from_id] = 0;
-    bwd_dist[to_id] = 0;
+    try fwd_dist.put(from_id, 0);
+    try fwd_parent.put(from_id, graph_mod.INVALID_ID);
+    try bwd_dist.put(to_id, 0);
+    try bwd_parent.put(to_id, graph_mod.INVALID_ID);
     try fwd_pq.push(allocator, .{ .id = from_id, .dist = 0 });
     try bwd_pq.push(allocator, .{ .id = to_id, .dist = 0 });
 
@@ -515,19 +511,19 @@ pub fn weightedShortestPath(
 
         if (fwd_min <= bwd_min) {
             if (fwd_pq.pop()) |current| {
-                const cd = fwd_dist[current.id];
+                const cd = fwd_dist.get(current.id) orelse continue;
                 if (current.dist > cd) continue;
                 if (cd >= best_total) continue;
 
-                // Relax forward edges (outgoing)
                 const targets = g.base_out.neighbors(current.id);
                 const eidxs = g.base_out.edgeIndices(current.id);
                 for (targets, eidxs) |nid, eidx| {
                     if (!all_alive and !g.edge_alive.isSet(eidx)) continue;
                     const nd = cd + g.edge_weight.items[eidx];
-                    if (nd < fwd_dist[nid]) {
-                        fwd_dist[nid] = nd;
-                        fwd_parent[nid] = current.id;
+                    const existing = fwd_dist.get(nid);
+                    if (existing == null or nd < existing.?) {
+                        fwd_dist.put(nid, nd) catch {};
+                        fwd_parent.put(nid, current.id) catch {};
                         fwd_pq.push(allocator, .{ .id = nid, .dist = nd }) catch {};
                     }
                 }
@@ -535,16 +531,15 @@ pub fn weightedShortestPath(
                     if (de.from != current.id) continue;
                     if (!g.edge_alive.isSet(de.eidx)) continue;
                     const nd = cd + g.edge_weight.items[de.eidx];
-                    if (nd < fwd_dist[de.to]) {
-                        fwd_dist[de.to] = nd;
-                        fwd_parent[de.to] = current.id;
+                    const existing = fwd_dist.get(de.to);
+                    if (existing == null or nd < existing.?) {
+                        fwd_dist.put(de.to, nd) catch {};
+                        fwd_parent.put(de.to, current.id) catch {};
                         fwd_pq.push(allocator, .{ .id = de.to, .dist = nd }) catch {};
                     }
                 }
 
-                // Check meeting
-                const bd = bwd_dist[current.id];
-                if (bd < INF) {
+                if (bwd_dist.get(current.id)) |bd| {
                     const total = cd + bd;
                     if (total < best_total) {
                         best_total = total;
@@ -554,19 +549,19 @@ pub fn weightedShortestPath(
             }
         } else {
             if (bwd_pq.pop()) |current| {
-                const cd = bwd_dist[current.id];
+                const cd = bwd_dist.get(current.id) orelse continue;
                 if (current.dist > cd) continue;
                 if (cd >= best_total) continue;
 
-                // Relax backward edges (incoming)
                 const targets = g.base_in.neighbors(current.id);
                 const eidxs = g.base_in.edgeIndices(current.id);
                 for (targets, eidxs) |nid, eidx| {
                     if (!all_alive and !g.edge_alive.isSet(eidx)) continue;
                     const nd = cd + g.edge_weight.items[eidx];
-                    if (nd < bwd_dist[nid]) {
-                        bwd_dist[nid] = nd;
-                        bwd_parent[nid] = current.id;
+                    const existing = bwd_dist.get(nid);
+                    if (existing == null or nd < existing.?) {
+                        bwd_dist.put(nid, nd) catch {};
+                        bwd_parent.put(nid, current.id) catch {};
                         bwd_pq.push(allocator, .{ .id = nid, .dist = nd }) catch {};
                     }
                 }
@@ -574,16 +569,15 @@ pub fn weightedShortestPath(
                     if (de.to != current.id) continue;
                     if (!g.edge_alive.isSet(de.eidx)) continue;
                     const nd = cd + g.edge_weight.items[de.eidx];
-                    if (nd < bwd_dist[de.from]) {
-                        bwd_dist[de.from] = nd;
-                        bwd_parent[de.from] = current.id;
+                    const existing = bwd_dist.get(de.from);
+                    if (existing == null or nd < existing.?) {
+                        bwd_dist.put(de.from, nd) catch {};
+                        bwd_parent.put(de.from, current.id) catch {};
                         bwd_pq.push(allocator, .{ .id = de.from, .dist = nd }) catch {};
                     }
                 }
 
-                // Check meeting
-                const fd = fwd_dist[current.id];
-                if (fd < INF) {
+                if (fwd_dist.get(current.id)) |fd| {
                     const total = fd + cd;
                     if (total < best_total) {
                         best_total = total;
@@ -597,34 +591,30 @@ pub fn weightedShortestPath(
     if (meeting_node == graph_mod.INVALID_ID) return error.PathNotFound;
     const mid = meeting_node;
 
-    // Reconstruct: forward path (from → mid) + backward path (mid → to)
     var path = std.array_list.Managed(NodeId).init(allocator);
     errdefer path.deinit();
 
-    // Forward half: trace from mid back to from via fwd_parent
     {
         var cur = mid;
         while (cur != from_id) {
             try path.append(cur);
-            cur = fwd_parent[cur];
-            if (cur == graph_mod.INVALID_ID) return error.PathNotFound;
+            cur = fwd_parent.get(cur) orelse return error.PathNotFound;
         }
         try path.append(from_id);
         std.mem.reverse(NodeId, path.items);
     }
 
-    // Backward half: trace from mid forward to to via bwd_parent
     {
-        const next = bwd_parent[mid];
+        const next = bwd_parent.get(mid) orelse {
+            return PathResult{ .nodes = try path.toOwnedSlice(), .total_weight = best_total };
+        };
         if (next == graph_mod.INVALID_ID) {
             return PathResult{ .nodes = try path.toOwnedSlice(), .total_weight = best_total };
         }
         var cur = next;
         while (cur != to_id) {
             try path.append(cur);
-            const p = bwd_parent[cur];
-            if (p == graph_mod.INVALID_ID) return error.PathNotFound;
-            cur = p;
+            cur = bwd_parent.get(cur) orelse return error.PathNotFound;
         }
         try path.append(to_id);
     }

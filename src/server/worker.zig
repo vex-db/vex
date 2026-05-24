@@ -1515,6 +1515,7 @@ pub const Worker = struct {
         @"enable-timings",
         @"slowlog-log-slower-than",
         @"latency-monitor-threshold",
+        appendfsync,
     };
 
     /// Match a CONFIG GET pattern against `name`. Supports literal match
@@ -1584,21 +1585,33 @@ pub const Worker = struct {
                 const s = std.fmt.bufPrint(&buf, "{d}", .{ls}) catch "0";
                 writeBulkTo(&conn.write_buf, s);
             },
+            .appendfsync => writeBulkTo(&conn.write_buf, if (self.aof) |a| a.fsync_mode.label() else "no"),
         }
     }
 
     /// CONFIG SET — apply runtime-mutable knobs; reject or no-op others.
     fn applyConfigSet(self: *Worker, conn: *Connection, key: []const u8, value: []const u8) void {
-        _ = self;
-        // Only latency-monitor-threshold and log-level are safely runtime-tunable
-        // without coordinating across workers. Everything else returns OK but is
-        // a no-op (matches Redis's permissive behavior for unknown keys).
+        // latency-monitor-threshold, log-level, and appendfsync are safely
+        // runtime-tunable. Everything else returns OK but is a no-op (matches
+        // Redis's permissive behavior for unknown keys).
         if (std.ascii.eqlIgnoreCase(key, "latency-monitor-threshold")) {
             const v = std.fmt.parseInt(u64, value, 10) catch {
                 conn.write_buf.appendSlice("-ERR invalid integer value for 'latency-monitor-threshold'\r\n") catch {};
                 return;
             };
             stats_event.threshold_us.store(v, .monotonic);
+            conn.write_buf.appendSlice("+OK\r\n") catch {};
+            return;
+        }
+        if (std.ascii.eqlIgnoreCase(key, "appendfsync")) {
+            const aof_mod = @import("../storage/aof.zig");
+            const a = self.aof orelse {
+                conn.write_buf.appendSlice("-ERR persistence is not enabled\r\n") catch {};
+                return;
+            };
+            const mode = aof_mod.FsyncMode.parse(value);
+            a.setFsyncMode(self.allocator, mode);
+            vex_log.info("aof: appendfsync changed to {s} via CONFIG SET", .{mode.label()});
             conn.write_buf.appendSlice("+OK\r\n") catch {};
             return;
         }

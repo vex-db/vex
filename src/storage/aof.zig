@@ -5,6 +5,39 @@ const Allocator = std.mem.Allocator;
 const span = @import("../perf/span.zig");
 const vex_log = @import("../log.zig");
 const event_stats = @import("../observability/event_stats.zig");
+const atomic_io = @import("atomic_io.zig");
+
+/// Durability mode for the AOF.
+///   .always   — fsync after every flush; ~zero data loss on crash, high disk cost
+///   .everysec — background thread fsyncs every ~1s; ≤1s data loss on crash, no
+///               hot-path cost (this is the default and matches Redis)
+///   .no       — never fsync explicitly; OS may flush whenever; fastest, least durable
+pub const FsyncMode = enum {
+    always,
+    everysec,
+    no,
+
+    pub fn parse(s: []const u8) FsyncMode {
+        if (std.ascii.eqlIgnoreCase(s, "always")) return .always;
+        if (std.ascii.eqlIgnoreCase(s, "no")) return .no;
+        return .everysec;
+    }
+
+    pub fn label(self: FsyncMode) []const u8 {
+        return switch (self) {
+            .always => "always",
+            .everysec => "everysec",
+            .no => "no",
+        };
+    }
+};
+
+/// Shared between AOF and its background fsync thread.
+const FsyncThreadCtx = struct {
+    fd_ptr: *std.atomic.Value(c_int),
+    stop: std.atomic.Value(bool),
+    last_fsync_ms: std.atomic.Value(i64),
+};
 
 const is_linux = builtin.os.tag == .linux;
 
@@ -37,6 +70,18 @@ pub const AOF = struct {
     /// Page-aligned staging buffer for O_DIRECT writes (512-byte sector alignment)
     direct_buf: ?[]align(4096) u8 = null,
     direct_buf_allocator: ?Allocator = null,
+
+    /// Durability mode. Set via setFsyncMode (called from main after init).
+    fsync_mode: FsyncMode = .everysec,
+    /// Raw fd opened separately for fsync calls. Atomic so the background
+    /// thread can read it without coordinating with the main thread.
+    /// -1 if fsync is not configured yet.
+    fsync_fd: std.atomic.Value(c_int) = std.atomic.Value(c_int).init(-1),
+    /// Background fsync thread (only spawned in .everysec mode).
+    fsync_thread: ?std.Thread = null,
+    fsync_ctx: ?*FsyncThreadCtx = null,
+    /// Wall-clock ms of the last successful fsync (exposed via INFO).
+    last_fsync_ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
 
     pub fn init(io: std.Io, path: []const u8, snapshot_path: []const u8) !AOF {
         const file = try std.Io.Dir.cwd().createFile(io, path, .{
@@ -72,6 +117,119 @@ pub const AOF = struct {
         self.direct_buf_allocator = allocator;
     }
 
+    /// Configure durability mode. Opens a dedicated fsync fd and (for
+    /// .everysec) spawns the background thread. Idempotent: calling again
+    /// with a different mode stops/starts the thread as needed and replaces
+    /// the fd. Must be called after initGroupBuf so the AOF is fully set up.
+    pub fn setFsyncMode(self: *AOF, allocator: Allocator, mode: FsyncMode) void {
+        // Stop the background thread if running — we'll restart it below if
+        // the new mode still needs it.
+        self.stopFsyncThread();
+
+        self.fsync_mode = mode;
+
+        // Always open the fsync fd for .always and .everysec. For .no we don't
+        // need it.
+        if (mode == .no) {
+            self.closeFsyncFd();
+            return;
+        }
+
+        const path_z = allocator.dupeSentinel(u8, self.path, 0) catch {
+            vex_log.warn("aof: failed to allocate fsync fd path", .{});
+            return;
+        };
+        defer allocator.free(path_z);
+        const fd = c.open(path_z.ptr, .{ .ACCMODE = .RDONLY }, @as(c.mode_t, 0));
+        if (fd < 0) {
+            vex_log.warn("aof: failed to open fsync fd for '{s}'", .{self.path});
+            return;
+        }
+        self.closeFsyncFd();
+        self.fsync_fd.store(fd, .release);
+
+        if (mode == .everysec) {
+            self.spawnFsyncThread(allocator);
+        }
+    }
+
+    fn closeFsyncFd(self: *AOF) void {
+        const fd = self.fsync_fd.swap(-1, .acq_rel);
+        if (fd >= 0) _ = c.close(fd);
+    }
+
+    fn spawnFsyncThread(self: *AOF, allocator: Allocator) void {
+        const ctx = allocator.create(FsyncThreadCtx) catch {
+            vex_log.warn("aof: failed to allocate fsync thread ctx", .{});
+            return;
+        };
+        ctx.* = .{
+            .fd_ptr = &self.fsync_fd,
+            .stop = std.atomic.Value(bool).init(false),
+            .last_fsync_ms = std.atomic.Value(i64).init(0),
+        };
+        const t = std.Thread.spawn(.{}, fsyncThreadLoop, .{ctx}) catch {
+            allocator.destroy(ctx);
+            vex_log.warn("aof: failed to spawn fsync thread", .{});
+            return;
+        };
+        self.fsync_ctx = ctx;
+        self.fsync_thread = t;
+    }
+
+    fn stopFsyncThread(self: *AOF) void {
+        if (self.fsync_ctx) |ctx| ctx.stop.store(true, .release);
+        if (self.fsync_thread) |t| {
+            t.join();
+            self.fsync_thread = null;
+        }
+        if (self.fsync_ctx) |ctx| {
+            // Mirror its last_fsync_ms back so INFO reads stay accurate after
+            // the thread exits.
+            self.last_fsync_ms.store(ctx.last_fsync_ms.load(.monotonic), .release);
+            // Use the group_buf's allocator (set by initGroupBuf) — same one
+            // that allocated the ctx via setFsyncMode.
+            if (self.group_buf_inited) {
+                self.group_buf.allocator.destroy(ctx);
+            }
+            self.fsync_ctx = null;
+        }
+    }
+
+    /// Background fsync thread body. Wakes every BACKGROUND_FSYNC_PERIOD_MS
+    /// and calls fsync on the current fd. The fd is loaded atomically so
+    /// setFsyncMode can swap it in mid-flight without coordinating.
+    fn fsyncThreadLoop(ctx: *FsyncThreadCtx) void {
+        const PERIOD_MS: i64 = 1000;
+        while (!ctx.stop.load(.acquire)) {
+            // Sleep in small chunks so stop is responsive.
+            var slept_ms: i64 = 0;
+            while (slept_ms < PERIOD_MS and !ctx.stop.load(.acquire)) {
+                std.Thread.yield() catch {};
+                var dummy_pfd = [1]std.c.pollfd{.{ .fd = -1, .events = 0, .revents = 0 }};
+                _ = std.c.poll(&dummy_pfd, 0, 100);
+                slept_ms += 100;
+            }
+            if (ctx.stop.load(.acquire)) break;
+
+            const fd = ctx.fd_ptr.load(.acquire);
+            if (fd < 0) continue;
+
+            const ev_span = event_stats.Span.begin();
+            atomic_io.fsyncFile(fd) catch |err| {
+                vex_log.warn("aof: background fsync failed: {s}", .{@errorName(err)});
+                ev_span.end(.aof_fsync);
+                continue;
+            };
+            ev_span.end(.aof_fsync);
+
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+            const now_ms: i64 = @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
+            ctx.last_fsync_ms.store(now_ms, .monotonic);
+        }
+    }
+
     pub fn initGroupBuf(self: *AOF, allocator: Allocator) void {
         if (!self.group_buf_inited) {
             self.group_buf = std.array_list.Managed(u8).init(allocator);
@@ -86,8 +244,11 @@ pub const AOF = struct {
     }
 
     pub fn deinit(self: *AOF) void {
+        // Stop background fsync thread first so it doesn't race with file close.
+        self.stopFsyncThread();
         // Flush any remaining buffered commands
         self.flush();
+        self.closeFsyncFd();
         if (self.group_buf_inited) self.group_buf.deinit();
         if (self.flush_buf_inited) self.flush_buf.deinit();
         if (self.direct_fd >= 0) _ = c.close(self.direct_fd);
@@ -146,9 +307,33 @@ pub const AOF = struct {
         self.flushBufferToFile() catch |err| {
             vex_log.warn("aof: flush to file failed: {s}", .{@errorName(err)});
         };
+        // appendfsync = always: real fsync inline so the caller doesn't
+        // return to the client until the data is durable. Slow on rotational
+        // disks (~5ms) but the only mode that survives a power loss with
+        // zero data loss. Other modes leave fsync to the background thread
+        // or the OS.
+        if (self.fsync_mode == .always) {
+            const fd = self.fsync_fd.load(.acquire);
+            if (fd >= 0) {
+                atomic_io.fsyncFile(fd) catch |err| {
+                    vex_log.warn("aof: inline fsync failed: {s}", .{@errorName(err)});
+                };
+                var ts: std.c.timespec = undefined;
+                _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+                const now_ms: i64 = @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
+                self.last_fsync_ms.store(now_ms, .release);
+            }
+        }
         ev_span.end(.aof_fsync);
         const t1 = std.Io.Clock.Timestamp.now(self.io, .awake);
         if (self.prof) |p| p.recordAofWrite(span.monotonicNs(t0, t1));
+    }
+
+    /// Most recent successful fsync timestamp (ms since epoch). For INFO.
+    /// Reads the background thread's last fsync when in everysec mode.
+    pub fn lastFsyncMs(self: *const AOF) i64 {
+        if (self.fsync_ctx) |ctx| return ctx.last_fsync_ms.load(.monotonic);
+        return self.last_fsync_ms.load(.monotonic);
     }
 
     /// Prepare an async flush: swap group_buf → flush_buf.

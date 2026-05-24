@@ -229,6 +229,8 @@ pub fn main(init: std.process.Init) !void {
         aof_tmp.prof = prof;
         aof_tmp.initGroupBuf(allocator);
         aof_instance = aof_tmp;
+        if (aof_instance) |*a| a.setFsyncMode(allocator, config.appendfsync);
+        vex_log.info("aof: appendfsync={s}", .{config.appendfsync.label()});
 
         var replay_db = std.atomic.Value(u8).init(0);
         var replay_handler = CommandHandler.init(allocator, io, &kv, &graph, null, &replay_db, config.keys_mode);
@@ -429,6 +431,7 @@ const Config = struct {
     enable_timings: bool,
     slowlog_threshold_us: u64,
     latency_threshold_us: u64,
+    appendfsync: aof_mod.FsyncMode,
 };
 
 fn parseArgs(init: std.process.Init) Config {
@@ -458,6 +461,7 @@ fn parseArgs(init: std.process.Init) Config {
     var enable_timings: bool = false;
     var slowlog_threshold_us: u64 = 10_000; // 10ms — Redis default
     var latency_threshold_us: u64 = 100_000; // 100ms — Redis default
+    var appendfsync: aof_mod.FsyncMode = .everysec; // Redis default
 
     // ── Config file loading (order: default vex.conf → VEX_CONFIG env → --config flag)
     // Each source overrides the previous; CLI args override everything.
@@ -466,7 +470,7 @@ fn parseArgs(init: std.process.Init) Config {
         applyConfigFile(init.io, "vex.conf", &host, &port, &data_dir, &requirepass,
             &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
             &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
-            &enable_timings, &slowlog_threshold_us, &latency_threshold_us);
+            &enable_timings, &slowlog_threshold_us, &latency_threshold_us, &appendfsync);
 
         // 2. Try VEX_CONFIG environment variable
         const env_config = std.c.getenv("VEX_CONFIG");
@@ -476,7 +480,7 @@ fn parseArgs(init: std.process.Init) Config {
                 applyConfigFile(init.io, path, &host, &port, &data_dir, &requirepass,
                     &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
                     &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
-            &enable_timings, &slowlog_threshold_us, &latency_threshold_us);
+            &enable_timings, &slowlog_threshold_us, &latency_threshold_us, &appendfsync);
             }
         }
 
@@ -492,7 +496,7 @@ fn parseArgs(init: std.process.Init) Config {
                     applyConfigFile(init.io, cfg_path, &host, &port, &data_dir, &requirepass,
                         &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
                         &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
-            &enable_timings, &slowlog_threshold_us, &latency_threshold_us);
+            &enable_timings, &slowlog_threshold_us, &latency_threshold_us, &appendfsync);
                 }
                 break;
             }
@@ -608,6 +612,8 @@ fn parseArgs(init: std.process.Init) Config {
             if (it.next()) |n| {
                 latency_threshold_us = std.fmt.parseInt(u64, std.mem.sliceTo(n, 0), 10) catch latency_threshold_us;
             }
+        } else if (std.mem.eql(u8, arg, "--appendfsync")) {
+            if (it.next()) |v| appendfsync = aof_mod.FsyncMode.parse(std.mem.sliceTo(v, 0));
         } else if (std.mem.eql(u8, arg, "--maxmemory")) {
             if (it.next()) |n| {
                 maxmemory = std.fmt.parseInt(usize, std.mem.sliceTo(n, 0), 10) catch 0;
@@ -651,6 +657,7 @@ fn parseArgs(init: std.process.Init) Config {
         .enable_timings = enable_timings,
         .slowlog_threshold_us = slowlog_threshold_us,
         .latency_threshold_us = latency_threshold_us,
+        .appendfsync = appendfsync,
     };
 }
 
@@ -701,6 +708,7 @@ fn applyConfigFile(
     enable_timings: *bool,
     slowlog_threshold_us: *u64,
     latency_threshold_us: *u64,
+    appendfsync: *aof_mod.FsyncMode,
 ) void {
     const config_mod = @import("config.zig");
     // Use a page allocator since we can't access the gpa in parseArgs easily.
@@ -741,6 +749,7 @@ fn applyConfigFile(
     if (cfg.get("latency-monitor-threshold")) |v| {
         latency_threshold_us.* = std.fmt.parseInt(u64, v, 10) catch latency_threshold_us.*;
     }
+    if (cfg.get("appendfsync")) |v| appendfsync.* = aof_mod.FsyncMode.parse(v);
     if (cfg.get("tls-cert")) |v| tls_cert.* = v;
     if (cfg.get("tls-key")) |v| tls_key.* = v;
 }

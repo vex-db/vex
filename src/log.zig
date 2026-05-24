@@ -31,6 +31,10 @@ pub const Logger = struct {
         return .{ .min_level = min_level };
     }
 
+    pub fn enabled(self: *const Logger, level: Level) bool {
+        return @intFromEnum(level) >= @intFromEnum(self.min_level);
+    }
+
     pub fn debug(self: *const Logger, comptime fmt: []const u8, args: anytype) void {
         self.log(.debug, fmt, args);
     }
@@ -48,7 +52,7 @@ pub const Logger = struct {
     }
 
     fn log(self: *const Logger, level: Level, comptime fmt: []const u8, args: anytype) void {
-        if (@intFromEnum(level) < @intFromEnum(self.min_level)) return;
+        if (!self.enabled(level)) return;
 
         // Format: [2026-04-23T10:30:00Z] [INFO] message
         var ts_buf: [30]u8 = undefined;
@@ -131,10 +135,10 @@ test "log level parse" {
 
 test "log level filtering" {
     const logger = Logger.init(.warn);
-    // info should be filtered (no crash, just test it doesn't panic)
-    logger.info("this should be filtered", .{});
-    // warn and above should pass through
-    logger.warn("this should appear", .{});
+    try std.testing.expect(!logger.enabled(.debug));
+    try std.testing.expect(!logger.enabled(.info));
+    try std.testing.expect(logger.enabled(.warn));
+    try std.testing.expect(logger.enabled(.err));
 }
 
 test "timestamp format" {

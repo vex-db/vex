@@ -133,8 +133,14 @@ pub const FollowerState = struct {
     running: std.atomic.Value(bool),
     drain_thread: ?std.Thread,
     allocator: Allocator,
+    /// Last applied_seq reported by this follower via repl_ack. Lag in seq
+    /// units is `leader.mutation_seq - last_ack_seq`. Updated by the leader
+    /// when it processes an inbound repl_ack frame from this follower.
+    last_ack_seq: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    last_ack_ts_ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    last_ack_epoch: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
-    fn addrSlice(self: *const FollowerState) []const u8 {
+    pub fn addrSlice(self: *const FollowerState) []const u8 {
         return self.addr[0..self.addr_len];
     }
 };
@@ -522,8 +528,18 @@ pub const ReplicationLeader = struct {
         defer if (!registered) {
             _ = std.c.close(fd);
         };
+        // Once registered, keep reading from the fd for `.repl_ack` frames
+        // so we can record per-follower lag. Stop when the FollowerState's
+        // drain thread marks itself non-running (write failure → reap).
+        var my_state: ?*FollowerState = null;
 
         while (self.running.load(.acquire)) {
+            // If we were registered but the drain thread has marked the
+            // follower for reaping, stop reading.
+            if (my_state) |st| {
+                if (!st.running.load(.acquire)) return;
+            }
+
             var pfd = [1]std.c.pollfd{.{
                 .fd = fd,
                 .events = std.c.POLL.IN,
@@ -613,15 +629,30 @@ pub const ReplicationLeader = struct {
                     _ = std.c.pthread_mutex_unlock(&self.mutex);
                     _ = self.follower_count.fetchAdd(1, .monotonic);
                     registered = true;
+                    my_state = state;
                     vex_log.info(
                         "repl-leader: follower {s} (fd={d}) registered for replication stream (from seq={d})",
                         .{ state.addrSlice(), fd, req_seq },
                     );
-                    // After successful registration, this handler thread exits.
-                    // The drain thread owns writes; reads on this socket are no
-                    // longer expected in the steady state. (If we needed to keep
-                    // reading from followers, we'd spawn another reader thread.)
-                    return;
+                    // Continue the loop to keep reading repl_ack frames from
+                    // this follower. The drain thread now owns writes; we
+                    // own reads. When the drain thread marks running=false
+                    // (write failure), we exit on the next iteration.
+                },
+                .repl_ack => {
+                    if (frame.payload.len >= 16) {
+                        if (protocol.decodeReplAck(frame.payload)) |ack| {
+                            if (my_state) |st| {
+                                st.last_ack_seq.store(ack.applied_seq, .release);
+                                st.last_ack_epoch.store(ack.epoch, .release);
+                                var ts: std.c.timespec = undefined;
+                                _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+                                const now_ms: i64 = @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
+                                st.last_ack_ts_ms.store(now_ms, .release);
+                            }
+                        } else |_| {}
+                    }
+                    if (frame.payload.len > 0) self.allocator.free(@constCast(frame.payload));
                 },
                 .heartbeat => {
                     if (frame.payload.len > 0) self.allocator.free(@constCast(frame.payload));
@@ -1026,6 +1057,13 @@ pub const ReplicationFollower = struct {
                                 }
                                 self.leader_seq.store(hb.mutation_seq, .release);
                                 self.last_heartbeat_ms.store(hb.timestamp_ms, .release);
+                                // Piggyback an ack on every heartbeat. This is
+                                // ~5s cadence — sufficient for the leader to
+                                // measure lag in seq units. A finer cadence
+                                // (every N applied mutations) is a follow-up
+                                // optimization if needed.
+                                const ack_payload = protocol.encodeReplAck(self.local_seq.load(.monotonic), current_epoch.load(.monotonic));
+                                protocol.writeFrame(self.leader_fd, .repl_ack, &ack_payload) catch {};
                             }
                         } else |_| {}
                     }

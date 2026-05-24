@@ -22,6 +22,7 @@ pub const FrameType = enum(u8) {
     full_sync_data = 0x05, // leader → follower: snapshot bytes
     write_forward = 0x06, // follower → leader: forwarded write command
     write_forward_response = 0x07, // leader → follower: response to forward
+    repl_ack = 0x08, // follower → leader: "I've applied up to seq N at epoch E"
 };
 
 pub const Frame = struct {
@@ -104,6 +105,25 @@ pub fn decodeHeartbeat(payload: []const u8) !struct { epoch: u64, mutation_seq: 
         };
     }
     return error.InvalidPayload;
+}
+
+/// Build a repl_ack payload: follower's applied_seq + the epoch it was
+/// applied under. Leader uses this to compute true lag in seq units and
+/// to detect followers stuck at a stale epoch.
+pub fn encodeReplAck(applied_seq: u64, epoch: u64) [16]u8 {
+    var buf: [16]u8 = undefined;
+    std.mem.writeInt(u64, buf[0..8], applied_seq, .little);
+    std.mem.writeInt(u64, buf[8..16], epoch, .little);
+    return buf;
+}
+
+/// Decode a repl_ack payload.
+pub fn decodeReplAck(payload: []const u8) !struct { applied_seq: u64, epoch: u64 } {
+    if (payload.len < 16) return error.InvalidPayload;
+    return .{
+        .applied_seq = std.mem.readInt(u64, payload[0..8], .little),
+        .epoch = std.mem.readInt(u64, payload[8..16], .little),
+    };
 }
 
 /// Build a repl_request payload: just a u64 sequence number.
@@ -205,6 +225,13 @@ test "decode heartbeat v1 — epoch defaults to 0" {
     const decoded = try decodeHeartbeat(&v1_buf);
     try std.testing.expectEqual(@as(u64, 0), decoded.epoch);
     try std.testing.expectEqual(@as(u64, 42), decoded.mutation_seq);
+}
+
+test "encode/decode repl_ack" {
+    const encoded = encodeReplAck(1000, 5);
+    const decoded = try decodeReplAck(&encoded);
+    try std.testing.expectEqual(@as(u64, 1000), decoded.applied_seq);
+    try std.testing.expectEqual(@as(u64, 5), decoded.epoch);
 }
 
 test "encode/decode write_forward" {

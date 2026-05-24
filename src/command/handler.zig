@@ -1905,12 +1905,30 @@ pub const CommandHandler = struct {
             try aw.writer.print("connected_slaves:{d}\r\n", .{ld.follower_count.load(.monotonic)});
             try aw.writer.print("master_repl_offset:{d}\r\n", .{ld.mutation_seq.load(.monotonic)});
             try aw.writer.print("master_replid:{s}\r\n", .{"0000000000000000000000000000000000000000"});
+            try aw.writer.print("cluster_epoch:{d}\r\n", .{repl_mod.current_epoch.load(.monotonic)});
+            // Per-follower lag — Redis-shaped one line per follower:
+            //   slaveN:ip=...,port=...,offset=O,applied=A,lag_seq=L-A,lag_sec=S
+            _ = std.c.pthread_mutex_lock(&ld.mutex);
+            defer _ = std.c.pthread_mutex_unlock(&ld.mutex);
+            const master_seq = ld.mutation_seq.load(.monotonic);
+            const repl_now_ms = obsNowMillis();
+            for (ld.followers.items, 0..) |state, i| {
+                const applied = state.last_ack_seq.load(.monotonic);
+                const lag_seq: u64 = if (master_seq > applied) master_seq - applied else 0;
+                const ack_ts = state.last_ack_ts_ms.load(.monotonic);
+                const lag_sec: i64 = if (ack_ts == 0) -1 else @divTrunc(repl_now_ms - ack_ts, 1000);
+                try aw.writer.print(
+                    "slave{d}:addr={s},offset={d},applied={d},lag_seq={d},lag_sec={d}\r\n",
+                    .{ i, state.addrSlice(), master_seq, applied, lag_seq, lag_sec },
+                );
+            }
         } else if (cur_follower) |fl| {
             try aw.writer.writeAll("role:slave\r\n");
             try aw.writer.print("master_link_status:{s}\r\n", .{if (fl.leader_fd >= 0) "up" else "down"});
             try aw.writer.print("master_repl_offset:{d}\r\n", .{fl.leader_seq.load(.monotonic)});
             try aw.writer.print("slave_repl_offset:{d}\r\n", .{fl.local_seq.load(.monotonic)});
             try aw.writer.print("slave_replayed_count:{d}\r\n", .{fl.replayed_count.load(.monotonic)});
+            try aw.writer.print("cluster_epoch:{d}\r\n", .{repl_mod.current_epoch.load(.monotonic)});
             const last_hb = fl.last_heartbeat_ms.load(.monotonic);
             const lag_ms: i64 = if (last_hb == 0) -1 else obsNowMillis() - last_hb;
             const lag_sec: i64 = if (lag_ms < 0) -1 else @divTrunc(lag_ms, 1000);

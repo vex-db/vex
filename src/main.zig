@@ -97,6 +97,11 @@ fn promoteToLeader() void {
     // Publish the new leader pointer so workers can find it via getPromotedLeader()
     rf.promoted_leader_ptr.store(@intFromPtr(&g_promoted_leader.?), .release);
 
+    // Update observability handles: we're no longer a follower, we're a leader.
+    const ReplMod = @import("cluster/replication.zig");
+    ReplMod.current_follower_ptr.store(null, .release);
+    ReplMod.current_leader_ptr.store(&g_promoted_leader.?, .release);
+
     vex_log.info("failover: promotion complete; accepting writes and follower connections on :{d}", .{g_local_port + 10000});
 }
 
@@ -312,6 +317,7 @@ pub fn main(init: std.process.Init) !void {
                 repl_leader.?.start() catch |err| {
                     log("warning: replication listener failed: {s}", .{@errorName(err)});
                 };
+                ReplMod.current_leader_ptr.store(&repl_leader.?, .release);
             } else {
                 log("cluster mode: FOLLOWER (node {d})", .{cc.self_id});
                 repl_follower = ReplMod.ReplicationFollower.init(allocator, cc, config.port);
@@ -324,6 +330,7 @@ pub fn main(init: std.process.Init) !void {
                 repl_follower.?.start() catch |err| {
                     log("warning: replication receiver failed: {s}", .{@errorName(err)});
                 };
+                ReplMod.current_follower_ptr.store(&repl_follower.?, .release);
             }
         }
     }

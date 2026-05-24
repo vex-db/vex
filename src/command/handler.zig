@@ -1873,6 +1873,31 @@ pub const CommandHandler = struct {
             try aw.writer.writeAll("used_cpu_user:0\r\nused_cpu_sys:0\r\n");
         }
 
+        // Replication section — role, leader/follower state, lag.
+        const repl_mod = @import("../cluster/replication.zig");
+        const cur_leader = repl_mod.current_leader_ptr.load(.acquire);
+        const cur_follower = repl_mod.current_follower_ptr.load(.acquire);
+        try aw.writer.writeAll("\r\n# Replication\r\n");
+        if (cur_leader) |ld| {
+            try aw.writer.writeAll("role:master\r\n");
+            try aw.writer.print("connected_slaves:{d}\r\n", .{ld.follower_count.load(.monotonic)});
+            try aw.writer.print("master_repl_offset:{d}\r\n", .{ld.mutation_seq.load(.monotonic)});
+            try aw.writer.print("master_replid:{s}\r\n", .{"0000000000000000000000000000000000000000"});
+        } else if (cur_follower) |fl| {
+            try aw.writer.writeAll("role:slave\r\n");
+            try aw.writer.print("master_link_status:{s}\r\n", .{if (fl.leader_fd >= 0) "up" else "down"});
+            try aw.writer.print("master_repl_offset:{d}\r\n", .{fl.leader_seq.load(.monotonic)});
+            try aw.writer.print("slave_repl_offset:{d}\r\n", .{fl.local_seq.load(.monotonic)});
+            try aw.writer.print("slave_replayed_count:{d}\r\n", .{fl.replayed_count.load(.monotonic)});
+            const last_hb = fl.last_heartbeat_ms.load(.monotonic);
+            const lag_ms: i64 = if (last_hb == 0) -1 else obsNowMillis() - last_hb;
+            const lag_sec: i64 = if (lag_ms < 0) -1 else @divTrunc(lag_ms, 1000);
+            try aw.writer.print("master_last_io_seconds_ago:{d}\r\n", .{lag_sec});
+        } else {
+            try aw.writer.writeAll("role:standalone\r\n");
+            try aw.writer.writeAll("connected_slaves:0\r\n");
+        }
+
         // Cluster section (if available)
         try aw.writer.writeAll("\r\n# Cluster\r\n");
         try aw.writer.print("graph_mutation_seq:{d}\r\n", .{self.graph.mutation_seq});

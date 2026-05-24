@@ -12,6 +12,12 @@ fn nowMs() i64 {
     return @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
 }
 
+/// Process-wide handles for INFO/observability readers. main.zig publishes
+/// these at startup; readers (cmdInfo) load via `@atomicLoad`.
+/// Either or both may be null in standalone mode.
+pub var current_leader_ptr: std.atomic.Value(?*ReplicationLeader) = std.atomic.Value(?*ReplicationLeader).init(null);
+pub var current_follower_ptr: std.atomic.Value(?*ReplicationFollower) = std.atomic.Value(?*ReplicationFollower).init(null);
+
 /// Leader-side replication: accepts follower connections and streams mutations.
 /// Callback type for executing a forwarded write command on the leader.
 /// Returns the RESP response bytes (caller must free).

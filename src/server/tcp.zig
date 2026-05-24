@@ -1014,6 +1014,8 @@ pub const Server = struct {
         const ConcurrentKV = @import("../engine/concurrent_kv.zig").ConcurrentKV;
         var ckv = ConcurrentKV.init(self.allocator, self.io);
         ckv.initStripes();
+        ckv.maxmemory = self.kv.maxmemory;
+        ckv.eviction_policy = self.kv.eviction_policy;
         defer ckv.deinit();
         try ckv.importFrom(self.kv);
 

@@ -1,10 +1,19 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const KVStore = @import("kv.zig").KVStore;
+const EvictionPolicy = @import("kv.zig").EvictionPolicy;
 const obs_stats = @import("../observability/stats.zig");
 
 const STRIPE_COUNT = 256;
 const STRIPE_MASK = STRIPE_COUNT - 1;
+
+/// Number of entries to sample per stripe when looking for an eviction victim.
+/// Matches the single-threaded KVStore.evictIfNeeded sample size.
+const EVICTION_SAMPLE_SIZE: usize = 5;
+
+/// Returned by setInternal when maxmemory is configured with noeviction policy
+/// and the write would exceed the budget.
+pub const SetError = error{MaxMemoryReached} || Allocator.Error;
 
 /// Thread-safe KV store using bucket-striped locking.
 /// 256 stripes, each with its own mutex + HashMap.
@@ -14,6 +23,16 @@ pub const ConcurrentKV = struct {
     allocator: Allocator,
     io: std.Io,
     cached_now_ms: i64 = 0,
+
+    /// Maxmemory budget in bytes. 0 = unlimited (hot path becomes byte-identical
+    /// to pre-maxmemory behavior). Wire from server construction.
+    maxmemory: usize = 0,
+    /// Eviction policy applied when `total_bytes > maxmemory`.
+    eviction_policy: EvictionPolicy = .noeviction,
+    /// Sum of `key.len + value.len` across live entries. Atomic so the hot path
+    /// can update it under the stripe lock without coordinating across stripes.
+    /// Uses `.monotonic` — this is a budget heuristic, not a synchronization point.
+    total_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     pub const Entry = KVStore.Entry;
 
@@ -92,6 +111,7 @@ pub const ConcurrentKV = struct {
                 .expires_at = entry.value_ptr.expires_at,
                 .flags = flags,
             });
+            _ = self.total_bytes.fetchAdd(owned_key.len + owned_val.len, .monotonic);
         }
     }
 
@@ -319,6 +339,8 @@ pub const ConcurrentKV = struct {
         if (result) |kv| {
             // Inline values point into the entry's inline_buf (not heap-allocated) — don't free
             const stale_val = if (!kv.value.flags.is_inline) kv.value.value else null;
+            const removed_bytes = kv.key.len + kv.value.value.len;
+            _ = self.total_bytes.fetchSub(removed_bytes, .monotonic);
             return .{ .found = true, .stale_key = kv.key, .stale_val = stale_val };
         }
         return .{ .found = false, .stale_key = null, .stale_val = null };
@@ -378,6 +400,7 @@ pub const ConcurrentKV = struct {
             }
             old_map.deinit();
         }
+        self.total_bytes.store(0, .monotonic);
     }
 
     pub fn dbsize(self: *ConcurrentKV) usize {
@@ -486,11 +509,36 @@ pub const ConcurrentKV = struct {
     /// Set the fast allocator (pool arena). Call after init, before use.
     // ── Internal helpers ──
 
-    pub fn setInternal(self: *ConcurrentKV, key: []const u8, value: []const u8, expires_at: i64) !void {
+    pub fn setInternal(self: *ConcurrentKV, key: []const u8, value: []const u8, expires_at: i64) SetError!void {
         const s = self.getStripe(key);
         const alloc = self.allocator;
         writeLockStripe(s);
         defer writeUnlockStripe(s);
+
+        // Maxmemory enforcement. Gated on `maxmemory != 0` so the hot path stays
+        // byte-identical when the budget is unset.
+        if (self.maxmemory != 0) {
+            // Existing entry's value-bytes are already counted in total_bytes;
+            // they will be freed and replaced atomically here. To get a correct
+            // pre-check, subtract them from the projected delta.
+            var old_value_bytes: usize = 0;
+            var key_already_present: bool = false;
+            if (s.map.getPtr(key)) |existing| {
+                old_value_bytes = existing.value.len;
+                key_already_present = true;
+            }
+
+            const new_entry_bytes: usize = (if (key_already_present) 0 else key.len) + value.len;
+            const current_total: u64 = self.total_bytes.load(.monotonic);
+            const projected: u64 = current_total -| old_value_bytes +| new_entry_bytes;
+
+            if (projected > self.maxmemory) {
+                switch (self.eviction_policy) {
+                    .noeviction => return error.MaxMemoryReached,
+                    .allkeys_lru => self.evictFromStripeLocked(s, projected),
+                }
+            }
+        }
 
         const has_ttl = expires_at != 0;
         const now = self.cached_now_ms;
@@ -498,6 +546,7 @@ pub const ConcurrentKV = struct {
 
         const result = s.map.getPtr(key);
         if (result) |existing| {
+            const old_value_len = existing.value.len;
             _ = existing.seq.fetchAdd(1, .release);
             if (is_inline) {
                 @memcpy(existing.inline_buf[0..value.len], value);
@@ -514,6 +563,12 @@ pub const ConcurrentKV = struct {
             existing.last_access = now;
             existing.flags.is_integer = false;
             _ = existing.seq.fetchAdd(1, .release);
+            // Net delta on update is only the value-length difference; key bytes unchanged.
+            if (value.len >= old_value_len) {
+                _ = self.total_bytes.fetchAdd(value.len - old_value_len, .monotonic);
+            } else {
+                _ = self.total_bytes.fetchSub(old_value_len - value.len, .monotonic);
+            }
         } else {
             const owned_key = try alloc.dupe(u8, key);
             errdefer alloc.free(owned_key);
@@ -537,6 +592,54 @@ pub const ConcurrentKV = struct {
             } else {
                 gop.value_ptr.value = try alloc.dupe(u8, value);
             }
+            _ = self.total_bytes.fetchAdd(owned_key.len + value.len, .monotonic);
+        }
+    }
+
+    /// Sample-LRU eviction from a single stripe. Caller holds the stripe's
+    /// write lock. Picks the oldest of up to EVICTION_SAMPLE_SIZE entries by
+    /// `last_access`, frees it, and repeats until `total_bytes <= maxmemory`
+    /// or the stripe is empty.
+    ///
+    /// Stripe-local sampling sacrifices a bit of eviction quality (we might
+    /// pick an older key in some other stripe) but avoids any cross-stripe
+    /// locking, keeping the SET path lock-local.
+    fn evictFromStripeLocked(self: *ConcurrentKV, s: *Stripe, initial_projected: u64) void {
+        const alloc = self.allocator;
+        var projected = initial_projected;
+
+        while (projected > self.maxmemory) {
+            if (s.map.count() == 0) return;
+
+            var oldest_key: ?[]const u8 = null;
+            var oldest_access: i64 = std.math.maxInt(i64);
+            var samples: usize = 0;
+            var it = s.map.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.flags.deleted) continue;
+                if (entry.value_ptr.last_access < oldest_access) {
+                    oldest_access = entry.value_ptr.last_access;
+                    oldest_key = entry.key_ptr.*;
+                }
+                samples += 1;
+                if (samples >= EVICTION_SAMPLE_SIZE) break;
+            }
+
+            const victim_key = oldest_key orelse return;
+
+            // Remove victim — this stripe is already write-locked, safe to mutate map.
+            const removed = s.map.fetchRemove(victim_key) orelse return;
+            const freed_bytes: usize = removed.key.len + removed.value.value.len;
+            if (!removed.value.flags.is_inline and removed.value.value.len > 0) {
+                alloc.free(removed.value.value);
+            }
+            alloc.free(removed.key);
+
+            _ = self.total_bytes.fetchSub(freed_bytes, .monotonic);
+            _ = obs_stats.evicted_keys.fetchAdd(1, .monotonic);
+
+            // Recompute projected: shrink by freed bytes (saturating).
+            projected = projected -| freed_bytes;
         }
     }
 
@@ -721,4 +824,106 @@ test "concurrent_kv multi-thread stress" {
     }
 
     // Should not crash or leak (testing allocator checks leaks on deinit)
+}
+
+// ─── Maxmemory enforcement tests ──────────────────────────────────────
+
+test "concurrent_kv maxmemory + allkeys_lru evicts oldest" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+
+    // All keys map to the same stripe so stripe-local sampling can see them all.
+    // Construct keys that share a stripe by brute force — we just verify eviction
+    // happens on the stripe that gets the new write. Easiest is to test on one
+    // stripe by walking until we find 6 keys hashing to the same bucket.
+    var keys: [6][]const u8 = undefined;
+    keys[0] = "lru:a";
+    keys[1] = "lru:b";
+    keys[2] = "lru:c";
+    keys[3] = "lru:d";
+    keys[4] = "lru:e";
+    keys[5] = "lru:f"; // the trigger
+
+    // Bring keys onto the same stripe by finding 6 keys with same stripeIndex.
+    // We mutate the array with successful candidates.
+    var found: usize = 0;
+    var idx: usize = 0;
+    var picked: [6][32]u8 = undefined;
+    const target_stripe: usize = ConcurrentKV.stripeIndex("anchor");
+    keys[0] = "anchor";
+    found = 1;
+    while (found < 6 and idx < 100000) : (idx += 1) {
+        var buf: [32]u8 = undefined;
+        const candidate = try std.fmt.bufPrint(&buf, "k{d}", .{idx});
+        if (ConcurrentKV.stripeIndex(candidate) == target_stripe) {
+            @memcpy(picked[found][0..candidate.len], candidate);
+            keys[found] = picked[found][0..candidate.len];
+            found += 1;
+        }
+    }
+    try std.testing.expect(found == 6);
+
+    // Configure budget tight enough to force one eviction once the 6th is added.
+    // Each key+value ≈ a few bytes; pick a budget that fits 5 but not 6.
+    const per_entry_bytes: usize = keys[0].len + 1; // value is 1 byte
+    store.maxmemory = per_entry_bytes * 5 + per_entry_bytes / 2;
+    store.eviction_policy = .allkeys_lru;
+
+    const before_evicts = obs_stats.evicted_keys.load(.monotonic);
+
+    // Insert 5 keys with strictly increasing last_access so keys[0] is oldest.
+    for (keys[0..5], 0..) |k, i| {
+        store.cached_now_ms = 1000 + @as(i64, @intCast(i));
+        try store.set(k, "x");
+    }
+
+    // Insert 6th — must trigger eviction of the oldest on this stripe (keys[0]).
+    store.cached_now_ms = 2000;
+    try store.set(keys[5], "x");
+
+    // The oldest key (keys[0]) should be evicted.
+    try std.testing.expect(store.get(keys[0]) == null);
+    // The newest should survive.
+    const v5 = store.get(keys[5]) orelse return error.TestUnexpectedResult;
+    defer v5.deinit();
+    try std.testing.expectEqualStrings("x", v5.data);
+
+    const after_evicts = obs_stats.evicted_keys.load(.monotonic);
+    try std.testing.expect(after_evicts > before_evicts);
+}
+
+test "concurrent_kv maxmemory + noeviction returns error" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+
+    store.maxmemory = 8; // tiny budget
+    store.eviction_policy = .noeviction;
+
+    // First write fits within budget.
+    try store.set("k", "v");
+
+    // A second key that would push total_bytes over the budget must error.
+    const result = store.set("kk", "vv");
+    try std.testing.expectError(error.MaxMemoryReached, result);
+
+    // Original key must still be intact.
+    const v = store.get("k") orelse return error.TestUnexpectedResult;
+    defer v.deinit();
+    try std.testing.expectEqualStrings("v", v.data);
+}
+
+test "concurrent_kv total_bytes decrements on delete" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+
+    try std.testing.expectEqual(@as(u64, 0), store.total_bytes.load(.monotonic));
+
+    try store.set("hello", "world");
+    try std.testing.expectEqual(@as(u64, "hello".len + "world".len), store.total_bytes.load(.monotonic));
+
+    try std.testing.expect(store.delete("hello"));
+    try std.testing.expectEqual(@as(u64, 0), store.total_bytes.load(.monotonic));
 }

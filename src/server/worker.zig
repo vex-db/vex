@@ -14,6 +14,8 @@ const ct = @import("../command/comptime_dispatch.zig");
 const replication = @import("../cluster/replication.zig");
 const TlsContext = @import("tls.zig").TlsContext;
 const vex_log = @import("../log.zig");
+const stats_mod = @import("../observability/stats.zig");
+const cmd_table = @import("../observability/cmd_table.zig");
 const SSL = @import("tls.zig").SSL;
 const ListStore = @import("../engine/list.zig").ListStore;
 const HashStore = @import("../engine/hash.zig").HashStore;
@@ -355,6 +357,10 @@ pub const Worker = struct {
     last_stripe: u16,
     /// true = use io_uring recv/send for non-TLS connections
     use_uring_io: bool,
+    /// Per-worker observability counters. Writes happen only on this
+    /// worker's thread, so no atomics are needed on increment. Readers
+    /// (INFO, /metrics) use @atomicLoad when aggregating.
+    stats: stats_mod.WorkerStats,
 
     pub fn init(
         allocator: Allocator,
@@ -418,6 +424,7 @@ pub const Worker = struct {
             .new_fd_tail = std.atomic.Value(usize).init(0),
             .last_stripe = STRIPE_UNOWNED,
             .use_uring_io = false, // set after init when loop.use_uring is known
+            .stats = stats_mod.WorkerStats.init(),
         };
     }
 
@@ -890,6 +897,10 @@ pub const Worker = struct {
 
     fn dispatchCommand(self: *Worker, conn: *Connection, args: []const []const u8) void {
         if (args.len == 0) return;
+
+        // Per-command call counter. Single-owner write (this worker's thread)
+        // so no atomic needed. ~15ns total (uppercase + perfect-hash lookup).
+        self.stats.recordCall(cmd_table.lookup(args[0]));
 
         // HELLO — connection-level protocol negotiation (must be before hot path)
         {

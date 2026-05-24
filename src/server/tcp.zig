@@ -1101,6 +1101,14 @@ pub const Server = struct {
             );
         }
 
+        // Register each worker's stats in the observability global registry.
+        // Safe to take stable pointers now — workers slice lives for the
+        // remainder of runReactor.
+        const stats_mod = @import("../observability/stats.zig");
+        for (workers) |*w| {
+            _ = stats_mod.register(&w.stats);
+        }
+
         // Spawn worker threads.
         for (workers) |*w| {
             const t = try std.Thread.spawn(.{}, Worker.run, .{w});

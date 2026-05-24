@@ -13,6 +13,8 @@ const ListStore = @import("../engine/list.zig").ListStore;
 const HashStore = @import("../engine/hash.zig").HashStore;
 const SetStore = @import("../engine/set.zig").SetStore;
 const SortedSetStore = @import("../engine/sorted_set.zig").SortedSetStore;
+const obs_stats = @import("../observability/stats.zig");
+const obs_cmd_table = @import("../observability/cmd_table.zig");
 const MAX_DATABASES: u8 = 16;
 const KEYS_MAX_REPLY: usize = 1000;
 const SCAN_DEFAULT_COUNT: usize = 10;
@@ -1823,6 +1825,27 @@ pub const CommandHandler = struct {
         // Cluster section (if available)
         try aw.writer.writeAll("\r\n# Cluster\r\n");
         try aw.writer.print("graph_mutation_seq:{d}\r\n", .{self.graph.mutation_seq});
+
+        // Stats section — aggregate counters across all workers.
+        var cmd_calls: [obs_stats.N_CMDS]u64 = undefined;
+        obs_stats.aggregateCmdCalls(&cmd_calls);
+        var total_calls: u64 = 0;
+        for (cmd_calls) |n| total_calls +%= n;
+        try aw.writer.writeAll("\r\n# Stats\r\n");
+        try aw.writer.print("total_commands_processed:{d}\r\n", .{total_calls});
+
+        // Commandstats section — one line per command with non-zero calls.
+        // Field names mirror Redis: `cmdstat_<name>:calls=N,usec=0,...`.
+        // usec/usec_per_call/failed_calls land at 0 until timings are wired.
+        try aw.writer.writeAll("\r\n# Commandstats\r\n");
+        for (cmd_calls, 0..) |n, i| {
+            if (n == 0) continue;
+            const name = obs_cmd_table.nameOf(@intCast(i));
+            try aw.writer.print(
+                "cmdstat_{s}:calls={d},usec=0,usec_per_call=0,rejected_calls=0,failed_calls=0\r\n",
+                .{ name, n },
+            );
+        }
 
         try resp.serializeBulkString(out, aw.written());
     }

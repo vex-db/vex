@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const span = @import("../perf/span.zig");
 const vex_log = @import("../log.zig");
+const event_stats = @import("../observability/event_stats.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
@@ -141,9 +142,11 @@ pub const AOF = struct {
         if (!self.group_buf_inited or self.group_buf.items.len == 0) return;
 
         const t0 = std.Io.Clock.Timestamp.now(self.io, .awake);
+        const ev_span = event_stats.Span.begin();
         self.flushBufferToFile() catch |err| {
             vex_log.warn("aof: flush to file failed: {s}", .{@errorName(err)});
         };
+        ev_span.end(.aof_fsync);
         const t1 = std.Io.Clock.Timestamp.now(self.io, .awake);
         if (self.prof) |p| p.recordAofWrite(span.monotonicNs(t0, t1));
     }
@@ -255,6 +258,9 @@ pub const AOF = struct {
         kv: *@import("../engine/kv.zig").KVStore,
         graph: *@import("../engine/graph.zig").GraphEngine,
     ) !void {
+        const ev_span = event_stats.Span.begin();
+        defer ev_span.end(.aof_rewrite);
+
         const tmp_path = try std.fmt.allocPrint(allocator, "{s}.rewrite.tmp", .{self.path});
         defer allocator.free(tmp_path);
 

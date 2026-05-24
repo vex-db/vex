@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const obs_stats = @import("../observability/stats.zig");
+const event_stats = @import("../observability/event_stats.zig");
 
 /// Core key-value store backed by a hash map.
 /// All keys and values are owned byte slices.
@@ -173,6 +174,13 @@ pub const KVStore = struct {
             if (self.memoryUsage() > self.maxmemory) return error.OutOfMemory;
             return;
         }
+
+        // Time the eviction cycle as a LATENCY event — only fires when we
+        // actually need to evict at least one key. Cheap when memory is below
+        // maxmemory because the while-loop body never executes.
+        const needs_eviction = self.memoryUsage() > self.maxmemory;
+        const ev_span: ?event_stats.Span = if (needs_eviction) event_stats.Span.begin() else null;
+        defer if (ev_span) |s| s.end(.eviction_cycle);
 
         // allkeys-lru: sample 5 random keys, evict the one with oldest last_access
         while (self.memoryUsage() > self.maxmemory) {

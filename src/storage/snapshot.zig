@@ -5,6 +5,7 @@ const graph_mod = @import("../engine/graph.zig");
 const GraphEngine = graph_mod.GraphEngine;
 const NodeId = graph_mod.NodeId;
 const EdgeId = graph_mod.EdgeId;
+const event_stats = @import("../observability/event_stats.zig");
 
 const MAGIC = [_]u8{ 'Z', 'G', 'D', 'B' };
 const FORMAT_VERSION: u8 = 2; // v2: SoA graph layout
@@ -136,6 +137,9 @@ pub fn save(
     graph: *GraphEngine,
     path: []const u8,
 ) !void {
+    const ev_span = event_stats.Span.begin();
+    defer ev_span.end(.snapshot_save);
+
     var buf = std.array_list.Managed(u8).init(allocator);
     defer buf.deinit();
 
@@ -230,6 +234,9 @@ pub fn load(
     graph: *GraphEngine,
     path: []const u8,
 ) !void {
+    const ev_span = event_stats.Span.begin();
+    defer ev_span.end(.snapshot_load);
+
     const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| {
         if (err == error.FileNotFound) return;
         return err;

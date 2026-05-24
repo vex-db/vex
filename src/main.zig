@@ -185,6 +185,7 @@ pub fn main(init: std.process.Init) !void {
     initGlobalLogger(allocator, config.log_file, config.log_level, config.log_format);
     defer vex_log.global.deinit();
     @import("observability/stats.zig").start_time_ms = nowMillis();
+    @import("observability/event_stats.zig").threshold_us.store(config.latency_threshold_us, .monotonic);
     var prof_state: span.Profile = undefined;
     var prof: ?*span.Profile = null;
     if (config.profile) {
@@ -427,6 +428,7 @@ const Config = struct {
     log_format: vex_log.Format,
     enable_timings: bool,
     slowlog_threshold_us: u64,
+    latency_threshold_us: u64,
 };
 
 fn parseArgs(init: std.process.Init) Config {
@@ -455,6 +457,7 @@ fn parseArgs(init: std.process.Init) Config {
     var log_format: vex_log.Format = .text;
     var enable_timings: bool = false;
     var slowlog_threshold_us: u64 = 10_000; // 10ms — Redis default
+    var latency_threshold_us: u64 = 100_000; // 100ms — Redis default
 
     // ── Config file loading (order: default vex.conf → VEX_CONFIG env → --config flag)
     // Each source overrides the previous; CLI args override everything.
@@ -463,7 +466,7 @@ fn parseArgs(init: std.process.Init) Config {
         applyConfigFile(init.io, "vex.conf", &host, &port, &data_dir, &requirepass,
             &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
             &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
-            &enable_timings, &slowlog_threshold_us);
+            &enable_timings, &slowlog_threshold_us, &latency_threshold_us);
 
         // 2. Try VEX_CONFIG environment variable
         const env_config = std.c.getenv("VEX_CONFIG");
@@ -473,7 +476,7 @@ fn parseArgs(init: std.process.Init) Config {
                 applyConfigFile(init.io, path, &host, &port, &data_dir, &requirepass,
                     &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
                     &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
-            &enable_timings, &slowlog_threshold_us);
+            &enable_timings, &slowlog_threshold_us, &latency_threshold_us);
             }
         }
 
@@ -489,7 +492,7 @@ fn parseArgs(init: std.process.Init) Config {
                     applyConfigFile(init.io, cfg_path, &host, &port, &data_dir, &requirepass,
                         &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
                         &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
-            &enable_timings, &slowlog_threshold_us);
+            &enable_timings, &slowlog_threshold_us, &latency_threshold_us);
                 }
                 break;
             }
@@ -601,6 +604,10 @@ fn parseArgs(init: std.process.Init) Config {
             if (it.next()) |n| {
                 slowlog_threshold_us = std.fmt.parseInt(u64, std.mem.sliceTo(n, 0), 10) catch slowlog_threshold_us;
             }
+        } else if (std.mem.eql(u8, arg, "--latency-monitor-threshold")) {
+            if (it.next()) |n| {
+                latency_threshold_us = std.fmt.parseInt(u64, std.mem.sliceTo(n, 0), 10) catch latency_threshold_us;
+            }
         } else if (std.mem.eql(u8, arg, "--maxmemory")) {
             if (it.next()) |n| {
                 maxmemory = std.fmt.parseInt(usize, std.mem.sliceTo(n, 0), 10) catch 0;
@@ -643,6 +650,7 @@ fn parseArgs(init: std.process.Init) Config {
         .log_format = log_format,
         .enable_timings = enable_timings,
         .slowlog_threshold_us = slowlog_threshold_us,
+        .latency_threshold_us = latency_threshold_us,
     };
 }
 
@@ -692,6 +700,7 @@ fn applyConfigFile(
     log_format: *vex_log.Format,
     enable_timings: *bool,
     slowlog_threshold_us: *u64,
+    latency_threshold_us: *u64,
 ) void {
     const config_mod = @import("config.zig");
     // Use a page allocator since we can't access the gpa in parseArgs easily.
@@ -728,6 +737,9 @@ fn applyConfigFile(
     }
     if (cfg.get("slowlog-log-slower-than")) |v| {
         slowlog_threshold_us.* = std.fmt.parseInt(u64, v, 10) catch slowlog_threshold_us.*;
+    }
+    if (cfg.get("latency-monitor-threshold")) |v| {
+        latency_threshold_us.* = std.fmt.parseInt(u64, v, 10) catch latency_threshold_us.*;
     }
     if (cfg.get("tls-cert")) |v| tls_cert.* = v;
     if (cfg.get("tls-key")) |v| tls_key.* = v;
@@ -829,4 +841,5 @@ test {
     _ = @import("engine/ch.zig");
     _ = @import("observability/cmd_table.zig");
     _ = @import("observability/stats.zig");
+    _ = @import("observability/event_stats.zig");
 }

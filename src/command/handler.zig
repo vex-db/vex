@@ -15,6 +15,7 @@ const SetStore = @import("../engine/set.zig").SetStore;
 const SortedSetStore = @import("../engine/sorted_set.zig").SortedSetStore;
 const obs_stats = @import("../observability/stats.zig");
 const obs_cmd_table = @import("../observability/cmd_table.zig");
+const event_stats = @import("../observability/event_stats.zig");
 const MAX_DATABASES: u8 = 16;
 const KEYS_MAX_REPLY: usize = 1000;
 const SCAN_DEFAULT_COUNT: usize = 10;
@@ -259,6 +260,7 @@ pub const CommandHandler = struct {
                 },
                 'Z' => if (std.mem.eql(u8, cmd, "ZINCRBY")) return self.cmdZincrby(args, w),
                 'S' => if (std.mem.eql(u8, cmd, "SLOWLOG")) return self.cmdSlowlog(args, w),
+                'L' => if (std.mem.eql(u8, cmd, "LATENCY")) return self.cmdLatency(args, w),
                 else => {},
             },
             8 => switch (first) {
@@ -2014,6 +2016,111 @@ pub const CommandHandler = struct {
         }
 
         try resp.serializeError(w, "unknown SLOWLOG subcommand");
+    }
+
+    /// LATENCY LATEST | HISTORY <event> | RESET [event ...] | DOCTOR | HELP
+    /// Redis-compatible event-latency monitor for rare slow operations
+    /// (fsync stalls, snapshot saves, AOF rewrites, eviction sweeps).
+    fn cmdLatency(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (args.len < 2) {
+            try resp.serializeError(w, "wrong number of arguments for 'latency'");
+            return;
+        }
+        var sub_buf: [16]u8 = undefined;
+        const sub = toUpperBuf(args[1], &sub_buf);
+
+        if (std.mem.eql(u8, sub, "LATEST")) {
+            // Return array of [event_name, ts_sec, latest_duration_ms, max_duration_ms]
+            // — one entry per kind that has at least one sample.
+            const kinds = [_]event_stats.EventKind{ .aof_fsync, .aof_rewrite, .snapshot_save, .snapshot_load, .eviction_cycle };
+            // Count kinds with samples for the array header.
+            var n_present: usize = 0;
+            inline for (kinds) |k| if (event_stats.latest(k).sample != null) {
+                n_present += 1;
+            };
+            try resp.serializeArrayHeader(w, n_present);
+            inline for (kinds) |k| {
+                const li = event_stats.latest(k);
+                if (li.sample) |s| {
+                    try resp.serializeArrayHeader(w, 4);
+                    try resp.serializeBulkString(w, k.name());
+                    try resp.serializeInteger(w, @intCast(@divTrunc(s.ts_ms, 1000)));
+                    try resp.serializeInteger(w, @intCast(@divTrunc(s.duration_us, 1000)));
+                    try resp.serializeInteger(w, @intCast(@divTrunc(li.max_us, 1000)));
+                }
+            }
+            return;
+        }
+        if (std.mem.eql(u8, sub, "HISTORY")) {
+            if (args.len < 3) {
+                try resp.serializeError(w, "wrong number of arguments for 'latency history'");
+                return;
+            }
+            const kind = event_stats.EventKind.fromName(args[2]) orelse {
+                try resp.serializeArrayHeader(w, 0);
+                return;
+            };
+            const hist = event_stats.history(self.allocator, kind) catch {
+                try resp.serializeError(w, "internal: history snapshot failed");
+                return;
+            };
+            defer self.allocator.free(hist);
+            try resp.serializeArrayHeader(w, hist.len);
+            for (hist) |s| {
+                try resp.serializeArrayHeader(w, 2);
+                try resp.serializeInteger(w, @intCast(@divTrunc(s.ts_ms, 1000)));
+                try resp.serializeInteger(w, @intCast(@divTrunc(s.duration_us, 1000)));
+            }
+            return;
+        }
+        if (std.mem.eql(u8, sub, "RESET")) {
+            if (args.len <= 2) {
+                const n = event_stats.resetAll();
+                try resp.serializeInteger(w, @intCast(n));
+                return;
+            }
+            var count: u32 = 0;
+            for (args[2..]) |name| {
+                if (event_stats.EventKind.fromName(name)) |kind| {
+                    if (event_stats.reset(kind)) count += 1;
+                }
+            }
+            try resp.serializeInteger(w, @intCast(count));
+            return;
+        }
+        if (std.mem.eql(u8, sub, "DOCTOR")) {
+            // Human-readable summary. Walk each kind, build text.
+            var aw = std.Io.Writer.Allocating.init(self.allocator);
+            defer aw.deinit();
+            const kinds = [_]event_stats.EventKind{ .aof_fsync, .aof_rewrite, .snapshot_save, .snapshot_load, .eviction_cycle };
+            var any: bool = false;
+            inline for (kinds) |k| {
+                const li = event_stats.latest(k);
+                if (li.sample) |s| {
+                    any = true;
+                    try aw.writer.print(
+                        "{s}: latest {d}ms (peak {d}ms)\n",
+                        .{ k.name(), @divTrunc(s.duration_us, 1000), @divTrunc(li.max_us, 1000) },
+                    );
+                }
+            }
+            if (!any) try aw.writer.writeAll("No latency events recorded. Tune `latency-monitor-threshold` lower to capture finer-grained stalls.\n");
+            try resp.serializeBulkString(w, aw.written());
+            return;
+        }
+        if (std.mem.eql(u8, sub, "HELP")) {
+            const lines = [_][]const u8{
+                "LATENCY LATEST                   -- Most recent event per kind (name, ts, latest_ms, max_ms).",
+                "LATENCY HISTORY <event>          -- All samples for an event kind (newest-first).",
+                "LATENCY RESET [event ...]        -- Reset one, several, or all event rings.",
+                "LATENCY DOCTOR                   -- Human-readable summary.",
+                "Event kinds: aof-fsync aof-rewrite snapshot-save snapshot-load eviction-cycle",
+            };
+            try resp.serializeArrayHeader(w, lines.len);
+            for (lines) |line| try resp.serializeBulkString(w, line);
+            return;
+        }
+        try resp.serializeError(w, "unknown LATENCY subcommand");
     }
 
     // ── Graph Commands ────────────────────────────────────────────────

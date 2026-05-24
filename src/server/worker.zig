@@ -17,6 +17,7 @@ const vex_log = @import("../log.zig");
 const stats_mod = @import("../observability/stats.zig");
 const cmd_table = @import("../observability/cmd_table.zig");
 const stats_event = @import("../observability/event_stats.zig");
+const client_registry = @import("../observability/clients.zig");
 const SSL = @import("tls.zig").SSL;
 const ListStore = @import("../engine/list.zig").ListStore;
 const HashStore = @import("../engine/hash.zig").HashStore;
@@ -240,6 +241,9 @@ const Connection = struct {
     recv_pending: bool,
     send_pending: bool,
     recv_buf: [READ_BUF_SIZE]u8,
+    /// Externally-visible client metadata for CLIENT LIST. Registered on
+    /// accept, unregistered on close.
+    view: client_registry.ClientView,
 
     const TxCommand = struct {
         args: [][]u8,
@@ -255,6 +259,8 @@ const Connection = struct {
 
     fn init(allocator: Allocator, fd: i32, auth_required: bool) !*Connection {
         const conn = try allocator.create(Connection);
+        const id = next_client_id.fetchAdd(1, .monotonic);
+        const ts_ms = nowMillisAccept();
         conn.* = .{
             .fd = fd,
             .selected_db = 0,
@@ -272,18 +278,27 @@ const Connection = struct {
             .ssl = null,
             .pubsub_mode = false,
             .client_name = null,
-            .client_id = next_client_id.fetchAdd(1, .monotonic),
+            .client_id = id,
             .tx_queue = null,
             .watched_keys = null,
             .watch_dirty = false,
             .recv_pending = false,
             .send_pending = false,
             .recv_buf = undefined,
+            .view = .{
+                .id = id,
+                .fd = fd,
+                .connect_ts_ms = ts_ms,
+                .last_interaction_ts_ms = ts_ms,
+            },
         };
+        capturePeerAddr(fd, &conn.view);
+        _ = client_registry.register(&conn.view);
         return conn;
     }
 
     fn deinit(self: *Connection, allocator: Allocator) void {
+        client_registry.unregister(&self.view);
         if (self.tx_queue) |*q| {
             for (q.items) |*cmd| cmd.deinit(allocator);
             q.deinit();
@@ -923,6 +938,15 @@ pub const Worker = struct {
         const cmd_idx = cmd_table.lookup(args[0]);
         self.stats.recordCall(cmd_idx);
 
+        // Refresh per-connection CLIENT LIST metadata (cheap field writes).
+        conn.view.last_cmd_idx = cmd_idx;
+        conn.view.last_interaction_ts_ms = nowMillisAccept();
+        conn.view.db = conn.selected_db;
+        conn.view.pubsub_mode = conn.pubsub_mode;
+        conn.view.in_multi = conn.tx_queue != null;
+        conn.view.qbuf = @intCast(conn.accum.items.len);
+        conn.view.obl = @intCast(conn.write_buf.items.len - conn.write_offset);
+
         // Optional command timing — gated on enable_timings to keep the
         // default-config bench numbers untouched. Cost when off: one
         // branch on a hot field, ~0.5ns. Cost when on: two clock_gettime
@@ -1374,6 +1398,7 @@ pub const Worker = struct {
             }
             if (conn.client_name) |old| self.allocator.free(old);
             conn.client_name = self.allocator.dupe(u8, args[2]) catch null;
+            conn.view.setName(args[2]);
             conn.write_buf.appendSlice("+OK\r\n") catch {};
         } else if (equalsAsciiUpper(args[1], "GETNAME")) {
             if (conn.client_name) |name| {
@@ -1384,28 +1409,63 @@ pub const Worker = struct {
         } else if (equalsAsciiUpper(args[1], "ID")) {
             writeIntTo(&conn.write_buf, @intCast(conn.client_id));
         } else if (equalsAsciiUpper(args[1], "LIST")) {
-            // Minimal CLIENT LIST: return info for connections on this worker
-            var buf = std.array_list.Managed(u8).init(self.allocator);
-            defer buf.deinit();
-            var it = self.conns.iterator();
-            while (it.next()) |entry| {
-                const c = entry.value_ptr.*;
-                var line_buf: [256]u8 = undefined;
-                const line = std.fmt.bufPrint(&line_buf, "id={d} fd={d} db={d} name={s}\n", .{
-                    c.client_id, c.fd, c.selected_db, if (c.client_name) |n| n else "",
-                }) catch continue;
-                buf.appendSlice(line) catch {};
-            }
-            writeBulkTo(&conn.write_buf, buf.items);
+            self.writeClientList(conn);
         } else if (equalsAsciiUpper(args[1], "INFO")) {
-            var line_buf: [256]u8 = undefined;
-            const line = std.fmt.bufPrint(&line_buf, "id={d} fd={d} db={d} name={s}\n", .{
-                conn.client_id, conn.fd, conn.selected_db, if (conn.client_name) |n| n else "",
-            }) catch "";
-            writeBulkTo(&conn.write_buf, line);
+            self.writeClientInfo(conn);
         } else {
             conn.write_buf.appendSlice("+OK\r\n") catch {};
         }
+    }
+
+    /// CLIENT LIST — snapshot the global client registry and emit one
+    /// Redis-shaped line per connection, across every worker.
+    fn writeClientList(self: *Worker, conn: *Connection) void {
+        const snap = client_registry.snapshot(self.allocator) catch {
+            conn.write_buf.appendSlice("-ERR internal: client snapshot failed\r\n") catch {};
+            return;
+        };
+        defer self.allocator.free(snap);
+
+        var buf = std.array_list.Managed(u8).init(self.allocator);
+        defer buf.deinit();
+        buf.ensureTotalCapacity(snap.len * 192) catch {};
+        const now = nowMillisAccept();
+        for (snap) |v| {
+            appendClientLine(&buf, v, now);
+        }
+        writeBulkTo(&conn.write_buf, buf.items);
+    }
+
+    /// CLIENT INFO — single line for the calling connection. Redis-shaped.
+    fn writeClientInfo(self: *Worker, conn: *Connection) void {
+        _ = self;
+        var line_buf: [320]u8 = undefined;
+        const line = formatClientLine(&line_buf, conn.view, nowMillisAccept()) orelse "";
+        writeBulkTo(&conn.write_buf, line);
+    }
+
+    fn appendClientLine(out: *std.array_list.Managed(u8), v: client_registry.ClientView, now_ms: i64) void {
+        var line_buf: [320]u8 = undefined;
+        const line = formatClientLine(&line_buf, v, now_ms) orelse return;
+        out.appendSlice(line) catch {};
+    }
+
+    fn formatClientLine(buf: []u8, v: client_registry.ClientView, now_ms: i64) ?[]const u8 {
+        const age_sec = @divTrunc(@max(now_ms - v.connect_ts_ms, 0), 1000);
+        const idle_sec = @divTrunc(@max(now_ms - v.last_interaction_ts_ms, 0), 1000);
+        const flags: u8 = blk: {
+            if (v.in_multi) break :blk 'x';
+            if (v.pubsub_mode) break :blk 'P';
+            break :blk 'N';
+        };
+        const cmd_name: []const u8 = if (v.last_cmd_idx == 0xFF)
+            "NULL"
+        else
+            cmd_table.nameOf(v.last_cmd_idx);
+        return std.fmt.bufPrint(buf,
+            "id={d} addr={s} fd={d} name={s} age={d} idle={d} flags={c} db={d} qbuf={d} obl={d} cmd={s}\n",
+            .{ v.id, v.addrSlice(), v.fd, v.nameSlice(), age_sec, idle_sec, flags, v.db, v.qbuf, v.obl, cmd_name },
+        ) catch null;
     }
 
     // ── CONFIG subcommand handler ────────────────────────────────────
@@ -2977,6 +3037,30 @@ fn findCRLF(data: []const u8) ?usize {
         if (data[i] == '\r' and data[i + 1] == '\n') return i;
     }
     return null;
+}
+
+fn nowMillisAccept() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
+}
+
+/// Capture peer address as "ip:port" into the connection's ClientView.
+/// Best-effort: getpeername failures leave addr_len=0 (CLIENT LIST shows blank).
+fn capturePeerAddr(fd: i32, view: *client_registry.ClientView) void {
+    var sa: std.c.sockaddr.in = undefined;
+    var slen: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    if (std.c.getpeername(fd, @ptrCast(&sa), &slen) != 0) return;
+    const ip_be: u32 = sa.addr;
+    const b0: u8 = @truncate(ip_be);
+    const b1: u8 = @truncate(ip_be >> 8);
+    const b2: u8 = @truncate(ip_be >> 16);
+    const b3: u8 = @truncate(ip_be >> 24);
+    const port_be: u16 = sa.port;
+    const port: u16 = std.mem.bigToNative(u16, port_be);
+    var buf: [client_registry.MAX_ADDR_LEN + 1]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}.{d}.{d}.{d}:{d}", .{ b0, b1, b2, b3, port }) catch return;
+    view.setAddr(s);
 }
 
 fn isSelect(args: []const []const u8) bool {

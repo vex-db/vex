@@ -1831,6 +1831,10 @@ pub const CommandHandler = struct {
         try aw.writer.print("graph_delta_edges:{d}\r\n", .{self.graph.delta_edges.items.len});
         try aw.writer.print("graph_needs_compact:{d}\r\n", .{@intFromBool(self.graph.needs_compact)});
 
+        // Clients section
+        try aw.writer.writeAll("\r\n# Clients\r\n");
+        try aw.writer.print("connected_clients:{d}\r\n", .{obs_stats.connected_clients.load(.monotonic)});
+
         // Memory section
         try aw.writer.writeAll("\r\n# Memory\r\n");
         if (ru_ok) {

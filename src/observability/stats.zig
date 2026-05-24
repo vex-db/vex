@@ -46,9 +46,14 @@ pub const WorkerStats = struct {
 
 /// Process-wide counters that don't fit per-worker ownership (events that
 /// fire in shared code paths). Uses atomics — these fire on rare events
-/// (eviction, expiration) so contention is irrelevant.
+/// (eviction, expiration, accept/close) so contention is irrelevant.
 pub var evicted_keys: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 pub var expired_keys: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+/// Currently-connected client count. Incremented on each accept,
+/// decremented on each close. Mirrors the per-server active_connections
+/// atomic for easy reader access from handler/INFO.
+pub var connected_clients: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
 /// Wall-clock timestamp (ms since epoch) of the process start. Set once at
 /// startup, read by INFO for `uptime_in_seconds`.

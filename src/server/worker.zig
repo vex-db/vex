@@ -573,10 +573,13 @@ pub const Worker = struct {
         const count = self.active_connections.fetchAdd(1, .monotonic);
         if (count >= self.maxclients) {
             _ = self.active_connections.fetchSub(1, .monotonic);
+            self.stats.rejected_conns += 1;
             _ = std.c.write(fd, "-ERR max number of clients reached\r\n", 36);
             _ = std.c.close(fd);
             return;
         }
+        self.stats.accepted_conns += 1;
+        _ = stats_mod.connected_clients.fetchAdd(1, .monotonic);
 
         // TLS handshake (before adding to event loop)
         var ssl: ?*SSL = null;
@@ -584,6 +587,7 @@ pub const Worker = struct {
             ssl = tls.wrapFd(fd);
             if (ssl == null) {
                 _ = self.active_connections.fetchSub(1, .monotonic);
+                _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
                 _ = std.c.close(fd);
                 return;
             }
@@ -592,6 +596,7 @@ pub const Worker = struct {
         const conn = Connection.init(self.allocator, fd, self.requirepass != null) catch {
             if (ssl) |s| self.tls_ctx.?.sslClose(s);
             _ = self.active_connections.fetchSub(1, .monotonic);
+            _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
             _ = std.c.close(fd);
             return;
         };
@@ -600,6 +605,7 @@ pub const Worker = struct {
             if (conn.ssl) |s| self.tls_ctx.?.sslClose(s);
             conn.deinit(self.allocator);
             _ = self.active_connections.fetchSub(1, .monotonic);
+            _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
             _ = std.c.close(fd);
             return;
         };
@@ -608,6 +614,7 @@ pub const Worker = struct {
             if (conn.ssl) |s| self.tls_ctx.?.sslClose(s);
             conn.deinit(self.allocator);
             _ = self.active_connections.fetchSub(1, .monotonic);
+            _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
             _ = std.c.close(fd);
             return;
         };
@@ -629,6 +636,7 @@ pub const Worker = struct {
             kv.value.deinit(self.allocator);
         }
         _ = self.active_connections.fetchSub(1, .monotonic);
+        _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
         _ = std.c.close(fd);
     }
 

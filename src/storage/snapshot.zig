@@ -6,6 +6,8 @@ const GraphEngine = graph_mod.GraphEngine;
 const NodeId = graph_mod.NodeId;
 const EdgeId = graph_mod.EdgeId;
 const event_stats = @import("../observability/event_stats.zig");
+const atomic_io = @import("atomic_io.zig");
+const vex_log = @import("../log.zig");
 
 const MAGIC = [_]u8{ 'Z', 'G', 'D', 'B' };
 const FORMAT_VERSION: u8 = 2; // v2: SoA graph layout
@@ -220,9 +222,14 @@ pub fn save(
     // CRC-32 footer
     try appendU32(&buf, computeCrc32(buf.items));
 
-    const file = try std.Io.Dir.cwd().createFile(io, path, .{});
-    defer file.close(io);
-    try file.writeStreamingAll(io, buf.items);
+    // Atomic write — tmp file + fsync + rename + dir fsync. After a crash
+    // at any point, `path` either contains the previous snapshot or the
+    // new one. Never partial. Replaces the previous in-place create-and-
+    // truncate pattern (which would corrupt the snapshot on kill -9).
+    atomic_io.atomicWrite(allocator, path, buf.items) catch |err| {
+        vex_log.err("snapshot save failed for '{s}': {s}", .{ path, @errorName(err) });
+        return error.SnapshotSaveFailed;
+    };
 }
 
 // ── Load (v2 format) ────────────────────────────────────────────────

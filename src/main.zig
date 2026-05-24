@@ -843,4 +843,5 @@ test {
     _ = @import("observability/stats.zig");
     _ = @import("observability/event_stats.zig");
     _ = @import("observability/clients.zig");
+    _ = @import("storage/atomic_io.zig");
 }

@@ -3,6 +3,7 @@ const c = std.c;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const span = @import("../perf/span.zig");
+const vex_log = @import("../log.zig");
 
 const is_linux = builtin.os.tag == .linux;
 
@@ -102,12 +103,16 @@ pub const AOF = struct {
 
         if (!self.group_buf_inited) {
             // Fallback: direct write if group buffer not initialized
-            self.writeRecordDirect(args) catch {};
+            self.writeRecordDirect(args) catch |err| {
+                vex_log.warn("aof: direct write failed: {s}", .{@errorName(err)});
+            };
             return;
         }
 
         // Append binary record to in-memory buffer
-        self.appendRecord(args) catch {};
+        self.appendRecord(args) catch |err| {
+            vex_log.warn("aof: buffer append failed: {s}", .{@errorName(err)});
+        };
     }
 
     fn appendRecord(self: *AOF, args: []const []const u8) !void {
@@ -136,7 +141,9 @@ pub const AOF = struct {
         if (!self.group_buf_inited or self.group_buf.items.len == 0) return;
 
         const t0 = std.Io.Clock.Timestamp.now(self.io, .awake);
-        self.flushBufferToFile() catch {};
+        self.flushBufferToFile() catch |err| {
+            vex_log.warn("aof: flush to file failed: {s}", .{@errorName(err)});
+        };
         const t1 = std.Io.Clock.Timestamp.now(self.io, .awake);
         if (self.prof) |p| p.recordAofWrite(span.monotonicNs(t0, t1));
     }
@@ -364,12 +371,16 @@ pub fn replayFile(io: std.Io, allocator: Allocator, path: []const u8, handler: a
     var pos: usize = 0;
 
     while (pos + 10 <= data.len) {
+        const record_start = pos;
         pos += 8; // skip timestamp
 
         const arg_count = std.mem.readInt(u16, data[pos..][0..2], .little);
         pos += 2;
 
-        const args = allocator.alloc([]const u8, arg_count) catch break;
+        const args = allocator.alloc([]const u8, arg_count) catch |err| {
+            vex_log.warn("aof: replay aborted at offset {d} after {d} records: {s}", .{ record_start, count, @errorName(err) });
+            break;
+        };
         defer allocator.free(args);
 
         var valid = true;
@@ -388,10 +399,18 @@ pub fn replayFile(io: std.Io, allocator: Allocator, path: []const u8, handler: a
             pos += arg_len;
         }
 
-        if (!valid) break;
+        if (!valid) {
+            vex_log.warn(
+                "aof: truncated record at offset {d} (file_size={d}, records_replayed={d}); tail {d} bytes discarded",
+                .{ record_start, data.len, count, data.len - record_start },
+            );
+            break;
+        }
 
         discard_aw.clearRetainingCapacity();
-        handler.execute(args, &discard_aw.writer) catch {};
+        handler.execute(args, &discard_aw.writer) catch |err| {
+            vex_log.warn("aof: replay of record {d} at offset {d} failed: {s}", .{ count, record_start, @errorName(err) });
+        };
         count += 1;
     }
 

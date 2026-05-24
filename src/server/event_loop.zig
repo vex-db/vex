@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const linux = std.os.linux;
+const vex_log = @import("../log.zig");
 
 const is_linux = builtin.os.tag == .linux;
 const is_darwin = builtin.os.tag == .macos or builtin.os.tag == .ios or
@@ -390,7 +391,9 @@ pub const EventLoop = struct {
                 if (fd == self.notify_read_fd) {
                     out[out_idx] = .{ .fd = fd, .data = 0, .readable = true, .writable = false, .err = false, .hup = false };
                     out_idx += 1;
-                    self.submitPollAdd(fd, linux.POLL.IN) catch {};
+                    self.submitPollAdd(fd, linux.POLL.IN) catch |err| {
+                        vex_log.warn("event_loop: re-arm poll on notify fd={d} failed: {s}", .{ fd, @errorName(err) });
+                    };
                     continue;
                 }
 
@@ -419,13 +422,17 @@ pub const EventLoop = struct {
                     const poll_in: u32 = linux.POLL.IN;
                     const poll_out: u32 = linux.POLL.OUT;
                     const poll_mask: u32 = if (self.fd_want_write[idx]) poll_in | poll_out else poll_in;
-                    self.submitPollAdd(fd, poll_mask) catch {};
+                    self.submitPollAdd(fd, poll_mask) catch |err| {
+                        vex_log.warn("event_loop: re-arm poll on fd={d} failed: {s}", .{ fd, @errorName(err) });
+                    };
                 }
             }
         }
 
         // Flush any re-arm SQEs we just queued (non-blocking submit)
-        _ = self.ring.submit() catch {};
+        _ = self.ring.submit() catch |err| {
+            vex_log.warn("event_loop: ring submit (re-arm batch) failed: {s}", .{@errorName(err)});
+        };
 
         return out[0..out_idx];
     }
@@ -543,7 +550,9 @@ pub const EventLoop = struct {
     /// Flush any queued SQEs to the kernel (non-blocking).
     pub fn flushSqes(self: *EventLoop) void {
         if (is_linux and self.use_uring) {
-            _ = self.ring.submit() catch {};
+            _ = self.ring.submit() catch |err| {
+                vex_log.warn("event_loop: flushSqes ring.submit failed: {s}", .{@errorName(err)});
+            };
         }
     }
 

@@ -17,6 +17,7 @@ var g_kv: ?*KVStore = null;
 var g_graph: ?*GraphEngine = null;
 var g_io: ?std.Io = null;
 var g_allocator: ?std.mem.Allocator = null;
+var g_aof: ?*AOF = null;
 var g_repl_follower: ?*@import("cluster/replication.zig").ReplicationFollower = null;
 var g_cluster_conf: ?*@import("cluster/config.zig").ClusterConfig = null;
 // Storage for the ReplicationLeader created during failover promotion.
@@ -150,23 +151,52 @@ fn getSnapshot(allocator: std.mem.Allocator) ?[]u8 {
 }
 
 /// Load a binary snapshot on the follower.
+/// Apply a full-sync snapshot from the leader. The sequence is ordered
+/// so a crash at any point leaves vex in a consistent state on restart:
+///
+///   1. Truncate the local AOF first. If we crash here, restart sees an
+///      empty AOF and the old vex.zdb — we lose the brief delta between
+///      truncate and snapshot install but won't replay stale records on
+///      top of new state.
+///   2. Atomically write the new snapshot bytes to <data_dir>/vex.zdb via
+///      atomic_io.atomicWrite. After this rename, vex.zdb either has the
+///      old content or the new — never partial.
+///   3. Load the snapshot into the in-memory KV + Graph.
+///
+/// On crash between step 2 and 3, restart reads the new vex.zdb correctly.
 fn loadSnapshot(data: []const u8) bool {
     const kv_ptr = g_kv orelse return false;
     const graph_ptr = g_graph orelse return false;
     const io = g_io orelse return false;
     const allocator = kv_ptr.allocator;
 
-    // Write snapshot to temp file
-    const tmp_path = "/tmp/vex_repl_load.zdb";
-    const file = std.Io.Dir.cwd().createFile(io, tmp_path, .{}) catch return false;
-    file.writeStreamingAll(io, data) catch {
-        file.close(io);
+    // Step 1: truncate the local AOF first so stale records don't replay
+    // over the about-to-be-applied snapshot if we crash mid-install.
+    if (g_aof) |a| {
+        a.truncate() catch |err| {
+            vex_log.warn("repl-follower: AOF truncate before full-sync failed: {s}", .{@errorName(err)});
+        };
+    }
+
+    // Step 2: atomically install the snapshot into the canonical vex.zdb.
+    // Without this, full-sync wrote to a temp file that never made it into
+    // the data dir — restart would load stale state.
+    const dd = g_data_dir orelse {
+        vex_log.warn("repl-follower: full-sync requires data-dir", .{});
         return false;
     };
-    file.close(io);
+    const final_path = std.fmt.allocPrint(allocator, "{s}/vex.zdb", .{dd}) catch return false;
+    defer allocator.free(final_path);
+    @import("storage/atomic_io.zig").atomicWrite(allocator, final_path, data) catch |err| {
+        vex_log.err("repl-follower: full-sync atomicWrite failed: {s}", .{@errorName(err)});
+        return false;
+    };
 
-    // Load snapshot
-    snapshot.load(io, allocator, kv_ptr, graph_ptr, tmp_path) catch return false;
+    // Step 3: load the new state into the in-memory engine.
+    snapshot.load(io, allocator, kv_ptr, graph_ptr, final_path) catch |err| {
+        vex_log.err("repl-follower: full-sync snapshot.load failed: {s}", .{@errorName(err)});
+        return false;
+    };
     return true;
 }
 
@@ -249,7 +279,10 @@ pub fn main(init: std.process.Init) !void {
         aof_tmp.prof = prof;
         aof_tmp.initGroupBuf(allocator);
         aof_instance = aof_tmp;
-        if (aof_instance) |*a| a.setFsyncMode(allocator, config.appendfsync);
+        if (aof_instance) |*a| {
+            a.setFsyncMode(allocator, config.appendfsync);
+            g_aof = a;
+        }
         vex_log.info("aof: appendfsync={s}", .{config.appendfsync.label()});
 
         var replay_db = std.atomic.Value(u8).init(0);

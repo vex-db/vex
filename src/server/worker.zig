@@ -13,6 +13,7 @@ const span = @import("../perf/span.zig");
 const ct = @import("../command/comptime_dispatch.zig");
 const replication = @import("../cluster/replication.zig");
 const TlsContext = @import("tls.zig").TlsContext;
+const vex_log = @import("../log.zig");
 const SSL = @import("tls.zig").SSL;
 const ListStore = @import("../engine/list.zig").ListStore;
 const HashStore = @import("../engine/hash.zig").HashStore;
@@ -1185,7 +1186,7 @@ pub const Worker = struct {
         // Encode command as write_forward payload (same format followers use)
         const payload = @import("../cluster/protocol.zig").encodeWriteForward(self.allocator, args) catch return;
         defer self.allocator.free(payload);
-        std.debug.print("[repl-broadcast] cmd={s} payload_len={d}\n", .{ if (args.len > 0) args[0] else "?", payload.len });
+        vex_log.debug("repl-broadcast: cmd={s} payload_len={d}", .{ if (args.len > 0) args[0] else "?", payload.len });
         leader.broadcastMutation(payload);
     }
 
@@ -3011,7 +3012,7 @@ fn constantTimeEql(a: []const u8, b: []const u8) bool {
 }
 
 fn log(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("[worker] " ++ fmt ++ "\n", args);
+    vex_log.info(fmt, args);
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ const protocol = @import("protocol.zig");
 const config_mod = @import("config.zig");
 const ClusterConfig = config_mod.ClusterConfig;
 const ClusterNode = config_mod.ClusterNode;
+const vex_log = @import("../log.zig");
 
 fn nowMs() i64 {
     var ts: std.c.timespec = undefined;
@@ -48,7 +49,7 @@ pub fn probeForLeader(allocator: Allocator, config: *const config_mod.ClusterCon
 
         if (std.c.connect(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) >= 0) {
             _ = std.c.close(sock);
-            std.debug.print("[failover] found active leader: node {d} at {s}:{d}\n", .{ node.id, node.host, repl_port });
+            vex_log.info("failover: found active leader node {d} at {s}:{d}", .{ node.id, node.host, repl_port });
             return node;
         }
         _ = std.c.close(sock);
@@ -127,9 +128,9 @@ pub const ReplicationLeader = struct {
         var i: usize = 0;
         while (i < self.follower_fds.items.len) {
             const fd = self.follower_fds.items[i];
-            std.debug.print("[repl-leader] broadcasting to fd={d} len={d}\n", .{ fd, aof_record.len });
-            protocol.writeFrame(fd, .repl_data, aof_record) catch {
-                std.debug.print("[repl-leader] broadcast to fd={d} failed\n", .{fd});
+            vex_log.debug("repl-leader: broadcasting to fd={d} len={d}", .{ fd, aof_record.len });
+            protocol.writeFrame(fd, .repl_data, aof_record) catch |err| {
+                vex_log.warn("repl-leader: broadcast to fd={d} failed ({s}); closing follower", .{ fd, @errorName(err) });
                 _ = std.c.close(fd);
                 _ = self.follower_fds.swapRemove(i);
                 continue;
@@ -157,7 +158,7 @@ pub const ReplicationLeader = struct {
         if (std.c.bind(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) < 0) return;
         if (std.c.listen(sock, 16) < 0) return;
 
-        std.debug.print("[repl-leader] listening on :{d}\n", .{self.listen_port});
+        vex_log.info("repl-leader: listening on :{d}", .{self.listen_port});
 
         while (self.running.load(.acquire)) {
             // Non-blocking accept with timeout (poll)
@@ -174,7 +175,7 @@ pub const ReplicationLeader = struct {
             const client_fd = std.c.accept(sock, @ptrCast(&client_addr), &addr_len);
             if (client_fd < 0) continue;
 
-            std.debug.print("[repl-leader] connection accepted (fd={d})\n", .{client_fd});
+            vex_log.info("repl-leader: connection accepted (fd={d})", .{client_fd});
 
             // DON'T add to follower_fds yet — wait until we know this is a repl_stream
             // connection (identified by repl_request frame). Forward connections send
@@ -245,7 +246,7 @@ pub const ReplicationLeader = struct {
             if (poll_rc <= 0) continue;
 
             const frame = protocol.readFrame(fd, self.allocator) catch |err| {
-                std.debug.print("[repl-leader] follower fd={d} read error: {s}\n", .{ fd, @errorName(err) });
+                vex_log.warn("repl-leader: follower fd={d} read error: {s}", .{ fd, @errorName(err) });
                 break;
             };
 
@@ -284,13 +285,13 @@ pub const ReplicationLeader = struct {
                     // If seq=0, send full sync (snapshot transfer)
                     if (req_seq == 0) {
                         if (self.snapshot_fn) |snap_fn| {
-                            std.debug.print("[repl-leader] follower fd={d} requesting full sync\n", .{fd});
+                            vex_log.info("repl-leader: follower fd={d} requesting full sync", .{fd});
                             if (snap_fn(self.allocator)) |snap_data| {
                                 defer self.allocator.free(snap_data);
-                                protocol.writeFrame(fd, .full_sync_data, snap_data) catch {
-                                    std.debug.print("[repl-leader] full sync write failed for fd={d}\n", .{fd});
+                                protocol.writeFrame(fd, .full_sync_data, snap_data) catch |err| {
+                                    vex_log.warn("repl-leader: full sync write failed for fd={d}: {s}", .{ fd, @errorName(err) });
                                 };
-                                std.debug.print("[repl-leader] full sync sent to fd={d} ({d} bytes)\n", .{ fd, snap_data.len });
+                                vex_log.info("repl-leader: full sync sent to fd={d} ({d} bytes)", .{ fd, snap_data.len });
                             }
                         }
                     }
@@ -300,7 +301,7 @@ pub const ReplicationLeader = struct {
                     self.follower_fds.append(fd) catch {};
                     _ = std.c.pthread_mutex_unlock(&self.mutex);
                     _ = self.follower_count.fetchAdd(1, .monotonic);
-                    std.debug.print("[repl-leader] follower fd={d} registered for replication stream (from seq={d})\n", .{ fd, req_seq });
+                    vex_log.info("repl-leader: follower fd={d} registered for replication stream (from seq={d})", .{ fd, req_seq });
                 },
                 .heartbeat => {
                     if (frame.payload.len > 0) self.allocator.free(@constCast(frame.payload));
@@ -406,7 +407,7 @@ pub const ReplicationFollower = struct {
             }
         }
 
-        std.debug.print("[repl-follower] connected to leader {s}:{d}\n", .{ leader.host, repl_port });
+        vex_log.info("repl-follower: connected to leader {s}:{d}", .{ leader.host, repl_port });
     }
 
     pub fn start(self: *ReplicationFollower) !void {
@@ -505,7 +506,7 @@ pub const ReplicationFollower = struct {
 
         // If not promoted and still running, attempt reconnection to a new leader
         while (self.running.load(.acquire) and !self.promoted.load(.acquire)) {
-            std.debug.print("[failover] lost leader connection, attempting reconnection...\n", .{});
+            vex_log.warn("failover: lost leader connection, attempting reconnection", .{});
 
             // Close stale fds
             if (self.leader_fd >= 0) {
@@ -552,7 +553,7 @@ pub const ReplicationFollower = struct {
                             }
                         }
 
-                        std.debug.print("[failover] reconnected to new leader node {d} at {s}:{d}\n", .{ leader_node.id, leader_node.host, repl_port });
+                        vex_log.info("failover: reconnected to new leader node {d} at {s}:{d}", .{ leader_node.id, leader_node.host, repl_port });
                         reconnected = true;
                         break;
                     }
@@ -561,7 +562,7 @@ pub const ReplicationFollower = struct {
             }
 
             if (!reconnected) {
-                std.debug.print("[failover] exhausted reconnection attempts\n", .{});
+                vex_log.err("failover: exhausted reconnection attempts", .{});
                 break;
             }
 
@@ -593,9 +594,9 @@ pub const ReplicationFollower = struct {
             const now = nowMs();
             const last_hb = self.last_heartbeat_ms.load(.acquire);
             if (last_hb > 0 and (now - last_hb) > HEARTBEAT_TIMEOUT_MS) {
-                std.debug.print("[failover] leader heartbeat timeout ({d}ms since last)\n", .{now - last_hb});
+                vex_log.warn("failover: leader heartbeat timeout ({d}ms since last)", .{now - last_hb});
                 if (self.config.amIHighestPriority()) {
-                    std.debug.print("[failover] I am highest priority follower — PROMOTING TO LEADER\n", .{});
+                    vex_log.warn("failover: highest priority follower — promoting to leader", .{});
                     self.promoted.store(true, .release);
                     if (self.promote_fn) |promote| promote();
                     return; // Exit — we're the leader now
@@ -604,11 +605,11 @@ pub const ReplicationFollower = struct {
                     if (failover_wait_count > 3) {
                         // Higher priority follower hasn't promoted — check if a new leader appeared
                         if (probeForLeader(self.allocator, self.config)) |_| {
-                            std.debug.print("[failover] detected new leader — reconnecting\n", .{});
+                            vex_log.info("failover: detected new leader — reconnecting", .{});
                             return; // Exit to reconnect in outer loop
                         }
                     }
-                    std.debug.print("[failover] waiting for higher priority follower to promote (attempt {d})\n", .{failover_wait_count});
+                    vex_log.info("failover: waiting for higher priority follower to promote (attempt {d})", .{failover_wait_count});
                     // Reset timer — give higher priority node time to promote
                     self.last_heartbeat_ms.store(now, .release);
                 }
@@ -617,10 +618,10 @@ pub const ReplicationFollower = struct {
             if (poll_rc <= 0) continue;
 
             const frame = protocol.readFrame(self.leader_fd, self.allocator) catch |err| {
-                std.debug.print("[repl-follower] read error: {s}\n", .{@errorName(err)});
+                vex_log.warn("repl-follower: read error: {s}", .{@errorName(err)});
                 return; // Exit to reconnect
             };
-            std.debug.print("[repl-follower] received frame type={d}\n", .{@intFromEnum(frame.frame_type)});
+            vex_log.debug("repl-follower: received frame type={d}", .{@intFromEnum(frame.frame_type)});
 
             // Reset failover counter on any valid frame
             failover_wait_count = 0;
@@ -639,12 +640,12 @@ pub const ReplicationFollower = struct {
                     _ = self.replayed_count.fetchAdd(1, .monotonic);
                 },
                 .full_sync_data => {
-                    std.debug.print("[repl-follower] received full sync ({d} bytes)\n", .{frame.payload.len});
+                    vex_log.info("repl-follower: received full sync ({d} bytes)", .{frame.payload.len});
                     if (self.load_snapshot_fn) |load_fn| {
                         if (load_fn(frame.payload)) {
-                            std.debug.print("[repl-follower] full sync loaded successfully\n", .{});
+                            vex_log.info("repl-follower: full sync loaded successfully", .{});
                         } else {
-                            std.debug.print("[repl-follower] full sync load failed\n", .{});
+                            vex_log.err("repl-follower: full sync load failed", .{});
                         }
                     }
                     if (frame.payload.len > 0) self.allocator.free(@constCast(frame.payload));

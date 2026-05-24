@@ -10,6 +10,7 @@ const KeysMode = @import("../command/handler.zig").KeysMode;
 const AOF = @import("../storage/aof.zig").AOF;
 const span = @import("../perf/span.zig");
 const TlsContext = @import("tls.zig").TlsContext;
+const vex_log = @import("../log.zig");
 
 const READ_BUF_SIZE = 64 * 1024; // 64 KiB per client
 const JOB_QUEUE_CAP: usize = 65_536;
@@ -1916,5 +1917,5 @@ fn writeAll(fd: posix.socket_t, data: []const u8) void {
 }
 
 fn log(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("[vex] " ++ fmt ++ "\n", args);
+    vex_log.info(fmt, args);
 }

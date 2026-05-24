@@ -5,6 +5,7 @@ const vex_log = @import("../log.zig");
 const config_mod = @import("config.zig");
 const ClusterConfig = config_mod.ClusterConfig;
 const ClusterNode = config_mod.ClusterNode;
+const atomic_io = @import("../storage/atomic_io.zig");
 
 fn nowMs() i64 {
     var ts: std.c.timespec = undefined;
@@ -27,6 +28,48 @@ pub const HEARTBEAT_TIMEOUT_MS: i64 = 15000; // 3 missed heartbeats = leader dea
 /// both may be null in standalone mode.
 pub var current_leader_ptr: std.atomic.Value(?*ReplicationLeader) = std.atomic.Value(?*ReplicationLeader).init(null);
 pub var current_follower_ptr: std.atomic.Value(?*ReplicationFollower) = std.atomic.Value(?*ReplicationFollower).init(null);
+
+/// Process-wide cluster epoch. Monotonically increasing across leader
+/// promotions. Followers and old leaders use this to reject frames from
+/// stale leaders (preventing split-brain writes from being applied).
+///
+/// Persisted to `<data_dir>/vex.epoch` via atomic_io on every change.
+/// Loaded at startup; defaults to 0 when no prior file exists.
+pub var current_epoch: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+/// Load `<data_dir>/vex.epoch` into `current_epoch`. Called once at
+/// startup from main. Missing file is treated as epoch=0 (fresh cluster).
+pub fn loadEpoch(allocator: Allocator, data_dir: []const u8) void {
+    const path = std.fmt.allocPrint(allocator, "{s}/vex.epoch", .{data_dir}) catch return;
+    defer allocator.free(path);
+    const path_z = allocator.dupeSentinel(u8, path, 0) catch return;
+    defer allocator.free(path_z);
+    const fd = std.c.open(path_z.ptr, .{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
+    if (fd < 0) return; // missing → epoch stays 0
+    defer _ = std.c.close(fd);
+    var buf: [16]u8 = undefined;
+    const n = std.c.read(fd, &buf, buf.len);
+    if (n < 8) return;
+    const epoch = std.mem.readInt(u64, buf[0..8], .little);
+    current_epoch.store(epoch, .release);
+    vex_log.info("cluster: loaded epoch {d} from vex.epoch", .{epoch});
+}
+
+/// Atomically bump and persist `current_epoch`. The promoter (vex-sentinel
+/// via VEX.PROMOTE, or the legacy auto-promote path during failover) calls
+/// this before declaring itself leader. Returns the new epoch.
+pub fn bumpAndPersistEpoch(allocator: Allocator, data_dir: []const u8, new_epoch: u64) !u64 {
+    const current = current_epoch.load(.monotonic);
+    if (new_epoch <= current) return error.StaleEpoch;
+    const path = try std.fmt.allocPrint(allocator, "{s}/vex.epoch", .{data_dir});
+    defer allocator.free(path);
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &bytes, new_epoch, .little);
+    try atomic_io.atomicWrite(allocator, path, &bytes);
+    current_epoch.store(new_epoch, .release);
+    vex_log.info("cluster: epoch advanced to {d} (persisted)", .{new_epoch});
+    return new_epoch;
+}
 
 /// Probe if any other node in the cluster is already acting as leader.
 /// Tries connecting to each node's replication port (base_port + 10000).
@@ -436,7 +479,7 @@ pub const ReplicationLeader = struct {
             _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
             const now_ms: i64 = @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
 
-            const hb = protocol.encodeHeartbeat(self.mutation_seq.load(.monotonic), now_ms);
+            const hb = protocol.encodeHeartbeat(current_epoch.load(.monotonic), self.mutation_seq.load(.monotonic), now_ms);
 
             // Snapshot followers, release the lock, then enqueue.
             _ = std.c.pthread_mutex_lock(&self.mutex);
@@ -968,8 +1011,22 @@ pub const ReplicationFollower = struct {
                 .heartbeat => {
                     if (frame.payload.len >= 16) {
                         if (protocol.decodeHeartbeat(frame.payload)) |hb| {
-                            self.leader_seq.store(hb.mutation_seq, .release);
-                            self.last_heartbeat_ms.store(hb.timestamp_ms, .release);
+                            // Epoch protection: reject heartbeats from stale
+                            // leaders. If the incoming epoch is older than
+                            // what we know, the sender is no longer
+                            // authoritative — drop the heartbeat so the
+                            // follower detects timeout and reconnects.
+                            const my_epoch = current_epoch.load(.monotonic);
+                            if (hb.epoch < my_epoch) {
+                                vex_log.warn("repl-follower: rejecting heartbeat from stale epoch {d} (current {d})", .{ hb.epoch, my_epoch });
+                            } else {
+                                if (hb.epoch > my_epoch) {
+                                    vex_log.info("repl-follower: leader epoch advanced from {d} to {d}", .{ my_epoch, hb.epoch });
+                                    current_epoch.store(hb.epoch, .release);
+                                }
+                                self.leader_seq.store(hb.mutation_seq, .release);
+                                self.last_heartbeat_ms.store(hb.timestamp_ms, .release);
+                            }
                         } else |_| {}
                     }
                     if (frame.payload.len > 0) self.allocator.free(@constCast(frame.payload));

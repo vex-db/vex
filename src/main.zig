@@ -22,6 +22,8 @@ var g_cluster_conf: ?*@import("cluster/config.zig").ClusterConfig = null;
 // Storage for the ReplicationLeader created during failover promotion.
 // Must be a global so the pointer survives the promote_fn call.
 var g_promoted_leader: ?@import("cluster/replication.zig").ReplicationLeader = null;
+// Data directory snapshot for failover promotion (epoch persistence path).
+var g_data_dir: ?[]const u8 = null;
 
 /// Execute a forwarded write by sending it to the local RESP port as a client.
 /// This ensures it goes through the worker → ConcurrentKV path (not plain KVStore).
@@ -76,8 +78,21 @@ fn promoteToLeader() void {
     const allocator = g_allocator orelse return;
     const rf = g_repl_follower orelse return;
     const cc = g_cluster_conf orelse return;
+    const ReplMod = @import("cluster/replication.zig");
 
     vex_log.warn("failover: promoting to leader", .{});
+
+    // Bump and persist the cluster epoch BEFORE declaring leadership.
+    // Without this, an old leader that comes back up could continue
+    // accepting writes and create split-brain.
+    if (g_data_dir) |dd| {
+        const next_epoch = ReplMod.current_epoch.load(.monotonic) + 1;
+        _ = ReplMod.bumpAndPersistEpoch(allocator, dd, next_epoch) catch |err| {
+            vex_log.err("failover: failed to persist new epoch: {s}", .{@errorName(err)});
+            // Continue anyway — without persistence the promotion is less
+            // safe, but refusing to promote leaves the cluster dead.
+        };
+    }
 
     // Close forward connection — we no longer forward writes
     if (rf.forward_fd >= 0) {
@@ -86,7 +101,7 @@ fn promoteToLeader() void {
     }
 
     // Create and start a ReplicationLeader
-    g_promoted_leader = @import("cluster/replication.zig").ReplicationLeader.init(allocator, cc, g_local_port);
+    g_promoted_leader = ReplMod.ReplicationLeader.init(allocator, cc, g_local_port);
     g_promoted_leader.?.execute_fn = executeForwardedWrite;
     g_promoted_leader.?.snapshot_fn = getSnapshot;
     g_promoted_leader.?.start() catch |err| {
@@ -98,7 +113,6 @@ fn promoteToLeader() void {
     rf.promoted_leader_ptr.store(@intFromPtr(&g_promoted_leader.?), .release);
 
     // Update observability handles: we're no longer a follower, we're a leader.
-    const ReplMod = @import("cluster/replication.zig");
     ReplMod.current_follower_ptr.store(null, .release);
     ReplMod.current_leader_ptr.store(&g_promoted_leader.?, .release);
 
@@ -186,6 +200,12 @@ pub fn main(init: std.process.Init) !void {
     defer vex_log.global.deinit();
     @import("observability/stats.zig").start_time_ms = nowMillis();
     @import("observability/event_stats.zig").threshold_us.store(config.latency_threshold_us, .monotonic);
+    // Cluster epoch — load from `<data_dir>/vex.epoch` if present.
+    // Promotion paths persist a new epoch before declaring leadership.
+    if (!config.no_persistence) {
+        @import("cluster/replication.zig").loadEpoch(allocator, config.data_dir);
+        g_data_dir = config.data_dir;
+    }
     var prof_state: span.Profile = undefined;
     var prof: ?*span.Profile = null;
     if (config.profile) {

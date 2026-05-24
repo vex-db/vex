@@ -72,21 +72,38 @@ pub fn readFrame(fd: i32, allocator: Allocator) !Frame {
     return .{ .frame_type = frame_type, .payload = payload };
 }
 
-/// Build a heartbeat payload: leader's current mutation_seq + timestamp.
-pub fn encodeHeartbeat(mutation_seq: u64, timestamp_ms: i64) [16]u8 {
-    var buf: [16]u8 = undefined;
-    std.mem.writeInt(u64, buf[0..8], mutation_seq, .little);
-    std.mem.writeInt(i64, buf[8..16], timestamp_ms, .little);
+/// Build a heartbeat payload: leader's epoch + current mutation_seq + timestamp.
+///
+/// The epoch field (added in v2 of the protocol) lets followers reject
+/// frames from a stale leader. On promotion the leader's epoch must be
+/// strictly higher than any epoch the cluster has previously seen.
+pub fn encodeHeartbeat(epoch: u64, mutation_seq: u64, timestamp_ms: i64) [24]u8 {
+    var buf: [24]u8 = undefined;
+    std.mem.writeInt(u64, buf[0..8], epoch, .little);
+    std.mem.writeInt(u64, buf[8..16], mutation_seq, .little);
+    std.mem.writeInt(i64, buf[16..24], timestamp_ms, .little);
     return buf;
 }
 
-/// Decode a heartbeat payload.
-pub fn decodeHeartbeat(payload: []const u8) !struct { mutation_seq: u64, timestamp_ms: i64 } {
-    if (payload.len < 16) return error.InvalidPayload;
-    return .{
-        .mutation_seq = std.mem.readInt(u64, payload[0..8], .little),
-        .timestamp_ms = std.mem.readInt(i64, payload[8..16], .little),
-    };
+/// Decode a heartbeat payload. Returns epoch=0 for v1 payloads (16 bytes)
+/// for one-version back-compat during rolling deploys; new code should
+/// always send v2 (24 bytes).
+pub fn decodeHeartbeat(payload: []const u8) !struct { epoch: u64, mutation_seq: u64, timestamp_ms: i64 } {
+    if (payload.len >= 24) {
+        return .{
+            .epoch = std.mem.readInt(u64, payload[0..8], .little),
+            .mutation_seq = std.mem.readInt(u64, payload[8..16], .little),
+            .timestamp_ms = std.mem.readInt(i64, payload[16..24], .little),
+        };
+    }
+    if (payload.len >= 16) {
+        return .{
+            .epoch = 0,
+            .mutation_seq = std.mem.readInt(u64, payload[0..8], .little),
+            .timestamp_ms = std.mem.readInt(i64, payload[8..16], .little),
+        };
+    }
+    return error.InvalidPayload;
 }
 
 /// Build a repl_request payload: just a u64 sequence number.
@@ -171,6 +188,23 @@ test "encode/decode repl_request" {
     const encoded = encodeReplRequest(42);
     const decoded = try decodeReplRequest(&encoded);
     try std.testing.expectEqual(@as(u64, 42), decoded);
+}
+
+test "encode/decode heartbeat v2 — round-trip" {
+    const encoded = encodeHeartbeat(7, 100, 1234567890);
+    const decoded = try decodeHeartbeat(&encoded);
+    try std.testing.expectEqual(@as(u64, 7), decoded.epoch);
+    try std.testing.expectEqual(@as(u64, 100), decoded.mutation_seq);
+    try std.testing.expectEqual(@as(i64, 1234567890), decoded.timestamp_ms);
+}
+
+test "decode heartbeat v1 — epoch defaults to 0" {
+    var v1_buf: [16]u8 = undefined;
+    std.mem.writeInt(u64, v1_buf[0..8], 42, .little);
+    std.mem.writeInt(i64, v1_buf[8..16], 1234567890, .little);
+    const decoded = try decodeHeartbeat(&v1_buf);
+    try std.testing.expectEqual(@as(u64, 0), decoded.epoch);
+    try std.testing.expectEqual(@as(u64, 42), decoded.mutation_seq);
 }
 
 test "encode/decode write_forward" {

@@ -281,6 +281,15 @@ pub const CommandHandler = struct {
             else => {},
         }
 
+        // ── Admin commands (VEX.*) — cluster + operational tooling ────
+        if (cmd.len >= 4 and std.mem.eql(u8, cmd[0..4], "VEX.")) {
+            const sub = cmd[4..];
+            if (std.mem.eql(u8, sub, "PROMOTE")) return self.cmdVexPromote(args, w);
+            if (std.mem.eql(u8, sub, "STATUS")) return self.cmdVexStatus(w);
+            try resp.serializeError(w, "unknown VEX subcommand");
+            return;
+        }
+
         // ── Graph commands (GRAPH.*) — dispatch on suffix ────────────
         if (cmd.len >= 6 and std.mem.eql(u8, cmd[0..6], "GRAPH.")) {
             const sub = cmd[6..];
@@ -2291,6 +2300,69 @@ pub const CommandHandler = struct {
             return;
         }
         try resp.serializeError(w, "unknown MEMORY subcommand");
+    }
+
+    /// VEX.PROMOTE <epoch> — admin command for cluster failover.
+    /// Atomically validates `epoch > current_epoch`, persists the new epoch
+    /// to vex.epoch, and (when cluster mode is configured) starts the
+    /// replication leader. Intended to be called by vex-sentinel; not used
+    /// by regular clients.
+    fn cmdVexPromote(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (args.len < 2) {
+            try resp.serializeError(w, "wrong number of arguments for 'vex.promote'");
+            return;
+        }
+        const requested_epoch = std.fmt.parseInt(u64, args[1], 10) catch {
+            try resp.serializeError(w, "invalid epoch (must be a positive integer)");
+            return;
+        };
+        const repl_mod = @import("../cluster/replication.zig");
+        const dd = self.data_dir orelse {
+            try resp.serializeError(w, "vex.promote requires --data-dir (persistence) to be configured");
+            return;
+        };
+        _ = repl_mod.bumpAndPersistEpoch(self.allocator, dd, requested_epoch) catch |err| switch (err) {
+            error.StaleEpoch => {
+                try resp.serializeError(w, "epoch must be strictly greater than the current epoch");
+                return;
+            },
+            else => {
+                try resp.serializeError(w, "failed to persist epoch");
+                return;
+            },
+        };
+        // Note: the cluster role flip itself (starting ReplicationLeader,
+        // updating current_leader_ptr) is initiated by main.zig via the
+        // existing promoteToLeader path. VEX.PROMOTE only persists the new
+        // epoch; the operator-driven start sequence still has to run for
+        // the node to actually become a leader. vex-sentinel will drive
+        // both in concert in a follow-on PR.
+        try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// VEX.STATUS — return role / epoch / replication info as a flat map.
+    /// Used by vex-sentinel's health poll.
+    fn cmdVexStatus(self: *CommandHandler, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        _ = self;
+        const repl_mod = @import("../cluster/replication.zig");
+        const epoch = repl_mod.current_epoch.load(.monotonic);
+        const cur_leader = repl_mod.current_leader_ptr.load(.acquire);
+        const cur_follower = repl_mod.current_follower_ptr.load(.acquire);
+
+        const role: []const u8 = if (cur_leader != null) "leader" else if (cur_follower != null) "follower" else "standalone";
+        const repl_offset: u64 = if (cur_leader) |ld| ld.mutation_seq.load(.monotonic) else if (cur_follower) |fl| fl.local_seq.load(.monotonic) else 0;
+        const slaves: u32 = if (cur_leader) |ld| ld.follower_count.load(.monotonic) else 0;
+
+        // Flat array of [key, value, key, value, ...] like MEMORY STATS.
+        try resp.serializeArrayHeader(w, 8);
+        try resp.serializeBulkString(w, "role");
+        try resp.serializeBulkString(w, role);
+        try resp.serializeBulkString(w, "epoch");
+        try resp.serializeInteger(w, @intCast(epoch));
+        try resp.serializeBulkString(w, "repl_offset");
+        try resp.serializeInteger(w, @intCast(repl_offset));
+        try resp.serializeBulkString(w, "connected_slaves");
+        try resp.serializeInteger(w, @intCast(slaves));
     }
 
     // ── Graph Commands ────────────────────────────────────────────────

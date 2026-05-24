@@ -258,6 +258,7 @@ pub const CommandHandler = struct {
                     if (std.mem.eql(u8, cmd, "HINCRBY")) return self.cmdHincrby(args, w);
                 },
                 'Z' => if (std.mem.eql(u8, cmd, "ZINCRBY")) return self.cmdZincrby(args, w),
+                'S' => if (std.mem.eql(u8, cmd, "SLOWLOG")) return self.cmdSlowlog(args, w),
                 else => {},
             },
             8 => switch (first) {
@@ -1940,6 +1941,79 @@ pub const CommandHandler = struct {
 
     fn cmdCommand(_: *CommandHandler, w: *std.Io.Writer) std.Io.Writer.Error!void {
         try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// SLOWLOG GET [count] | SLOWLOG LEN | SLOWLOG RESET | SLOWLOG HELP
+    /// Redis-compatible. Aggregates per-worker rings; entries returned
+    /// newest-first.
+    fn cmdSlowlog(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (args.len < 2) {
+            try resp.serializeError(w, "wrong number of arguments for 'slowlog'");
+            return;
+        }
+        var sub_buf: [16]u8 = undefined;
+        const sub = toUpperBuf(args[1], &sub_buf);
+
+        if (std.mem.eql(u8, sub, "LEN")) {
+            try resp.serializeInteger(w, @intCast(obs_stats.slowlogTotalLen()));
+            return;
+        }
+        if (std.mem.eql(u8, sub, "RESET")) {
+            obs_stats.slowlogResetAll(self.allocator);
+            try resp.serializeSimpleString(w, "OK");
+            return;
+        }
+        if (std.mem.eql(u8, sub, "HELP")) {
+            const lines = [_][]const u8{
+                "SLOWLOG GET [count] -- Return up to <count> (default 10) most recent slow commands.",
+                "SLOWLOG LEN         -- Total number of slowlog entries across workers.",
+                "SLOWLOG RESET       -- Clear the slowlog ring on every worker.",
+                "SLOWLOG HELP        -- Show this help.",
+            };
+            try resp.serializeArrayHeader(w, lines.len);
+            for (lines) |line| try resp.serializeBulkString(w, line);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "GET")) {
+            const requested: usize = if (args.len >= 3)
+                std.fmt.parseInt(usize, args[2], 10) catch 10
+            else
+                10;
+            const entries = obs_stats.slowlogSnapshot(self.allocator, requested) catch {
+                try resp.serializeError(w, "internal: slowlog snapshot failed");
+                return;
+            };
+            defer {
+                for (entries) |e| self.allocator.free(e.args_blob);
+                self.allocator.free(entries);
+            }
+            try resp.serializeArrayHeader(w, entries.len);
+            for (entries) |entry| {
+                // Each entry is itself an array of 4 elements:
+                //   [id, ts_ms, duration_us, [cmd, args...]]
+                try resp.serializeArrayHeader(w, 4);
+                try resp.serializeInteger(w, @intCast(entry.id));
+                try resp.serializeInteger(w, @intCast(@divTrunc(entry.ts_ms, 1000)));
+                try resp.serializeInteger(w, @intCast(entry.duration_us));
+                // argv array
+                const argc: usize = if (entry.args_blob.len > 0) entry.args_blob[0] else 0;
+                try resp.serializeArrayHeader(w, argc);
+                if (argc > 0) {
+                    var pos: usize = 1;
+                    var i: usize = 0;
+                    while (i < argc and pos < entry.args_blob.len) : (i += 1) {
+                        const alen = entry.args_blob[pos];
+                        pos += 1;
+                        if (pos + alen > entry.args_blob.len) break;
+                        try resp.serializeBulkString(w, entry.args_blob[pos .. pos + alen]);
+                        pos += alen;
+                    }
+                }
+            }
+            return;
+        }
+
+        try resp.serializeError(w, "unknown SLOWLOG subcommand");
     }
 
     // ── Graph Commands ────────────────────────────────────────────────

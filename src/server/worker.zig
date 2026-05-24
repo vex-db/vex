@@ -361,6 +361,13 @@ pub const Worker = struct {
     /// worker's thread, so no atomics are needed on increment. Readers
     /// (INFO, /metrics) use @atomicLoad when aggregating.
     stats: stats_mod.WorkerStats,
+    /// When true: time every command, push entries to the slowlog ring
+    /// when duration > slowlog_threshold_us. Default off so the bench
+    /// numbers are not perturbed by default.
+    enable_timings: bool = false,
+    /// Threshold in microseconds — commands longer than this go to the
+    /// per-worker slowlog ring. Only consulted when enable_timings.
+    slowlog_threshold_us: u64 = 10_000,
 
     pub fn init(
         allocator: Allocator,
@@ -389,6 +396,8 @@ pub const Worker = struct {
         ds_locks: ?*DsStripeLocks,
         watch_map: ?*WatchMap,
         data_dir: ?[]const u8,
+        enable_timings: bool,
+        slowlog_threshold_us: u64,
     ) !Worker {
         return .{
             .id = id,
@@ -425,6 +434,8 @@ pub const Worker = struct {
             .last_stripe = STRIPE_UNOWNED,
             .use_uring_io = false, // set after init when loop.use_uring is known
             .stats = stats_mod.WorkerStats.init(),
+            .enable_timings = enable_timings,
+            .slowlog_threshold_us = slowlog_threshold_us,
         };
     }
 
@@ -908,7 +919,33 @@ pub const Worker = struct {
 
         // Per-command call counter. Single-owner write (this worker's thread)
         // so no atomic needed. ~15ns total (uppercase + perfect-hash lookup).
-        self.stats.recordCall(cmd_table.lookup(args[0]));
+        const cmd_idx = cmd_table.lookup(args[0]);
+        self.stats.recordCall(cmd_idx);
+
+        // Optional command timing — gated on enable_timings to keep the
+        // default-config bench numbers untouched. Cost when off: one
+        // branch on a hot field, ~0.5ns. Cost when on: two clock_gettime
+        // calls per command (~50-80ns total, ~1.5% at 200k ops/sec).
+        const start_ns: i128 = if (self.enable_timings)
+            blk: {
+                var ts: std.c.timespec = undefined;
+                _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+                break :blk @as(i128, @intCast(ts.sec)) * 1_000_000_000 + @as(i128, @intCast(ts.nsec));
+            }
+        else
+            0;
+        defer if (self.enable_timings) {
+            var end_ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &end_ts);
+            const end_ns: i128 = @as(i128, @intCast(end_ts.sec)) * 1_000_000_000 + @as(i128, @intCast(end_ts.nsec));
+            const dur_us: u64 = @intCast(@max(0, @divTrunc(end_ns - start_ns, 1000)));
+            if (dur_us >= self.slowlog_threshold_us) {
+                var rt_ts: std.c.timespec = undefined;
+                _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &rt_ts);
+                const ts_ms: i64 = @as(i64, @intCast(rt_ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(rt_ts.nsec)), 1_000_000);
+                self.stats.pushSlowlog(self.allocator, cmd_idx, dur_us, ts_ms, args);
+            }
+        };
 
         // HELLO — connection-level protocol negotiation (must be before hot path)
         {

@@ -14,6 +14,26 @@ const cmd_table = @import("cmd_table.zig");
 
 pub const N_CMDS = cmd_table.N_CMDS;
 
+/// Per-worker slowlog ring capacity. Compile-time constant so each
+/// WorkerStats has fixed footprint (no heap for the ring slots themselves;
+/// only for the args blob held by each occupied slot).
+pub const SLOWLOG_RING_LEN: usize = 128;
+
+/// Maximum bytes we'll copy from the command-line for a slowlog entry.
+/// Mirrors Redis's per-arg cap; total budget per entry ~= this.
+pub const SLOWLOG_ARGS_MAX: usize = 256;
+
+/// One slot in a worker's slowlog ring. The args_blob is a packed buffer
+/// `<u8 argc> <u8 len0> <bytes0> <u8 len1> <bytes1> ...` truncated to
+/// SLOWLOG_ARGS_MAX bytes. Owning worker allocates/frees.
+pub const SlowlogEntry = struct {
+    id: u64,
+    ts_ms: i64,
+    duration_us: u64,
+    cmd_idx: u8,
+    args_blob: []u8,
+};
+
 /// Per-worker counters. Writes are single-owner (the owning worker thread),
 /// so no atomics are needed on increment. Readers iterate `workers` and use
 /// `@atomicLoad(.monotonic)` to grab a snapshot.
@@ -32,6 +52,16 @@ pub const WorkerStats = struct {
     /// Cumulative bytes written to clients.
     net_out_bytes: u64 = 0,
 
+    /// Per-worker slowlog ring (single-owner writes, snapshot reads under
+    /// the workers_mutex). slowlog_id is monotonic across the worker.
+    slowlog: [SLOWLOG_RING_LEN]SlowlogEntry = std.mem.zeroes([SLOWLOG_RING_LEN]SlowlogEntry),
+    /// Number of currently-occupied slowlog slots (≤ SLOWLOG_RING_LEN).
+    slowlog_len: u32 = 0,
+    /// Insertion cursor — wraps within SLOWLOG_RING_LEN.
+    slowlog_head: u32 = 0,
+    /// Next id to assign — monotonic across the worker's lifetime.
+    slowlog_next_id: u64 = 0,
+
     pub fn init() WorkerStats {
         return .{};
     }
@@ -42,7 +72,88 @@ pub const WorkerStats = struct {
         // Single-owner write. No atomic needed.
         self.cmd_calls[cmd_idx] += 1;
     }
+
+    /// Append a slowlog entry, evicting the oldest slot if the ring is
+    /// full. Single-owner. `alloc` is used to dupe an args blob; the
+    /// previous occupant's blob (if any) is freed.
+    pub fn pushSlowlog(
+        self: *WorkerStats,
+        alloc: std.mem.Allocator,
+        cmd_idx: u8,
+        duration_us: u64,
+        ts_ms: i64,
+        args: []const []const u8,
+    ) void {
+        // Build the args blob into a small stack buffer first.
+        var buf: [SLOWLOG_ARGS_MAX]u8 = undefined;
+        const blob_len = packArgs(&buf, args);
+        const blob = alloc.dupe(u8, buf[0..blob_len]) catch return;
+
+        const slot = &self.slowlog[self.slowlog_head];
+        // Free previous occupant's blob if this slot was used before.
+        if (slot.args_blob.len > 0) alloc.free(slot.args_blob);
+
+        slot.* = .{
+            .id = self.slowlog_next_id,
+            .ts_ms = ts_ms,
+            .duration_us = duration_us,
+            .cmd_idx = cmd_idx,
+            .args_blob = blob,
+        };
+        self.slowlog_next_id += 1;
+        self.slowlog_head = (self.slowlog_head + 1) % @as(u32, @intCast(SLOWLOG_RING_LEN));
+        if (self.slowlog_len < SLOWLOG_RING_LEN) self.slowlog_len += 1;
+    }
+
+    /// Reset the slowlog ring. Frees all blobs.
+    pub fn resetSlowlog(self: *WorkerStats, alloc: std.mem.Allocator) void {
+        for (&self.slowlog) |*slot| {
+            if (slot.args_blob.len > 0) {
+                alloc.free(slot.args_blob);
+                slot.args_blob = &.{};
+            }
+        }
+        self.slowlog_len = 0;
+        self.slowlog_head = 0;
+        // slowlog_next_id stays monotonic across resets — match Redis.
+    }
 };
+
+/// Pack command args into `<argc:u8><len0:u8><bytes0>...` with total cap.
+/// Args are truncated individually if needed; trailing args may be dropped.
+pub fn packArgs(buf: []u8, args: []const []const u8) usize {
+    if (buf.len == 0) return 0;
+    var pos: usize = 1;
+    var written_argc: u8 = 0;
+    const max_argc: usize = @min(args.len, 32);
+    for (args[0..max_argc]) |a| {
+        if (pos + 1 >= buf.len) break;
+        const room = buf.len - pos - 1;
+        const take = @min(a.len, @min(room, 64));
+        buf[pos] = @intCast(take);
+        pos += 1;
+        @memcpy(buf[pos..][0..take], a[0..take]);
+        pos += take;
+        written_argc += 1;
+    }
+    buf[0] = written_argc;
+    return pos;
+}
+
+/// Iterate args packed by `packArgs`. Calls `cb` with each (idx, bytes).
+pub fn unpackArgs(blob: []const u8, ctx: anytype, comptime cb: fn (@TypeOf(ctx), u8, []const u8) anyerror!void) !void {
+    if (blob.len == 0) return;
+    const argc = blob[0];
+    var pos: usize = 1;
+    var i: u8 = 0;
+    while (i < argc and pos < blob.len) : (i += 1) {
+        const alen = blob[pos];
+        pos += 1;
+        if (pos + alen > blob.len) return;
+        try cb(ctx, i, blob[pos .. pos + alen]);
+        pos += alen;
+    }
+}
 
 /// Process-wide counters that don't fit per-worker ownership (events that
 /// fire in shared code paths). Uses atomics — these fire on rare events
@@ -136,6 +247,82 @@ pub const AggregateScalars = struct {
     net_in_bytes: u64,
     net_out_bytes: u64,
 };
+
+/// Total slowlog entries across all workers.
+pub fn slowlogTotalLen() u64 {
+    var sum: u64 = 0;
+    _ = std.c.pthread_mutex_lock(&workers_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&workers_mutex);
+    for (workers_buf[0..workers_len]) |w| {
+        sum += @atomicLoad(u32, &w.slowlog_len, .monotonic);
+    }
+    return sum;
+}
+
+/// Snapshot the newest `n` slowlog entries across all workers, merged
+/// newest-first by id. Returned slice owned by `alloc`; each entry's
+/// args_blob is also duped into `alloc` so the snapshot is freestanding.
+pub const SlowlogSnapshotEntry = SlowlogEntry;
+
+pub fn slowlogSnapshot(alloc: std.mem.Allocator, n: usize) ![]SlowlogSnapshotEntry {
+    _ = std.c.pthread_mutex_lock(&workers_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&workers_mutex);
+
+    // Collect all entries from all workers into a temporary list.
+    var all = std.array_list.Managed(SlowlogSnapshotEntry).init(alloc);
+    defer all.deinit();
+    for (workers_buf[0..workers_len]) |w| {
+        const wlen = @atomicLoad(u32, &w.slowlog_len, .monotonic);
+        if (wlen == 0) continue;
+        // Reconstruct slot ordering: head points to next-write slot.
+        // Oldest slot is at `(head - wlen) mod RING_LEN`.
+        const head = @atomicLoad(u32, &w.slowlog_head, .monotonic);
+        const ring_len_u32: u32 = @intCast(SLOWLOG_RING_LEN);
+        const start: u32 = (head + ring_len_u32 - wlen) % ring_len_u32;
+        var i: u32 = 0;
+        while (i < wlen) : (i += 1) {
+            const slot = w.slowlog[(start + i) % ring_len_u32];
+            if (slot.args_blob.len == 0) continue;
+            const blob_copy = try alloc.dupe(u8, slot.args_blob);
+            try all.append(.{
+                .id = slot.id,
+                .ts_ms = slot.ts_ms,
+                .duration_us = slot.duration_us,
+                .cmd_idx = slot.cmd_idx,
+                .args_blob = blob_copy,
+            });
+        }
+    }
+
+    // Sort newest-first by id (id is process-wide monotonic per worker
+    // but workers' streams interleave — id is still a good proxy for
+    // recency since all workers move forward).
+    const Lt = struct {
+        fn lt(_: void, a: SlowlogSnapshotEntry, b: SlowlogSnapshotEntry) bool {
+            return a.id > b.id;
+        }
+    };
+    std.mem.sort(SlowlogSnapshotEntry, all.items, {}, Lt.lt);
+
+    const out_len = @min(n, all.items.len);
+    const out = try alloc.alloc(SlowlogSnapshotEntry, out_len);
+    @memcpy(out, all.items[0..out_len]);
+    // Items beyond out_len are leaks if we just truncate — free their blobs.
+    for (all.items[out_len..]) |trimmed| alloc.free(trimmed.args_blob);
+    return out;
+}
+
+/// Reset every worker's slowlog. Each worker's slot blobs are freed via
+/// its own allocator passed in — caller is responsible for ensuring
+/// `alloc` matches what the workers used (in practice the global
+/// allocator).
+pub fn slowlogResetAll(alloc: std.mem.Allocator) void {
+    _ = std.c.pthread_mutex_lock(&workers_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&workers_mutex);
+    for (workers_buf[0..workers_len]) |w| {
+        w.resetSlowlog(alloc);
+    }
+}
 
 pub fn aggregateScalars() AggregateScalars {
     var out: AggregateScalars = .{

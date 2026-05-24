@@ -372,6 +372,8 @@ pub fn main(init: std.process.Init) !void {
         if (repl_leader) |*rl| rl else null,
         config.unixsocket,
         if (config.no_persistence) null else config.data_dir,
+        config.enable_timings,
+        config.slowlog_threshold_us,
     );
     if (config.reactor) {
         server.runReactor(config.workers, &shutdown_requested) catch |err| {
@@ -423,6 +425,8 @@ const Config = struct {
     log_level: vex_log.Level,
     log_file: ?[]const u8,
     log_format: vex_log.Format,
+    enable_timings: bool,
+    slowlog_threshold_us: u64,
 };
 
 fn parseArgs(init: std.process.Init) Config {
@@ -449,6 +453,8 @@ fn parseArgs(init: std.process.Init) Config {
     var log_level: vex_log.Level = .info;
     var log_file: ?[]const u8 = null;
     var log_format: vex_log.Format = .text;
+    var enable_timings: bool = false;
+    var slowlog_threshold_us: u64 = 10_000; // 10ms — Redis default
 
     // ── Config file loading (order: default vex.conf → VEX_CONFIG env → --config flag)
     // Each source overrides the previous; CLI args override everything.
@@ -456,7 +462,8 @@ fn parseArgs(init: std.process.Init) Config {
         // 1. Try default config file: ./vex.conf
         applyConfigFile(init.io, "vex.conf", &host, &port, &data_dir, &requirepass,
             &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
-            &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format);
+            &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
+            &enable_timings, &slowlog_threshold_us);
 
         // 2. Try VEX_CONFIG environment variable
         const env_config = std.c.getenv("VEX_CONFIG");
@@ -465,7 +472,8 @@ fn parseArgs(init: std.process.Init) Config {
             if (path.len > 0) {
                 applyConfigFile(init.io, path, &host, &port, &data_dir, &requirepass,
                     &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
-                    &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format);
+                    &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
+            &enable_timings, &slowlog_threshold_us);
             }
         }
 
@@ -480,7 +488,8 @@ fn parseArgs(init: std.process.Init) Config {
                     const cfg_path = std.mem.sliceTo(cfg_path_z, 0);
                     applyConfigFile(init.io, cfg_path, &host, &port, &data_dir, &requirepass,
                         &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
-                        &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format);
+                        &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
+            &enable_timings, &slowlog_threshold_us);
                 }
                 break;
             }
@@ -586,6 +595,12 @@ fn parseArgs(init: std.process.Init) Config {
             if (it.next()) |f| {
                 log_format = vex_log.Format.parse(std.mem.sliceTo(f, 0));
             }
+        } else if (std.mem.eql(u8, arg, "--enable-timings")) {
+            enable_timings = true;
+        } else if (std.mem.eql(u8, arg, "--slowlog-log-slower-than")) {
+            if (it.next()) |n| {
+                slowlog_threshold_us = std.fmt.parseInt(u64, std.mem.sliceTo(n, 0), 10) catch slowlog_threshold_us;
+            }
         } else if (std.mem.eql(u8, arg, "--maxmemory")) {
             if (it.next()) |n| {
                 maxmemory = std.fmt.parseInt(usize, std.mem.sliceTo(n, 0), 10) catch 0;
@@ -626,6 +641,8 @@ fn parseArgs(init: std.process.Init) Config {
         .log_level = log_level,
         .log_file = log_file,
         .log_format = log_format,
+        .enable_timings = enable_timings,
+        .slowlog_threshold_us = slowlog_threshold_us,
     };
 }
 
@@ -673,6 +690,8 @@ fn applyConfigFile(
     tls_key: *?[]const u8,
     log_file: *?[]const u8,
     log_format: *vex_log.Format,
+    enable_timings: *bool,
+    slowlog_threshold_us: *u64,
 ) void {
     const config_mod = @import("config.zig");
     // Use a page allocator since we can't access the gpa in parseArgs easily.
@@ -704,6 +723,12 @@ fn applyConfigFile(
         log_file.* = if (std.mem.eql(u8, v, "-") or v.len == 0) null else v;
     }
     if (cfg.get("log-format") orelse cfg.get("logformat")) |v| log_format.* = vex_log.Format.parse(v);
+    if (cfg.get("enable-timings")) |v| {
+        enable_timings.* = !(std.mem.eql(u8, v, "0") or std.ascii.eqlIgnoreCase(v, "false") or std.ascii.eqlIgnoreCase(v, "no"));
+    }
+    if (cfg.get("slowlog-log-slower-than")) |v| {
+        slowlog_threshold_us.* = std.fmt.parseInt(u64, v, 10) catch slowlog_threshold_us.*;
+    }
     if (cfg.get("tls-cert")) |v| tls_cert.* = v;
     if (cfg.get("tls-key")) |v| tls_key.* = v;
 }

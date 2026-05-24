@@ -792,6 +792,8 @@ pub const Server = struct {
     repl_leader: ?*@import("../cluster/replication.zig").ReplicationLeader,
     unixsocket: ?[]const u8,
     data_dir: ?[]const u8,
+    enable_timings: bool = false,
+    slowlog_threshold_us: u64 = 10_000,
     active_connections: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub fn init(
@@ -815,6 +817,8 @@ pub const Server = struct {
         repl_leader: ?*@import("../cluster/replication.zig").ReplicationLeader,
         unixsocket: ?[]const u8,
         data_dir: ?[]const u8,
+        enable_timings: bool,
+        slowlog_threshold_us: u64,
     ) !Server {
         const resolved = try std.Io.net.IpAddress.resolve(io, host, port);
         const bind_address: std.Io.net.IpAddress = switch (resolved) {
@@ -845,6 +849,8 @@ pub const Server = struct {
             .repl_leader = repl_leader,
             .unixsocket = unixsocket,
             .data_dir = data_dir,
+            .enable_timings = enable_timings,
+            .slowlog_threshold_us = slowlog_threshold_us,
         };
     }
 
@@ -1098,6 +1104,8 @@ pub const Server = struct {
                 &ds_locks,
                 &watch_map,
                 self.data_dir,
+                self.enable_timings,
+                self.slowlog_threshold_us,
             );
         }
 

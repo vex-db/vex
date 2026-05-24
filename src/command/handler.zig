@@ -2434,6 +2434,9 @@ pub const CommandHandler = struct {
     }
 
     /// GRAPH.INGEST <json>
+    ///
+    /// Payload: {"nodes":[{"id","node_type"|"type","metadata"?}, ...],
+    ///           "edges":[{"from_id"|"from","to_id"|"to","edge_type"|"type","metadata"?}, ...]}
     fn cmdGraphIngest(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
         if (args.len < 2) { try resp.serializeError(w, "usage: GRAPH.INGEST <json>"); return; }
         const json_str = args[1];
@@ -2451,8 +2454,8 @@ pub const CommandHandler = struct {
                 for (nodes_val.array.items) |node_val| {
                     if (node_val != .object) continue;
                     const obj = node_val.object;
-                    const id_str = if (obj.get("id")) |v| (if (v == .string) v.string else null) else null;
-                    const type_str = if (obj.get("type")) |v| (if (v == .string) v.string else null) else null;
+                    const id_str = jsonStringField(obj, &.{"id"});
+                    const type_str = jsonStringField(obj, &.{ "node_type", "type" });
                     if (id_str == null or type_str == null) continue;
                     const nk = graphNamespacedKey(self, id_str.?) catch continue;
                     defer self.allocator.free(nk);
@@ -2470,9 +2473,9 @@ pub const CommandHandler = struct {
                 for (edges_val.array.items) |edge_val| {
                     if (edge_val != .object) continue;
                     const obj = edge_val.object;
-                    const from_str = if (obj.get("from")) |v| (if (v == .string) v.string else null) else null;
-                    const to_str = if (obj.get("to")) |v| (if (v == .string) v.string else null) else null;
-                    const etype_str = if (obj.get("type")) |v| (if (v == .string) v.string else null) else null;
+                    const from_str = jsonStringField(obj, &.{ "from_id", "from" });
+                    const to_str = jsonStringField(obj, &.{ "to_id", "to" });
+                    const etype_str = jsonStringField(obj, &.{ "edge_type", "type" });
                     if (from_str == null or to_str == null or etype_str == null) continue;
                     const from = graphNamespacedKey(self, from_str.?) catch continue;
                     defer self.allocator.free(from);
@@ -2869,6 +2872,18 @@ fn stripDbPrefix(self: *CommandHandler, raw_key: []const u8) ?[]const u8 {
 
 fn graphNamespacedKey(self: *CommandHandler, key: []const u8) ![]u8 {
     return std.fmt.allocPrint(self.allocator, "gdb:{d}:{s}", .{ self.selected_db.load(.monotonic), key });
+}
+
+/// Return the first string-valued field from `obj` matching any of `names`, or null.
+/// Lets bulk decoders accept both canonical snake-case (`node_type`) and legacy short
+/// forms (`type`) without diverging the wire schema.
+fn jsonStringField(obj: std.json.ObjectMap, names: []const []const u8) ?[]const u8 {
+    for (names) |name| {
+        if (obj.get(name)) |v| {
+            if (v == .string) return v.string;
+        }
+    }
+    return null;
 }
 
 fn stripGraphDbPrefix(self: *CommandHandler, raw_key: []const u8) ?[]const u8 {
@@ -3623,4 +3638,70 @@ test "GRAPH.UPSERT_EDGE stores all arbitrary JSON metadata keys" {
     const g2 = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.GETNODE", "svc:b" });
     defer allocator.free(g2);
     try std.testing.expect(std.mem.indexOf(u8, g2, "svc:b") != null);
+}
+
+test "GRAPH.INGEST accepts snake_case field names (node_type/from_id/to_id/edge_type)" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const payload =
+        \\{"nodes":[
+        \\  {"id":"test:n1","node_type":"test","metadata":{"k":"v1"}},
+        \\  {"id":"test:n2","node_type":"test","metadata":{"k":"v2"}},
+        \\  {"id":"test:n3","node_type":"test","metadata":{"k":"v3"}}
+        \\],"edges":[
+        \\  {"id":"test:e1","from_id":"test:n1","to_id":"test:n2","edge_type":"linked"},
+        \\  {"id":"test:e2","from_id":"test:n2","to_id":"test:n3","edge_type":"linked"}
+        \\]}
+    ;
+
+    const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.INGEST", payload });
+    defer allocator.free(r);
+    try std.testing.expectEqualStrings("+OK\r\n", r);
+
+    // All three nodes must be retrievable
+    inline for (.{ "test:n1", "test:n2", "test:n3" }) |id| {
+        const got = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.GETNODE", id });
+        defer allocator.free(got);
+        try std.testing.expect(std.mem.indexOf(u8, got, id) != null);
+    }
+
+    // LIST_BY_TYPE returns the three IDs
+    const list = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.LIST_BY_TYPE", "test" });
+    defer allocator.free(list);
+    try std.testing.expect(std.mem.indexOf(u8, list, "test:n1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list, "test:n2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list, "test:n3") != null);
+
+    // Edges must be traversable
+    const neigh = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.NEIGHBORS", "test:n1" });
+    defer allocator.free(neigh);
+    try std.testing.expect(std.mem.indexOf(u8, neigh, "test:n2") != null);
+}
+
+test "GRAPH.INGEST still accepts legacy short field names (type/from/to)" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const payload =
+        \\{"nodes":[{"id":"legacy:a","type":"test"},{"id":"legacy:b","type":"test"}],
+        \\ "edges":[{"from":"legacy:a","to":"legacy:b","type":"linked"}]}
+    ;
+    const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.INGEST", payload });
+    defer allocator.free(r);
+    try std.testing.expectEqualStrings("+OK\r\n", r);
+
+    const got = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.GETNODE", "legacy:a" });
+    defer allocator.free(got);
+    try std.testing.expect(std.mem.indexOf(u8, got, "legacy:a") != null);
 }

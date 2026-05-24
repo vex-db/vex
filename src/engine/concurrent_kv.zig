@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const KVStore = @import("kv.zig").KVStore;
+const obs_stats = @import("../observability/stats.zig");
 
 const STRIPE_COUNT = 256;
 const STRIPE_MASK = STRIPE_COUNT - 1;
@@ -138,6 +139,7 @@ pub const ConcurrentKV = struct {
         }
         if (entry.flags.has_ttl and self.cached_now_ms > entry.expires_at) {
             readUnlockStripe(s);
+            _ = obs_stats.expired_keys.fetchAdd(1, .monotonic);
             out.appendSlice("$-1\r\n") catch {};
             return false;
         }

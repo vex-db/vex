@@ -179,6 +179,7 @@ pub fn main(init: std.process.Init) !void {
     const config = parseArgs(init);
     initGlobalLogger(allocator, config.log_file, config.log_level, config.log_format);
     defer vex_log.global.deinit();
+    @import("observability/stats.zig").start_time_ms = nowMillis();
     var prof_state: span.Profile = undefined;
     var prof: ?*span.Profile = null;
     if (config.profile) {
@@ -724,6 +725,12 @@ fn parseMemorySize(s: []const u8) usize {
 
 fn log(comptime fmt: []const u8, args: anytype) void {
     vex_log.info(fmt, args);
+}
+
+fn nowMillis() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
 }
 
 fn initGlobalLogger(

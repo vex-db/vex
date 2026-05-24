@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const obs_stats = @import("../observability/stats.zig");
 
 /// Core key-value store backed by a hash map.
 /// All keys and values are owned byte slices.
@@ -194,6 +195,7 @@ pub const KVStore = struct {
             if (oldest_key) |key| {
                 if (self.map.getPtr(key)) |entry| {
                     self.tombstoneEntry(key, entry);
+                    _ = obs_stats.evicted_keys.fetchAdd(1, .monotonic);
                 }
             } else break;
         }
@@ -207,6 +209,7 @@ pub const KVStore = struct {
         if (self.ttl_count > 0 and entry.flags.has_ttl) {
             if (self.nowMillis() > entry.expires_at) {
                 self.tombstoneEntry(key, entry);
+                _ = obs_stats.expired_keys.fetchAdd(1, .monotonic);
                 return null;
             }
         }

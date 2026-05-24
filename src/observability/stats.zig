@@ -21,6 +21,17 @@ pub const WorkerStats = struct {
     /// Per-command call counts. Indexed by `cmd_table.lookup(name)`.
     cmd_calls: [N_CMDS]u64 = @splat(0),
 
+    /// Total RESP error replies this worker has emitted.
+    total_errors: u64 = 0,
+    /// Connections accepted on this worker (cumulative).
+    accepted_conns: u64 = 0,
+    /// Connections rejected because the server hit `maxclients`.
+    rejected_conns: u64 = 0,
+    /// Cumulative bytes read from clients (RESP frames including headers).
+    net_in_bytes: u64 = 0,
+    /// Cumulative bytes written to clients.
+    net_out_bytes: u64 = 0,
+
     pub fn init() WorkerStats {
         return .{};
     }
@@ -32,6 +43,16 @@ pub const WorkerStats = struct {
         self.cmd_calls[cmd_idx] += 1;
     }
 };
+
+/// Process-wide counters that don't fit per-worker ownership (events that
+/// fire in shared code paths). Uses atomics — these fire on rare events
+/// (eviction, expiration) so contention is irrelevant.
+pub var evicted_keys: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+pub var expired_keys: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+/// Wall-clock timestamp (ms since epoch) of the process start. Set once at
+/// startup, read by INFO for `uptime_in_seconds`.
+pub var start_time_ms: i64 = 0;
 
 /// Global registry. Populated at worker init via `register()`.
 /// Read by INFO and (later) /metrics.
@@ -100,6 +121,35 @@ pub fn totalCommands() u64 {
         }
     }
     return sum;
+}
+
+/// Aggregate snapshot of cross-worker scalars used by INFO.
+pub const AggregateScalars = struct {
+    total_errors: u64,
+    accepted_conns: u64,
+    rejected_conns: u64,
+    net_in_bytes: u64,
+    net_out_bytes: u64,
+};
+
+pub fn aggregateScalars() AggregateScalars {
+    var out: AggregateScalars = .{
+        .total_errors = 0,
+        .accepted_conns = 0,
+        .rejected_conns = 0,
+        .net_in_bytes = 0,
+        .net_out_bytes = 0,
+    };
+    _ = std.c.pthread_mutex_lock(&workers_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&workers_mutex);
+    for (workers_buf[0..workers_len]) |w| {
+        out.total_errors    +%= @atomicLoad(u64, &w.total_errors,    .monotonic);
+        out.accepted_conns  +%= @atomicLoad(u64, &w.accepted_conns,  .monotonic);
+        out.rejected_conns  +%= @atomicLoad(u64, &w.rejected_conns,  .monotonic);
+        out.net_in_bytes    +%= @atomicLoad(u64, &w.net_in_bytes,    .monotonic);
+        out.net_out_bytes   +%= @atomicLoad(u64, &w.net_out_bytes,   .monotonic);
+    }
+    return out;
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

@@ -1829,6 +1829,9 @@ pub const Worker = struct {
                     if (entry.flags.deleted or
                         (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
                     {
+                        if (entry.flags.has_ttl and !entry.flags.deleted) {
+                            _ = stats_mod.expired_keys.fetchAdd(1, .monotonic);
+                        }
                         writeNullTo(&conn.write_buf, conn.protocol_version);
                         return true;
                     }

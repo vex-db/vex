@@ -1779,23 +1779,41 @@ pub const CommandHandler = struct {
     }
 
     fn cmdInfo(self: *CommandHandler, out: *std.Io.Writer) std.Io.Writer.Error!void {
+        // Prefer the CKV (reactor mode store) when available — that's the live
+        // KV in reactor mode and the legacy `self.kv` won't be populated.
         var kv_keys: usize = 0;
         var kv_with_ttl: u32 = 0;
-        var it = self.kv.map.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.flags.deleted) continue;
-            if (stripDbPrefix(self, entry.key_ptr.*) != null) {
-                kv_keys += 1;
-                if (entry.value_ptr.flags.has_ttl) kv_with_ttl += 1;
+        if (self.ckv) |ckv| {
+            kv_keys = ckv.dbsize();
+            // CKV doesn't expose a TTL count cheaply; report 0 to avoid a full scan.
+        } else {
+            var it = self.kv.map.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.flags.deleted) continue;
+                if (stripDbPrefix(self, entry.key_ptr.*) != null) {
+                    kv_keys += 1;
+                    if (entry.value_ptr.flags.has_ttl) kv_with_ttl += 1;
+                }
             }
         }
         var aw = std.Io.Writer.Allocating.init(self.allocator);
         defer aw.deinit();
 
+        // Resource usage snapshot — read once, used by Memory + CPU sections.
+        var ru: std.c.rusage = undefined;
+        const ru_ok = std.c.getrusage(std.c.rusage.SELF, &ru) == 0;
+
         // Server section
         try aw.writer.writeAll("# Server\r\n");
-        try aw.writer.writeAll("vex_version:0.2.0\r\n");
+        try aw.writer.print("vex_version:{s}\r\n", .{vex_root.VERSION});
         try aw.writer.writeAll("engine:csr_soa_v2\r\n");
+        try aw.writer.print("os:{s}\r\n", .{@tagName(@import("builtin").os.tag)});
+        try aw.writer.print("arch:{s}\r\n", .{@tagName(@import("builtin").cpu.arch)});
+        try aw.writer.print("process_id:{d}\r\n", .{std.c.getpid()});
+        const now_ms = obsNowMillis();
+        const start_ms = obs_stats.start_time_ms;
+        const uptime_sec: i64 = if (start_ms == 0) 0 else @divTrunc(now_ms - start_ms, 1000);
+        try aw.writer.print("uptime_in_seconds:{d}\r\n", .{uptime_sec});
 
         // Keyspace section
         try aw.writer.writeAll("\r\n# Keyspace\r\n");
@@ -1813,13 +1831,46 @@ pub const CommandHandler = struct {
         try aw.writer.print("graph_delta_edges:{d}\r\n", .{self.graph.delta_edges.items.len});
         try aw.writer.print("graph_needs_compact:{d}\r\n", .{@intFromBool(self.graph.needs_compact)});
 
+        // Memory section
+        try aw.writer.writeAll("\r\n# Memory\r\n");
+        if (ru_ok) {
+            // On Linux ru_maxrss is in KiB; on macOS it's in bytes. Normalize to bytes.
+            const is_darwin_target = @import("builtin").os.tag == .macos;
+            const rss_bytes: u64 = if (is_darwin_target)
+                @intCast(@max(@as(i64, ru.maxrss), 0))
+            else
+                @as(u64, @intCast(@max(@as(i64, ru.maxrss), 0))) * 1024;
+            try aw.writer.print("used_memory_rss:{d}\r\n", .{rss_bytes});
+        } else {
+            try aw.writer.writeAll("used_memory_rss:0\r\n");
+        }
+        try aw.writer.print("maxmemory:{d}\r\n", .{self.kv.maxmemory});
+        const policy_str: []const u8 = switch (self.kv.eviction_policy) {
+            .noeviction => "noeviction",
+            .allkeys_lru => "allkeys-lru",
+        };
+        try aw.writer.print("maxmemory_policy:{s}\r\n", .{policy_str});
+
         // Persistence section
         try aw.writer.writeAll("\r\n# Persistence\r\n");
         if (self.aof) |a| {
             try aw.writer.writeAll("aof_enabled:1\r\n");
+            try aw.writer.print("aof_current_size:{d}\r\n", .{a.file_offset});
+            try aw.writer.print("aof_buffer_length:{d}\r\n", .{if (a.group_buf_inited) a.group_buf.items.len else @as(usize, 0)});
             try aw.writer.print("last_save_time:{d}\r\n", .{@divTrunc(a.last_save_time, 1000)});
         } else {
             try aw.writer.writeAll("aof_enabled:0\r\n");
+        }
+
+        // CPU section — process-wide times since start.
+        try aw.writer.writeAll("\r\n# CPU\r\n");
+        if (ru_ok) {
+            const user_sec: f64 = @as(f64, @floatFromInt(ru.utime.sec)) + @as(f64, @floatFromInt(ru.utime.usec)) / 1_000_000.0;
+            const sys_sec: f64 = @as(f64, @floatFromInt(ru.stime.sec)) + @as(f64, @floatFromInt(ru.stime.usec)) / 1_000_000.0;
+            try aw.writer.print("used_cpu_user:{d:.3}\r\n", .{user_sec});
+            try aw.writer.print("used_cpu_sys:{d:.3}\r\n", .{sys_sec});
+        } else {
+            try aw.writer.writeAll("used_cpu_user:0\r\nused_cpu_sys:0\r\n");
         }
 
         // Cluster section (if available)
@@ -1831,8 +1882,16 @@ pub const CommandHandler = struct {
         obs_stats.aggregateCmdCalls(&cmd_calls);
         var total_calls: u64 = 0;
         for (cmd_calls) |n| total_calls +%= n;
+        const scalars = obs_stats.aggregateScalars();
         try aw.writer.writeAll("\r\n# Stats\r\n");
         try aw.writer.print("total_commands_processed:{d}\r\n", .{total_calls});
+        try aw.writer.print("total_connections_received:{d}\r\n", .{scalars.accepted_conns});
+        try aw.writer.print("rejected_connections:{d}\r\n", .{scalars.rejected_conns});
+        try aw.writer.print("total_net_input_bytes:{d}\r\n", .{scalars.net_in_bytes});
+        try aw.writer.print("total_net_output_bytes:{d}\r\n", .{scalars.net_out_bytes});
+        try aw.writer.print("total_error_replies:{d}\r\n", .{scalars.total_errors});
+        try aw.writer.print("evicted_keys:{d}\r\n", .{obs_stats.evicted_keys.load(.monotonic)});
+        try aw.writer.print("expired_keys:{d}\r\n", .{obs_stats.expired_keys.load(.monotonic)});
 
         // Commandstats section — one line per command with non-zero calls.
         // Field names mirror Redis: `cmdstat_<name>:calls=N,usec=0,...`.
@@ -2843,6 +2902,12 @@ fn toUpper(input: []const u8, buf: *[64]u8) []const u8 {
 }
 
 // Overload for smaller buffers
+fn obsNowMillis() i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec)) * 1000 + @divTrunc(@as(i64, @intCast(ts.nsec)), 1_000_000);
+}
+
 fn toUpperBuf(input: []const u8, buf: []u8) []const u8 {
     const len = @min(input.len, buf.len);
     for (0..len) |i| {

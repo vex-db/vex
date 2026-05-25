@@ -6,22 +6,25 @@
 
 Vex uses a dual persistence model similar to Redis RDB+AOF.
 
+**Crash safety guarantee (since v0.8):** every on-disk file is updated atomically — write to a tmp file, `fsync` it, `rename` over the canonical path, then `fsync` the parent directory. After a `kill -9` at any point, the canonical file contains either the previous version or the new one; never partial. Combined with the `appendfsync` knob (default `everysec`), data loss on hard crash is bounded to ≤1s.
+
 ## Overview
 
 | Component | File | Description |
 |-----------|------|-------------|
-| Snapshot | `vex.zdb` | Binary format with CRC-32 checksum. Full KV + graph state |
-| AOF | `vex.aof` | Append-only file. Every write command in binary format |
-| Vectors | `vectors/*.vvf` | Per-field f16 vector embeddings (mmap'd on load) |
-| HNSW Index | `vectors/*.vhi` | Serialized HNSW graph (skip rebuild on startup) |
+| Snapshot | `vex.zdb` | Binary format with CRC-32 checksum. Full KV + graph state. Written atomically. |
+| AOF | `vex.aof` | Append-only file. Every write command in binary format. Fsync per `appendfsync`. |
+| Vectors | `vectors/*.vvf` | Per-field f16 vector embeddings. Written atomically. |
+| HNSW Index | `vectors/*.vhi` | Serialized HNSW graph. Written atomically. |
+| Cluster epoch | `vex.epoch` | u64, monotonically increasing. Written atomically on every leader promotion. |
 
 ### Lifecycle
 
-1. **Startup**: (1) loads snapshot (`vex.zdb`), (2) replays AOF (`vex.aof`), (3) loads vectors (mmap `.vvf` files + deserialize `.vhi` index or rebuild HNSW if `.vhi` missing)
-2. **Runtime**: write commands are buffered in memory and flushed to AOF per event loop tick (group commit)
-3. **SAVE/BGSAVE**: writes a new snapshot, truncates AOF, saves `.vvf` + `.vhi` files
-4. **BGREWRITEAOF**: compacts AOF by serializing current state to a new file, atomic rename
-5. **Shutdown**: SIGTERM/SIGINT triggers a final snapshot + AOF flush
+1. **Startup**: (1) load `vex.epoch` (cluster mode), (2) load snapshot (`vex.zdb`), (3) replay AOF (`vex.aof`), (4) load vectors (mmap `.vvf` files + deserialize `.vhi` index or rebuild HNSW if `.vhi` missing)
+2. **Runtime**: write commands are buffered in memory and flushed to AOF per event loop tick (group commit). fsync happens per `appendfsync` (default `everysec`).
+3. **SAVE/BGSAVE**: writes a new snapshot atomically, truncates AOF, saves `.vvf` + `.vhi` files atomically
+4. **BGREWRITEAOF**: compacts AOF — writes to tmp, merges in-flight writes under mutex, fsyncs tmp, atomic-rename, fsyncs parent dir
+5. **Shutdown**: SIGTERM/SIGINT triggers a final AOF flush + background fsync thread stop
 
 ```bash
 zig build run -- --data-dir /var/lib/vex      # persistence enabled (default)
@@ -257,14 +260,74 @@ When io_uring is available, AOF writes and fsyncs are submitted asynchronously:
 
 ---
 
-## Durability Guarantees
+## Durability Modes (`appendfsync`)
+
+| Mode | Behavior | Loss on crash | Hot-path cost |
+|---|---|---|---|
+| `always` | fsync after every AOF flush, inline | ~0 | high (~5ms per flush on rotational, ~50µs on NVMe) |
+| `everysec` (default) | background thread fsyncs every 1s | ≤1s | 0% (background thread does the work) |
+| `no` | rely on OS page cache flush | unbounded (until OS flushes) | 0% |
+
+Set via CLI flag or config:
+
+```bash
+zig build run -- --appendfsync always       # max durability
+zig build run -- --appendfsync everysec     # default — Redis-equivalent
+zig build run -- --appendfsync no           # fastest, least durable
+```
+
+Or runtime-switchable via `CONFIG SET`:
+
+```
+127.0.0.1:6380> CONFIG SET appendfsync always
+OK
+127.0.0.1:6380> INFO | grep aof_fsync_mode
+aof_fsync_mode:always
+```
+
+The implementation uses a separately-opened raw fd (`fsync_fd`) so fsync calls don't round-trip through Zig's writer interface. On macOS the call is `fcntl(fd, F_FULLFSYNC)` — the only path that pushes through the drive's write cache; plain `fsync` returns after data hits the drive cache. On Linux it's plain `fsync(fd)`.
+
+`INFO` exposes:
+- `aof_fsync_mode` — current mode
+- `aof_last_fsync` — wall-clock timestamp of the last successful fsync (updated by the background thread or the inline `always` path)
+- `aof_last_write_status` — `ok` or `err` (see STOP-WRITE below)
+
+## STOP-WRITE on Disk Full
+
+When the AOF flush path encounters an unrecoverable I/O error (ENOSPC, EIO), vex sets a process-wide `persistence_broken` flag. The dispatch hot path checks this flag and rejects write commands with `-MISCONF`. Reads continue. Without this, the previous behavior was: client receives `+OK` for a write that never made it to disk, then a crash loses the data silently.
+
+Operator escape hatch: `CONFIG SET appendfsync no` clears the flag (explicit trade of durability for availability). Otherwise, restart after fixing the underlying disk issue.
+
+```
+127.0.0.1:6380> SET k v
+-MISCONF Errors writing to the AOF file: persistence is in STOP-WRITE state.
+
+127.0.0.1:6380> GET k          # reads still work
+"v"
+
+127.0.0.1:6380> CONFIG SET appendfsync no
+OK
+127.0.0.1:6380> SET k v
+OK
+```
+
+Field surface: `aof_last_write_status:err` in `INFO Persistence`. Polled by `redis_exporter` (and matches Redis's field name) for alerting.
+
+## Durability Guarantees (after v0.8)
 
 | Scenario | Data Loss |
 |----------|-----------|
-| Clean shutdown (SIGTERM) | None. Final snapshot + AOF flush |
-| `SAVE` or `BGSAVE` + crash | Commands since last snapshot |
-| Crash without recent save | Commands since last snapshot. AOF replayed on restart |
-| AOF corruption | Partial replay. Vex stops at first corrupt record |
-| Snapshot corruption | CRC mismatch detected, snapshot rejected. Falls back to empty state + AOF replay |
+| Clean shutdown (SIGTERM) | None. Final snapshot + AOF flush + fsync |
+| `SAVE` or `BGSAVE` + crash mid-write | None. tmp+fsync+rename+dir-fsync makes the snapshot atomic. |
+| `BGREWRITEAOF` + crash mid-rewrite | None. In-flight writes are merged into the tmp before rename. |
+| Hard crash (`kill -9`, power loss), `appendfsync=always` | None (≤ a few uncommitted commands in the worst case). |
+| Hard crash, `appendfsync=everysec` (default) | ≤1s of commands. Bounded by the background fsync cadence. |
+| Hard crash, `appendfsync=no` | Unbounded (whatever the OS hadn't flushed). |
+| AOF tail corruption | Stops at first torn record; warns with offset + records-replayed via the logger. Commands after the torn record are lost. |
+| Snapshot corruption | CRC mismatch detected, snapshot rejected. Falls back to empty state + AOF replay. |
+| Disk full mid-flush | STOP-WRITE state engages; writes return `-MISCONF`; reads continue. No silent loss. |
+| Follower full-sync + crash mid-load | AOF truncated **before** snapshot install; if process dies mid-install, restart gets the old snapshot + empty AOF (consistent). |
+
+See [Separation of Concerns](separation-of-concerns.md) for how this fits alongside vex-sentinel (failover coordination), `redis_exporter` (metrics), and chaos testing.
 
 For maximum durability, ensure periodic `BGSAVE` (e.g., via cron or application-level timer).

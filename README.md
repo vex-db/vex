@@ -37,7 +37,9 @@ Redis is single-threaded. To scale, you add more instances. Vex does the same --
 | **[Memory Management](docs/memory.md)** | maxmemory, LRU eviction, access tracking, memory estimation |
 | **[Pub/Sub](docs/pubsub.md)** | SUBSCRIBE/PUBLISH/UNSUBSCRIBE, cross-worker delivery, pub/sub mode |
 | **[Transactions](docs/transactions.md)** | MULTI/EXEC/DISCARD, atomicity, error handling, limitations |
-| **[Clustering](docs/clustering.md)** | Leader/follower replication, automatic failover, consistency model |
+| **[Clustering](docs/clustering.md)** | Leader/follower replication, epoch mechanism, VEX.PROMOTE, consistency model |
+| **[Observability](docs/observability.md)** | INFO, SLOWLOG, LATENCY, CLIENT LIST, DEBUG/MEMORY/CONFIG, JSON logs, redis_exporter |
+| **[Separation of Concerns](docs/separation-of-concerns.md)** | How vex / vex-sentinel / sidecars are split. Mechanism vs policy. |
 | **[Benchmarks](docs/benchmarks.md)** | KV vs Redis, graph vs Memgraph, internal engine benchmarks |
 | **[Deployment](docs/deployment.md)** | Production checklist, systemd, Docker, tuning |
 | **[Vector Search & GRAPH.RAG](docs/vector-search.md)** | HNSW vector search, f16 mmap storage, RAG pipeline examples |
@@ -194,14 +196,15 @@ See [Vector Search & GRAPH.RAG](docs/vector-search.md) for full RAG pipeline exa
 | **MCP Server** | Native Model Context Protocol -- LLMs use Vex as a tool directly |
 | **Transactions** | MULTI/EXEC/DISCARD + WATCH/UNWATCH optimistic locking |
 | **Pub/Sub** | SUBSCRIBE/PUBLISH/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE |
-| **Persistence** | Snapshot (CRC-32) + AOF with group commit + BGSAVE |
+| **Persistence** | Atomic snapshot + AOF with group commit + `appendfsync` (always/everysec/no) + STOP-WRITE on disk full |
 | **TLS** | OpenSSL via dlopen -- no build dependency |
-| **Memory Limits** | --maxmemory with noeviction or allkeys-lru |
+| **Memory Limits** | --maxmemory with noeviction or allkeys-lru (enforced in ConcurrentKV too) |
 | **Auth** | --requirepass with constant-time comparison |
-| **Client Compat** | CONFIG GET/SET, CLIENT ID/LIST/SETNAME, OBJECT, TIME, RESET |
+| **Observability** | SLOWLOG, LATENCY, CLIENT LIST, INFO (50 fields), DEBUG, MEMORY, runtime CONFIG SET. Field names mirror Redis 7. |
+| **Client Compat** | CONFIG GET/SET, CLIENT ID/LIST/SETNAME, OBJECT, TIME, RESET, DEBUG, MEMORY |
 | **Config File** | Auto-load `vex.conf` + `VEX_CONFIG` env + `--config` flag |
-| **Logging** | Structured ISO 8601 timestamps, 4 levels |
-| **Clustering** | Leader/follower replication + automatic failover |
+| **Logging** | Text or JSON format, file or stderr, 4 levels |
+| **Clustering** | Leader/follower replication, epoch-based split-brain protection, non-blocking broadcast, per-follower bounded outbox, true seq-precise lag, atomic full-sync |
 | **Multi-DB** | 16 logical databases (SELECT 0-15) |
 
 ---
@@ -209,60 +212,114 @@ See [Vector Search & GRAPH.RAG](docs/vector-search.md) for full RAG pipeline exa
 ## Architecture
 
 ```
-              Accept Thread (main)
-              /    |    |    \
-         Worker0  W1   W2   W3     -- N event-loop threads
-         (kqueue) ...              -- kqueue/epoll/io_uring
-         /  |  \
-      conn conn conn               -- non-blocking I/O
-            |
-   ConcurrentKV                    -- 256-stripe rwlock
-   GraphEngine                     -- CSR + bidirectional BFS
-   PubSubRegistry                  -- shared subscriber map
-   AOF (group commit)              -- batched persistence
+   Clients (redis-cli, redis-py, ioredis, ...) ─── RESP ──┐
+                                                          │
+                  Accept Thread (main)                    │
+                  /    |    |    \                        │
+             Worker0  W1   W2   W3   -- N event-loop threads
+             (kqueue) ...            -- kqueue/epoll/io_uring
+             /  |  \
+          conn conn conn             -- non-blocking I/O + slow-client backpressure
+                |
+       ConcurrentKV (+ maxmemory eviction)   -- 256-stripe rwlock
+       GraphEngine                           -- CSR + bidirectional BFS
+       PubSubRegistry                        -- shared subscriber map
+       AOF (group commit + appendfsync)      -- batched persistence + STOP-WRITE
+       atomic_io                             -- tmp+fsync+rename+dir-fsync
+       observability (WorkerStats, SLOWLOG,  -- INFO, CLIENT LIST,
+                      LATENCY, ClientReg)       DEBUG, MEMORY, CONFIG
+
+   Cluster mode (optional):
+       leader ──┬─→ follower 1 (per-follower bounded outbox + drain thread)
+                ├─→ follower 2
+                └─→ follower N
+       epoch (vex.epoch)  ←─ persisted, monotonic across leader promotions
+       VEX.PROMOTE / VEX.STATUS admin commands  ←─ for vex-sentinel
 ```
 
-Deep dive: [Architecture](docs/architecture.md)
+Sidecars (separate processes, not in vex binary):
+- **`redis_exporter`** for Prometheus metrics (works today, field names mirror Redis 7)
+- **`vex-sentinel`** for failover orchestration (planned — Zig, same monorepo, `sentinel/` folder)
+- **log shippers** (Vector / Fluentbit / promtail) consume JSON-formatted logs
+
+Deep dive: [Architecture](docs/architecture.md). For the data-plane / control-plane split: [Separation of Concerns](docs/separation-of-concerns.md).
 
 ---
 
 ## Source Layout
 
 ```
-src/
-├── main.zig              # Entry point, CLI, config loading
-├── config.zig            # Config file parser
-├── log.zig               # Structured logger
+src/                            # vex (the data-plane binary)
+├── main.zig                    # Entry point, CLI, config loading
+├── config.zig                  # Config file parser
+├── log.zig                     # Logger: text/JSON, file or stderr
 ├── server/
-│   ├── tcp.zig           # Accept loop, reactor mode
-│   ├── worker.zig        # Event loop worker + pub/sub + transactions
-│   ├── event_loop.zig    # kqueue/epoll/io_uring abstraction
-│   ├── resp.zig          # RESP v2 protocol
-│   └── tls.zig           # TLS (OpenSSL via dlopen)
+│   ├── tcp.zig                 # Accept loop, reactor mode
+│   ├── worker.zig              # Event loop worker + pub/sub + transactions
+│   ├── event_loop.zig          # kqueue/epoll/io_uring abstraction
+│   ├── resp.zig                # RESP v2/v3 protocol
+│   └── tls.zig                 # TLS (OpenSSL via dlopen)
 ├── engine/
-│   ├── kv.zig            # KV store + LRU eviction
-│   ├── concurrent_kv.zig # 256-stripe rwlock KV
-│   ├── list.zig          # List data type (deque)
-│   ├── hash.zig          # Hash data type (field maps)
-│   ├── set.zig           # Set data type (unique members)
-│   ├── sorted_set.zig    # Sorted set (score-ordered)
-│   ├── graph.zig         # CSR graph engine + vector integration
-│   ├── query.zig         # BFS, Dijkstra, traversal
-│   ├── vector_store.zig  # f32 vector storage (per node, per field)
-│   ├── hnsw.zig          # HNSW approximate nearest neighbor index
-│   └── rag.zig           # GRAPH.RAG executor (search + expand)
+│   ├── kv.zig                  # KV store + LRU eviction (single-thread)
+│   ├── concurrent_kv.zig       # 256-stripe rwlock KV + maxmemory eviction
+│   ├── list.zig                # List data type (deque)
+│   ├── hash.zig                # Hash data type (field maps)
+│   ├── set.zig                 # Set data type (unique members)
+│   ├── sorted_set.zig          # Sorted set (score-ordered)
+│   ├── graph.zig               # CSR graph engine + vector integration
+│   ├── query.zig               # BFS, Dijkstra, traversal
+│   ├── vector_store.zig        # f32 vector storage (per node, per field)
+│   ├── hnsw.zig                # HNSW approximate nearest neighbor index
+│   └── rag.zig                 # GRAPH.RAG executor (search + expand)
 ├── command/
-│   └── handler.zig       # Command dispatch + BGSAVE
+│   └── handler.zig             # Command dispatch + BGSAVE + admin (VEX.*)
 ├── cluster/
-│   └── replication.zig   # Leader/follower + failover
+│   ├── replication.zig         # Leader/follower wire, epoch, non-blocking broadcast
+│   └── protocol.zig            # VX frame protocol (v2 with epoch + ack frames)
+├── observability/              # NEW — operator surface
+│   ├── stats.zig               # WorkerStats counters + global atomics
+│   ├── cmd_table.zig           # Comptime command name → index, write classifier
+│   ├── event_stats.zig         # LATENCY monitor event rings
+│   └── clients.zig             # CLIENT LIST registry
 └── storage/
-    ├── snapshot.zig       # Binary snapshot (CRC-32)
-    └── aof.zig            # AOF with group commit
+    ├── snapshot.zig            # Binary snapshot (CRC-32)
+    ├── aof.zig                 # AOF + group commit + appendfsync + STOP-WRITE
+    └── atomic_io.zig           # NEW — tmp+fsync+rename+dir-fsync helpers
 ```
+
+**Planned**: `sentinel/` (Zig binary for cluster orchestration), `tests/chaos/` (bash/Python chaos tests). See [Separation of Concerns](docs/separation-of-concerns.md).
 
 ---
 
 ## Changelog
+
+### v0.8.0 — Production Hardening (Observability + Stability)
+
+**Observability (Redis-compatible operator surface):**
+- `INFO` expanded to ~50 fields across 11 sections (Server, Clients, Memory, Keyspace, Graph, Persistence, CPU, Replication, Cluster, Stats, Commandstats). Field names mirror Redis 7 — `redis_exporter` works against vex unmodified.
+- `SLOWLOG GET / LEN / RESET` with per-worker bounded rings.
+- `LATENCY LATEST / HISTORY / DOCTOR / RESET` for rare slow events (fsync, snapshot, eviction).
+- `CLIENT LIST / INFO` aggregated across workers via a global client registry.
+- `DEBUG OBJECT / SLEEP`, `MEMORY USAGE / STATS`.
+- `CONFIG GET *` returns 13 known knobs; runtime-mutable: `log-level`, `latency-monitor-threshold`, `appendfsync`.
+- Logger: file output + JSON format (`log-file`, `log-format`). All `std.debug.print` in server code now routed through the Logger.
+
+**Stability:**
+- Atomic persistence: snapshot save, AOF rewrite, HNSW serialize, vector store save all use tmp+fsync+rename+dir-fsync. `kill -9` mid-write preserves the previous version.
+- `appendfsync` config: `always` / `everysec` (default; background thread) / `no`. Bounded data loss on crash.
+- Disk-full STOP-WRITE state: ENOSPC sets a process flag; write commands return `-MISCONF`. Reads continue. Operator clears via `CONFIG SET appendfsync no`.
+- ConcurrentKV maxmemory enforcement: per-stripe sample-LRU eviction + `MaxMemoryReached` error.
+- Slow-client backpressure: `max-client-buffer` enforced on output too. Slow consumers get closed instead of OOMing the worker.
+- Stripe-lock spin-loop replaced with exponential backoff + 5s timeout.
+- Connection-limit cmpxchg loop (no over-admit by N when workers race).
+- Non-blocking replication broadcast: per-follower bounded outbox + drain thread. One slow follower can't stall the broadcast.
+- Cluster epoch mechanism: monotonic, persisted to `vex.epoch`, carried in heartbeats. Followers reject stale-epoch frames. Old leaders self-demote on higher epoch.
+- `VEX.PROMOTE <epoch>` / `VEX.STATUS` admin commands. (`vex-sentinel` will drive them — planned.)
+- Follower `repl_ack` frame: leaders compute true seq-precise lag per follower in `INFO Replication`.
+- Atomic snapshot + AOF coordination on follower full-sync (truncate-then-atomic-install).
+
+**Separation of concerns clarified:**
+- vex is the data plane only. Cluster orchestration policy moves to `vex-sentinel` (planned). Metrics export is `redis_exporter` (works today) or native `/metrics` via a Zig Prom library (later). Chaos testing belongs in `tests/chaos/`. See [Separation of Concerns](docs/separation-of-concerns.md).
 
 ### v0.7.1
 - HNSW index persistence (`.vhi` files — skip rebuild on cold start)

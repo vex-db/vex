@@ -13,17 +13,21 @@ const span = @import("perf/span.zig");
 const vex_log = @import("log.zig");
 
 // Global state for replication callbacks
+// Globals exist for replication callbacks invoked from non-main threads
+// (the leader's follower drain threads, the follower's receiver thread).
+// Each one is the single thing its callback needs that can't easily be
+// passed through the callback signature; all are written once at startup
+// and read-only thereafter.
+//
+// g_kv / g_graph: read by getSnapshot + loadSnapshot
+// g_io: read by getSnapshot + loadSnapshot
+// g_aof: read by loadSnapshot (truncate-before-full-sync)
+// g_data_dir: read by loadSnapshot (atomic-install path for vex.zdb)
+// g_local_port: read by executeForwardedWrite (loopback target)
 var g_kv: ?*KVStore = null;
 var g_graph: ?*GraphEngine = null;
 var g_io: ?std.Io = null;
-var g_allocator: ?std.mem.Allocator = null;
 var g_aof: ?*AOF = null;
-var g_repl_follower: ?*@import("cluster/replication.zig").ReplicationFollower = null;
-var g_cluster_conf: ?*@import("cluster/config.zig").ClusterConfig = null;
-// Storage for the ReplicationLeader created during failover promotion.
-// Must be a global so the pointer survives the promote_fn call.
-var g_promoted_leader: ?@import("cluster/replication.zig").ReplicationLeader = null;
-// Data directory snapshot for failover promotion (epoch persistence path).
 var g_data_dir: ?[]const u8 = null;
 
 /// Execute a forwarded write by sending it to the local RESP port as a client.
@@ -72,53 +76,6 @@ fn executeForwardedWrite(allocator: std.mem.Allocator, args: []const []const u8)
 }
 
 var g_local_port: u16 = 6380;
-
-/// Failover: promote this follower to leader.
-/// Called from the ReplicationFollower's receiver thread when heartbeat times out.
-fn promoteToLeader() void {
-    const allocator = g_allocator orelse return;
-    const rf = g_repl_follower orelse return;
-    const cc = g_cluster_conf orelse return;
-    const ReplMod = @import("cluster/replication.zig");
-
-    vex_log.warn("failover: promoting to leader", .{});
-
-    // Bump and persist the cluster epoch BEFORE declaring leadership.
-    // Without this, an old leader that comes back up could continue
-    // accepting writes and create split-brain.
-    if (g_data_dir) |dd| {
-        const next_epoch = ReplMod.current_epoch.load(.monotonic) + 1;
-        _ = ReplMod.bumpAndPersistEpoch(allocator, dd, next_epoch) catch |err| {
-            vex_log.err("failover: failed to persist new epoch: {s}", .{@errorName(err)});
-            // Continue anyway — without persistence the promotion is less
-            // safe, but refusing to promote leaves the cluster dead.
-        };
-    }
-
-    // Close forward connection — we no longer forward writes
-    if (rf.forward_fd >= 0) {
-        _ = std.c.close(rf.forward_fd);
-        rf.forward_fd = -1;
-    }
-
-    // Create and start a ReplicationLeader
-    g_promoted_leader = ReplMod.ReplicationLeader.init(allocator, cc, g_local_port);
-    g_promoted_leader.?.execute_fn = executeForwardedWrite;
-    g_promoted_leader.?.snapshot_fn = getSnapshot;
-    g_promoted_leader.?.start() catch |err| {
-        vex_log.err("failover: failed to start replication leader: {s}", .{@errorName(err)});
-        return;
-    };
-
-    // Publish the new leader pointer so workers can find it via getPromotedLeader()
-    rf.promoted_leader_ptr.store(@intFromPtr(&g_promoted_leader.?), .release);
-
-    // Update observability handles: we're no longer a follower, we're a leader.
-    ReplMod.current_follower_ptr.store(null, .release);
-    ReplMod.current_leader_ptr.store(&g_promoted_leader.?, .release);
-
-    vex_log.info("failover: promotion complete; accepting writes and follower connections on :{d}", .{g_local_port + 10000});
-}
 
 /// Get a binary snapshot of KV + Graph for full sync to followers.
 fn getSnapshot(allocator: std.mem.Allocator) ?[]u8 {
@@ -350,9 +307,7 @@ pub fn main(init: std.process.Init) !void {
             g_kv = &kv;
             g_graph = &graph;
             g_io = io;
-            g_allocator = allocator;
             g_local_port = config.port;
-            g_cluster_conf = cc;
 
             // Determine effective role: config says leader, but probe first
             // to check if another node already claimed leadership (old leader rejoining).
@@ -378,8 +333,6 @@ pub fn main(init: std.process.Init) !void {
                 log("cluster mode: FOLLOWER (node {d})", .{cc.self_id});
                 repl_follower = ReplMod.ReplicationFollower.init(allocator, cc, config.port);
                 repl_follower.?.load_snapshot_fn = loadSnapshot;
-                repl_follower.?.promote_fn = promoteToLeader;
-                g_repl_follower = &repl_follower.?;
                 repl_follower.?.connectToLeader() catch |err| {
                     log("warning: cannot connect to leader: {s}", .{@errorName(err)});
                 };

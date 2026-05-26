@@ -6,6 +6,7 @@ const config_mod = @import("config.zig");
 const ClusterConfig = config_mod.ClusterConfig;
 const ClusterNode = config_mod.ClusterNode;
 const atomic_io = @import("../storage/atomic_io.zig");
+const obs_stats = @import("../observability/stats.zig");
 
 fn nowMs() i64 {
     var ts: std.c.timespec = undefined;
@@ -716,10 +717,10 @@ pub const ReplicationFollower = struct {
     /// Callback to load a snapshot (full sync)
     load_snapshot_fn: ?*const fn (data: []const u8) bool,
     local_port: u16,
-    /// Set when this follower promotes to leader
+    /// Set when this follower has been promoted to leader (by an external
+    /// trigger, e.g. VEX.PROMOTE driven by vex-sentinel). vex itself never
+    /// flips this — failover policy lives outside the data plane.
     promoted: std.atomic.Value(bool),
-    /// Callback: called when this follower should promote to leader
-    promote_fn: ?*const fn () void,
     /// After promotion, points to the new ReplicationLeader (stored as usize for atomics)
     promoted_leader_ptr: std.atomic.Value(usize),
     /// Replication state — updated by heartbeat
@@ -740,7 +741,6 @@ pub const ReplicationFollower = struct {
             .load_snapshot_fn = null,
             .local_port = local_port,
             .promoted = std.atomic.Value(bool).init(false),
-            .promote_fn = null,
             .promoted_leader_ptr = std.atomic.Value(usize).init(0),
             .leader_seq = std.atomic.Value(u64).init(0),
             .local_seq = std.atomic.Value(u64).init(0),
@@ -968,7 +968,9 @@ pub const ReplicationFollower = struct {
 
         // Record initial time for heartbeat tracking
         self.last_heartbeat_ms.store(nowMs(), .release);
-        var failover_wait_count: u32 = 0;
+        // Throttle the timeout block so we don't spam logs / probe every 500ms.
+        var last_timeout_check_ms: i64 = 0;
+        const TIMEOUT_CHECK_INTERVAL_MS: i64 = 5_000;
 
         while (self.running.load(.acquire)) {
             // Poll for data with timeout
@@ -979,28 +981,22 @@ pub const ReplicationFollower = struct {
             }};
             const poll_rc = std.c.poll(&pfd, 1, 500);
 
-            // Check heartbeat timeout
+            // Check heartbeat timeout. vex never decides to promote itself —
+            // failover policy lives in vex-sentinel, which issues VEX.PROMOTE
+            // over the admin port. Here we just surface the condition (log +
+            // obs_stats flag) and keep probing so we can reconnect once a new
+            // leader appears.
             const now = nowMs();
             const last_hb = self.last_heartbeat_ms.load(.acquire);
-            if (last_hb > 0 and (now - last_hb) > HEARTBEAT_TIMEOUT_MS) {
-                vex_log.warn("failover: leader heartbeat timeout ({d}ms since last)", .{now - last_hb});
-                if (self.config.amIHighestPriority()) {
-                    vex_log.info("failover: I am highest priority follower — PROMOTING TO LEADER", .{});
-                    self.promoted.store(true, .release);
-                    if (self.promote_fn) |promote| promote();
-                    return; // Exit — we're the leader now
-                } else {
-                    failover_wait_count += 1;
-                    if (failover_wait_count > 3) {
-                        // Higher priority follower hasn't promoted — check if a new leader appeared
-                        if (probeForLeader(self.allocator, self.config)) |_| {
-                            vex_log.info("failover: detected new leader — reconnecting", .{});
-                            return; // Exit to reconnect in outer loop
-                        }
-                    }
-                    vex_log.info("failover: waiting for higher priority follower to promote (attempt {d})", .{failover_wait_count});
-                    // Reset timer — give higher priority node time to promote
-                    self.last_heartbeat_ms.store(now, .release);
+            if (last_hb > 0 and (now - last_hb) > HEARTBEAT_TIMEOUT_MS and
+                (now - last_timeout_check_ms) > TIMEOUT_CHECK_INTERVAL_MS)
+            {
+                last_timeout_check_ms = now;
+                vex_log.warn("leader heartbeat timeout ({d}ms); awaiting VEX.PROMOTE", .{now - last_hb});
+                obs_stats.leader_unreachable.store(true, .release);
+                if (probeForLeader(self.allocator, self.config)) |_| {
+                    vex_log.info("new leader detected — reconnecting", .{});
+                    return; // Exit to reconnect in outer loop
                 }
             }
 
@@ -1012,8 +1008,9 @@ pub const ReplicationFollower = struct {
             };
             vex_log.debug("repl-follower: received frame type={d}", .{@intFromEnum(frame.frame_type)});
 
-            // Reset failover counter on any valid frame
-            failover_wait_count = 0;
+            // Any valid frame from the leader means the link is alive — clear
+            // the unreachable flag so INFO Replication / sentinel see :up again.
+            obs_stats.leader_unreachable.store(false, .release);
 
             switch (frame.frame_type) {
                 .repl_data => {

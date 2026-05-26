@@ -1924,7 +1924,12 @@ pub const CommandHandler = struct {
             }
         } else if (cur_follower) |fl| {
             try aw.writer.writeAll("role:slave\r\n");
-            try aw.writer.print("master_link_status:{s}\r\n", .{if (fl.leader_fd >= 0) "up" else "down"});
+            // Link is "down" if either the socket is gone OR the heartbeat
+            // timeout flag is set (set by replication.zig when no heartbeat
+            // arrived within HEARTBEAT_TIMEOUT_MS — the fd may still be open
+            // but the leader is silent).
+            const link_down = fl.leader_fd < 0 or obs_stats.leader_unreachable.load(.acquire);
+            try aw.writer.print("master_link_status:{s}\r\n", .{if (link_down) "down" else "up"});
             try aw.writer.print("master_repl_offset:{d}\r\n", .{fl.leader_seq.load(.monotonic)});
             try aw.writer.print("slave_repl_offset:{d}\r\n", .{fl.local_seq.load(.monotonic)});
             try aw.writer.print("slave_replayed_count:{d}\r\n", .{fl.replayed_count.load(.monotonic)});
@@ -2349,12 +2354,14 @@ pub const CommandHandler = struct {
                 return;
             },
         };
-        // Note: the cluster role flip itself (starting ReplicationLeader,
-        // updating current_leader_ptr) is initiated by main.zig via the
-        // existing promoteToLeader path. VEX.PROMOTE only persists the new
-        // epoch; the operator-driven start sequence still has to run for
-        // the node to actually become a leader. vex-sentinel will drive
-        // both in concert in a follow-on PR.
+        // VEX.PROMOTE currently persists the new epoch only. The in-process
+        // role flip (stopping the ReplicationFollower, spinning up a
+        // ReplicationLeader, swapping current_leader_ptr) is intentionally
+        // not done here yet — it's a follow-on PR. Until that lands, an
+        // operator running manual failover should: bump the epoch via
+        // VEX.PROMOTE, then restart the chosen node with a leader-role
+        // config. vex-sentinel will drive both steps together once it
+        // ships.
         try resp.serializeSimpleString(w, "OK");
     }
 

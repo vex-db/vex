@@ -179,6 +179,13 @@ pub var persistence_broken: std.atomic.Value(bool) = std.atomic.Value(bool).init
 /// Errno from the last fatal persistence failure (exposed via INFO).
 pub var persistence_broken_errno: std.atomic.Value(i32) = std.atomic.Value(i32).init(0);
 
+/// Set by the replication follower when the leader heartbeat times out.
+/// Surfaced in INFO Replication as `master_link_status:down`. Cleared
+/// when a heartbeat (or any frame) is received from a leader again.
+/// vex itself never acts on this — vex-sentinel watches the flag (and
+/// VEX.STATUS) and decides whether to issue VEX.PROMOTE.
+pub var leader_unreachable: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
 /// Global registry. Populated at worker init via `register()`.
 /// Read by INFO and (later) /metrics.
 var workers_buf: [MAX_WORKERS]*WorkerStats = undefined;

@@ -98,33 +98,34 @@ Before failover:        Network partition:       After heal:
 
 ## Promotion
 
-Two paths exist for incrementing the epoch and starting leader role:
+**vex never decides to promote itself.** Failover policy lives entirely outside the data plane — either an operator (manual) or `vex-sentinel` (planned) drives it.
 
-### Automatic (legacy, in vex)
+### What a follower does on heartbeat timeout
 
-Implemented today. On heartbeat timeout, the highest-priority surviving follower (lowest node ID) auto-promotes:
+When a follower hasn't seen a heartbeat for `HEARTBEAT_TIMEOUT_MS` (currently 15s — three missed heartbeats):
 
-1. Bumps `current_epoch` and persists `vex.epoch` atomically
-2. Closes forward connection to the (presumed-dead) old leader
-3. Starts a new `ReplicationLeader` on its replication port
-4. Begins broadcasting mutations at the new epoch
+1. Logs `leader heartbeat timeout (...ms); awaiting VEX.PROMOTE`
+2. Sets the process-wide `obs_stats.leader_unreachable` flag (surfaces as `master_link_status:down` in `INFO Replication`)
+3. Probes the cluster config's `leader` node — if a new leader has appeared (typically because a sibling was promoted), it returns to reconnect
+4. Otherwise it stays a follower, keeps probing, and waits for an external signal
 
-This is unsafe under network partition (two followers may both think they're the highest surviving priority). Will be deprecated when vex-sentinel ships.
+The follower never bumps the epoch or starts a `ReplicationLeader` on its own. There is no "highest priority follower wins" auto-election; that machinery was removed in v0.8 because it was unsafe under network partition.
 
-### Manual / sentinel-driven (recommended)
+### Manual / sentinel-driven promotion
 
-Operator (or `vex-sentinel`) calls the new admin command:
+Operator (or `vex-sentinel`) calls the admin command on the chosen follower:
 
 ```
 > VEX.PROMOTE 7
 OK
 ```
 
-The command:
-1. Validates `7 > current_epoch` (rejects stale)
-2. Atomically writes `7` to `vex.epoch`
+The handler:
+1. Validates `7 > current_epoch` (rejects stale epochs)
+2. Atomically writes `7` to `<data_dir>/vex.epoch`
 3. Updates the in-memory `current_epoch` atomic
-4. (Note: starting `ReplicationLeader` and updating `current_leader_ptr` is still the responsibility of the existing main.zig path — VEX.PROMOTE only persists the epoch. vex-sentinel will drive both together in a follow-on PR.)
+
+**Limitation today:** `VEX.PROMOTE` only persists the new epoch. The in-process role flip (stop the follower, spin up a `ReplicationLeader`, swap `current_leader_ptr`) is a follow-on PR. Until that lands, manual failover is a two-step operation: bump the epoch via `VEX.PROMOTE`, then restart the chosen node with a leader-role cluster config. `vex-sentinel` will drive both steps atomically once it ships.
 
 `vex-sentinel` will coordinate the epoch bump across multiple nodes via quorum, picking the new leader by priority + applied-seq lag.
 
@@ -254,4 +255,4 @@ For Prometheus, point `redis_exporter` at the cluster nodes — the field names 
 - **No synchronous writes**: writes succeed on leader alone, then replicate async (`WAIT` returns follower count but doesn't enforce a quorum)
 - **Single leader at a time**: epoch enforcement prevents two leaders from accepting concurrent writes, but the cluster can have at most one active leader by design
 - **Eventual consistency on followers**: lag is now precisely measurable via `lag_seq`; tune your application accordingly
-- **Auto-promotion is unsafe under partition**: until vex-sentinel ships, use `VEX.PROMOTE <epoch>` manually for production failover
+- **No automatic failover in vex**: followers never self-promote. Use `VEX.PROMOTE <epoch>` (manually or via vex-sentinel once it ships) — see [Promotion](#promotion) for the current two-step manual procedure

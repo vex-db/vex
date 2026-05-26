@@ -1,3 +1,17 @@
+//! Cluster config parser — shared between `vex` (src/main.zig wires
+//! replication from it) and `vex-sentinel` (election + health poll loops
+//! consume the node list).
+//!
+//! The sentinel binary imports this file via the `vex_cluster_config`
+//! build module (see build.zig). That means the public surface here is a
+//! **stable contract** across two binaries: a change that renames or
+//! reshapes `ClusterConfig`, `ClusterNode`, `NodeRole`, `parse`, or
+//! `parseString` will break sentinel's compile. Add new fields/methods
+//! freely; rename/remove only after auditing sentinel/.
+//!
+//! Internal helpers (anything not exported, or exported but only called
+//! from src/) are not part of the contract.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -55,29 +69,6 @@ pub const ClusterConfig = struct {
             if (n.role == .leader) return n;
         }
         return null;
-    }
-
-    /// Get the follower with highest priority (lowest number) that isn't self.
-    pub fn highestPriorityFollower(self: *const ClusterConfig) ?ClusterNode {
-        var best: ?ClusterNode = null;
-        for (self.nodes) |n| {
-            if (n.role != .follower) continue;
-            if (best == null or n.priority < best.?.priority) {
-                best = n;
-            }
-        }
-        return best;
-    }
-
-    /// Am I the highest priority follower?
-    pub fn amIHighestPriority(self: *const ClusterConfig) bool {
-        const me = self.selfNode() orelse return false;
-        if (me.role != .follower) return false;
-        for (self.nodes) |n| {
-            if (n.id == self.self_id) continue;
-            if (n.role == .follower and n.priority < me.priority) return false;
-        }
-        return true;
     }
 
     /// Get all nodes except self, sorted by priority.

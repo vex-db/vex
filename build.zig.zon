@@ -1,6 +1,6 @@
 .{
     .name = .vex,
-    .version = "0.1.0",
+    .version = "0.7.3",
     .fingerprint = 0xe969ab1c1a56d94b,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

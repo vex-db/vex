@@ -1,4 +1,4 @@
-pub const VERSION = "0.7.2";
+pub const VERSION = @import("build_options").version;
 
 pub const kv = @import("engine/kv.zig");
 pub const graph = @import("engine/graph.zig");

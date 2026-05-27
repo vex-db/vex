@@ -1,8 +1,18 @@
 const std = @import("std");
 
+// Canonical version: build.zig.zon's `.version` field. The build option
+// below propagates it to every Zig target that needs to report it
+// (vex binary, persistence_bench, etc.), so a release bump touches a
+// single line.
+const vex_version: []const u8 = @import("build.zig.zon").version;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const build_opts = b.addOptions();
+    build_opts.addOption([]const u8, "version", vex_version);
+    const build_opts_mod = build_opts.createModule();
 
     // Vendored from https://github.com/ThobiasKnudsen/verztable v0.1.0 (Zig module only; upstream build pulls C++ benches).
     const verztable_mod = b.createModule(.{
@@ -18,6 +28,9 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            .imports = &.{
+                .{ .name = "build_options", .module = build_opts_mod },
+            },
         }),
     });
     b.installArtifact(exe);
@@ -107,6 +120,9 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            .imports = &.{
+                .{ .name = "build_options", .module = build_opts_mod },
+            },
         }),
     });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
@@ -183,6 +199,9 @@ pub fn build(b: *std.Build) void {
                     .root_source_file = b.path("src/root.zig"),
                     .target = target,
                     .optimize = optimize,
+                    .imports = &.{
+                        .{ .name = "build_options", .module = build_opts_mod },
+                    },
                 }) },
             },
         }),

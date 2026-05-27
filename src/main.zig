@@ -89,7 +89,9 @@ fn getSnapshot(allocator: std.mem.Allocator) ?[]u8 {
 
     // Use snapshot.save to a temp path, then read the file
     const tmp_path = "/tmp/vex_repl_sync.zdb";
-    snapshot.save(io, allocator, kv_ptr, graph_ptr, tmp_path) catch return null;
+    const kv_snap = kv_ptr.snapshot(allocator) catch return null;
+    defer KVStore.freeSnapshot(kv_snap, allocator);
+    snapshot.save(io, allocator, kv_snap, graph_ptr, tmp_path) catch return null;
 
     // Read the snapshot file
     const file = std.Io.Dir.cwd().openFile(io, tmp_path, .{}) catch return null;
@@ -398,9 +400,14 @@ pub fn main(init: std.process.Init) !void {
     log("shutting down...", .{});
     if (!config.no_persistence) {
         if (aof_instance) |*a| {
-            snapshot.save(io, allocator, &kv, &graph, a.snapshot_path) catch |err| {
-                log("shutdown snapshot failed: {s}", .{@errorName(err)});
-            };
+            if (kv.snapshot(allocator)) |kv_snap| {
+                defer KVStore.freeSnapshot(kv_snap, allocator);
+                snapshot.save(io, allocator, kv_snap, &graph, a.snapshot_path) catch |err| {
+                    log("shutdown snapshot failed: {s}", .{@errorName(err)});
+                };
+            } else |err| {
+                log("shutdown kv snapshot failed: {s}", .{@errorName(err)});
+            }
             a.truncate() catch {};
             graph.saveVectors(config.data_dir) catch |err| {
                 log("shutdown vector save failed: {s}", .{@errorName(err)});

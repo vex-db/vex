@@ -443,10 +443,17 @@ pub const AOF = struct {
     /// Rewrite the AOF by serializing current KV + Graph state as commands.
     /// Writes to a temp file, then atomically renames over the current AOF.
     /// This compacts the AOF (removes redundant ops) and bounds its size.
+    ///
+    /// `kv_snapshot` is a point-in-time copy of all live KV entries; the
+    /// caller takes kv_mutex briefly to build it, then releases. That way
+    /// this function (which does seconds of disk I/O) doesn't hold the
+    /// global command lock and stall every non-hot-path worker command.
+    /// `now_ms` is the snapshot wall clock used to compute remaining TTL.
     pub fn rewriteFromState(
         self: *AOF,
         allocator: Allocator,
-        kv: *@import("../engine/kv.zig").KVStore,
+        kv_snapshot: []const @import("../engine/kv.zig").KVStore.SnapshotEntry,
+        now_ms: i64,
         graph: *@import("../engine/graph.zig").GraphEngine,
     ) !void {
         const ev_span = event_stats.Span.begin();
@@ -467,19 +474,17 @@ pub const AOF = struct {
             .last_save_time = self.last_save_time,
         };
 
-        // KV entries
-        var kv_iter = kv.map.iterator();
-        while (kv_iter.next()) |entry| {
-            if (entry.value_ptr.flags.deleted) continue;
-            if (entry.value_ptr.flags.has_ttl) {
+        // KV entries — iterate the snapshot, not the live map.
+        for (kv_snapshot) |entry| {
+            if (entry.has_ttl) {
                 var ttl_buf: [32]u8 = undefined;
-                const remaining_ms = entry.value_ptr.expires_at - kv.cached_now_ms;
+                const remaining_ms = entry.expires_at - now_ms;
                 if (remaining_ms <= 0) continue; // already expired
                 const ttl_str = std.fmt.bufPrint(&ttl_buf, "{d}", .{@divTrunc(remaining_ms, 1000)}) catch continue;
-                const args = [_][]const u8{ "SET", entry.key_ptr.*, entry.value_ptr.value, "EX", ttl_str };
+                const args = [_][]const u8{ "SET", entry.key, entry.value, "EX", ttl_str };
                 tmp_aof.logCommand(&args);
             } else {
-                const args = [_][]const u8{ "SET", entry.key_ptr.*, entry.value_ptr.value };
+                const args = [_][]const u8{ "SET", entry.key, entry.value };
                 tmp_aof.logCommand(&args);
             }
         }

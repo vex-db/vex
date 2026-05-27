@@ -35,16 +35,27 @@ const DB_PREFIXES = db_prefix.DB_PREFIXES;
 
 // ─── Connection ──────────────────────────────────────────────────────
 
+/// Subscriber identity: fd plus the worker that owns the fd's I/O.
+/// Storing the owner lets PUBLISH route delivery through that worker's
+/// queue, so all socket writes for a given fd happen on a single thread.
+/// This is required for TLS correctness (OpenSSL SSL* is not thread-safe
+/// per connection) and for plaintext too (avoids interleaved record
+/// fragments and torn write_buf appends).
+pub const Subscriber = struct {
+    fd: i32,
+    worker: *Worker,
+};
+
 /// Shared pub/sub registry (thread-safe, shared across all workers).
 pub const PubSubRegistry = struct {
-    /// channel_name → list of subscriber fds
-    channels: std.StringHashMap(std.array_list.Managed(i32)),
+    /// channel_name → list of subscribers
+    channels: std.StringHashMap(std.array_list.Managed(Subscriber)),
     mutex: std.c.pthread_mutex_t,
     allocator: Allocator,
 
     pub fn init(allocator: Allocator) PubSubRegistry {
         return .{
-            .channels = std.StringHashMap(std.array_list.Managed(i32)).init(allocator),
+            .channels = std.StringHashMap(std.array_list.Managed(Subscriber)).init(allocator),
             .mutex = std.c.PTHREAD_MUTEX_INITIALIZER,
             .allocator = allocator,
         };
@@ -59,20 +70,20 @@ pub const PubSubRegistry = struct {
         self.channels.deinit();
     }
 
-    pub fn subscribe(self: *PubSubRegistry, channel: []const u8, fd: i32) !void {
+    pub fn subscribe(self: *PubSubRegistry, channel: []const u8, fd: i32, worker: *Worker) !void {
         _ = std.c.pthread_mutex_lock(&self.mutex);
         defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
         const gop = try self.channels.getOrPut(channel);
         if (!gop.found_existing) {
             gop.key_ptr.* = try self.allocator.dupe(u8, channel);
-            gop.value_ptr.* = std.array_list.Managed(i32).init(self.allocator);
+            gop.value_ptr.* = std.array_list.Managed(Subscriber).init(self.allocator);
         }
         // Avoid duplicate subscriptions
-        for (gop.value_ptr.items) |existing_fd| {
-            if (existing_fd == fd) return;
+        for (gop.value_ptr.items) |existing| {
+            if (existing.fd == fd) return;
         }
-        try gop.value_ptr.append(fd);
+        try gop.value_ptr.append(.{ .fd = fd, .worker = worker });
     }
 
     pub fn unsubscribe(self: *PubSubRegistry, channel: []const u8, fd: i32) void {
@@ -82,7 +93,7 @@ pub const PubSubRegistry = struct {
         if (self.channels.getPtr(channel)) |list| {
             var i: usize = 0;
             while (i < list.items.len) {
-                if (list.items[i] == fd) {
+                if (list.items[i].fd == fd) {
                     _ = list.orderedRemove(i);
                 } else {
                     i += 1;
@@ -99,7 +110,7 @@ pub const PubSubRegistry = struct {
         while (it.next()) |entry| {
             var i: usize = 0;
             while (i < entry.value_ptr.items.len) {
-                if (entry.value_ptr.items[i] == fd) {
+                if (entry.value_ptr.items[i].fd == fd) {
                     _ = entry.value_ptr.orderedRemove(i);
                 } else {
                     i += 1;
@@ -108,9 +119,9 @@ pub const PubSubRegistry = struct {
         }
     }
 
-    /// Publish: returns list of subscriber fds (caller writes to them).
-    /// Caller must NOT hold the mutex while writing to fds.
-    pub fn getSubscribers(self: *PubSubRegistry, channel: []const u8, out: *std.array_list.Managed(i32)) void {
+    /// Publish: snapshot the subscriber list for a channel.
+    /// Caller must NOT hold the mutex while routing to fds.
+    pub fn getSubscribers(self: *PubSubRegistry, channel: []const u8, out: *std.array_list.Managed(Subscriber)) void {
         _ = std.c.pthread_mutex_lock(&self.mutex);
         defer _ = std.c.pthread_mutex_unlock(&self.mutex);
 
@@ -118,6 +129,14 @@ pub const PubSubRegistry = struct {
             out.appendSlice(list.items) catch {};
         }
     }
+};
+
+/// One queued cross-worker pub/sub delivery. Bytes are owned by the
+/// queue entry and freed by the consuming worker after framing+flushing.
+pub const PendingPush = struct {
+    fd: i32,
+    channel: []u8,
+    message: []u8,
 };
 
 pub const DS_STRIPE_COUNT = 256;
@@ -369,6 +388,11 @@ pub const Worker = struct {
     new_fds: [MAX_NEW_FDS]i32,
     new_fd_head: std.atomic.Value(usize),
     new_fd_tail: std.atomic.Value(usize),
+    /// Cross-worker pub/sub delivery queue. Other workers push PendingPush
+    /// entries here; this worker drains them in its event loop and writes
+    /// to its own connections via the normal connWrite/sslWrite path.
+    push_queue: std.array_list.Managed(PendingPush),
+    push_mutex: std.c.pthread_mutex_t,
     /// Last stripe lease held by this worker (only one at a time)
     last_stripe: u16,
     /// true = use io_uring recv/send for non-TLS connections
@@ -447,6 +471,8 @@ pub const Worker = struct {
             .new_fds = @splat(-1),
             .new_fd_head = std.atomic.Value(usize).init(0),
             .new_fd_tail = std.atomic.Value(usize).init(0),
+            .push_queue = std.array_list.Managed(PendingPush).init(allocator),
+            .push_mutex = std.c.PTHREAD_MUTEX_INITIALIZER,
             .last_stripe = STRIPE_UNOWNED,
             .use_uring_io = false, // set after init when loop.use_uring is known
             .stats = stats_mod.WorkerStats.init(),
@@ -464,6 +490,26 @@ pub const Worker = struct {
         }
         self.new_fds[tail % MAX_NEW_FDS] = fd;
         self.new_fd_tail.store(tail +% 1, .release);
+        self.loop.notify();
+    }
+
+    /// Enqueue a pub/sub delivery from a foreign worker. Allocates copies
+    /// of channel + message in our allocator; the owning worker frees them
+    /// after framing+flush. Wakes the owner via the notify fd.
+    pub fn enqueuePush(self: *Worker, fd: i32, channel: []const u8, message: []const u8) void {
+        const ch_copy = self.allocator.dupe(u8, channel) catch return;
+        const msg_copy = self.allocator.dupe(u8, message) catch {
+            self.allocator.free(ch_copy);
+            return;
+        };
+        _ = std.c.pthread_mutex_lock(&self.push_mutex);
+        self.push_queue.append(.{ .fd = fd, .channel = ch_copy, .message = msg_copy }) catch {
+            _ = std.c.pthread_mutex_unlock(&self.push_mutex);
+            self.allocator.free(ch_copy);
+            self.allocator.free(msg_copy);
+            return;
+        };
+        _ = std.c.pthread_mutex_unlock(&self.push_mutex);
         self.loop.notify();
     }
 
@@ -485,6 +531,7 @@ pub const Worker = struct {
                 if (self.loop.isNotifyFd(ev.fd)) {
                     self.loop.drainNotify();
                     self.acceptQueuedFds();
+                    self.drainPushQueue();
                     continue;
                 }
 
@@ -590,6 +637,39 @@ pub const Worker = struct {
             self.new_fd_head.store(head +% 1, .release);
 
             self.registerConnection(fd);
+        }
+    }
+
+    /// Drain pub/sub messages enqueued by foreign workers. Runs on this
+    /// worker's thread, so it can safely touch its own Connection list and
+    /// frame using each subscriber's current protocol_version.
+    fn drainPushQueue(self: *Worker) void {
+        // Move items out under the lock; process out of the lock so we
+        // don't block a publisher worker during the framing/flush loop.
+        var local: std.array_list.Managed(PendingPush) = undefined;
+        _ = std.c.pthread_mutex_lock(&self.push_mutex);
+        if (self.push_queue.items.len == 0) {
+            _ = std.c.pthread_mutex_unlock(&self.push_mutex);
+            return;
+        }
+        local = self.push_queue;
+        self.push_queue = std.array_list.Managed(PendingPush).init(self.allocator);
+        _ = std.c.pthread_mutex_unlock(&self.push_mutex);
+        defer local.deinit();
+
+        for (local.items) |push| {
+            defer self.allocator.free(push.channel);
+            defer self.allocator.free(push.message);
+
+            const conn = self.conns.get(push.fd) orelse continue;
+            const hdr: []const u8 = if (conn.protocol_version == .resp3)
+                ">3\r\n$7\r\nmessage\r\n"
+            else
+                "*3\r\n$7\r\nmessage\r\n";
+            conn.write_buf.appendSlice(hdr) catch continue;
+            writeBulkTo(&conn.write_buf, push.channel);
+            writeBulkTo(&conn.write_buf, push.message);
+            self.directFlush(conn);
         }
     }
 
@@ -1745,7 +1825,6 @@ pub const Worker = struct {
     // ── PSUBSCRIBE / PUNSUBSCRIBE handlers ──────────────────────────
 
     fn handlePSubscribe(self: *Worker, conn: *Connection, args: []const []const u8, ps: *PubSubRegistry) void {
-        _ = self;
         if (args.len < 2) {
             conn.write_buf.appendSlice("-ERR wrong number of arguments for 'PSUBSCRIBE'\r\n") catch {};
             return;
@@ -1755,7 +1834,7 @@ pub const Worker = struct {
         for (args[1..]) |pattern| {
             var key_buf: [256]u8 = undefined;
             const pkey = std.fmt.bufPrint(&key_buf, "pattern:{s}", .{pattern}) catch continue;
-            ps.subscribe(pkey, conn.fd) catch continue;
+            ps.subscribe(pkey, conn.fd, self) catch continue;
             conn.write_buf.appendSlice("*3\r\n$10\r\npsubscribe\r\n") catch {};
             writeBulkTo(&conn.write_buf, pattern);
             writeIntTo(&conn.write_buf, 1);
@@ -1935,14 +2014,13 @@ pub const Worker = struct {
         }
         conn.pubsub_mode = true;
         for (args[1..]) |channel| {
-            ps.subscribe(channel, conn.fd) catch continue;
+            ps.subscribe(channel, conn.fd, self) catch continue;
             // RESP push: *3\r\n$9\r\nsubscribe\r\n$<chanlen>\r\n<chan>\r\n:<count>\r\n
             const sub_hdr: []const u8 = if (conn.protocol_version == .resp3) ">3\r\n$9\r\nsubscribe\r\n" else "*3\r\n$9\r\nsubscribe\r\n";
             conn.write_buf.appendSlice(sub_hdr) catch {};
             writeBulkTo(&conn.write_buf, channel);
             writeIntTo(&conn.write_buf, 1);
         }
-        _ = self;
     }
 
     fn handleUnsubscribe(self: *Worker, conn: *Connection, args: []const []const u8, ps: *PubSubRegistry) void {
@@ -1976,35 +2054,37 @@ pub const Worker = struct {
         const channel = args[1];
         const message = args[2];
 
-        // Get subscriber fds
-        var subs = std.array_list.Managed(i32).init(self.allocator);
+        var subs = std.array_list.Managed(Subscriber).init(self.allocator);
         defer subs.deinit();
         ps.getSubscribers(channel, &subs);
 
-        // Format the push message body (channel + message bulk strings)
-        var body_buf = std.array_list.Managed(u8).init(self.allocator);
-        defer body_buf.deinit();
-        writeBulkTo(&body_buf, channel);
-        writeBulkTo(&body_buf, message);
-
-        // Write to all subscribers — use >3 (push) for RESP3, *3 (array) for RESP2
-        for (subs.items) |fd| {
-            if (self.conns.get(fd)) |sub_conn| {
+        // Two delivery paths, but **all socket I/O for a given fd happens
+        // on the fd's owning worker**. This is required for TLS (SSL* is
+        // not thread-safe per connection) and avoids torn write_buf
+        // appends on plaintext fds.
+        for (subs.items) |sub| {
+            if (sub.worker == self) {
+                // Same worker: append directly and kick the flush so
+                // delivery latency matches the cross-worker path.
+                const sub_conn = self.conns.get(sub.fd) orelse continue;
                 const hdr: []const u8 = if (sub_conn.protocol_version == .resp3)
                     ">3\r\n$7\r\nmessage\r\n"
                 else
                     "*3\r\n$7\r\nmessage\r\n";
-                sub_conn.write_buf.appendSlice(hdr) catch {};
-                sub_conn.write_buf.appendSlice(body_buf.items) catch {};
+                sub_conn.write_buf.appendSlice(hdr) catch continue;
+                writeBulkTo(&sub_conn.write_buf, channel);
+                writeBulkTo(&sub_conn.write_buf, message);
+                self.directFlush(sub_conn);
             } else {
-                // Subscriber on different worker — write directly to fd (RESP2 default)
-                const hdr = "*3\r\n$7\r\nmessage\r\n";
-                _ = std.c.write(fd, hdr.ptr, hdr.len);
-                _ = std.c.write(fd, body_buf.items.ptr, body_buf.items.len);
+                // Foreign worker: hand off so framing + write happen on
+                // the owner's thread. Owner reads the subscriber's actual
+                // protocol_version at delivery time.
+                sub.worker.enqueuePush(sub.fd, channel, message);
             }
         }
 
-        // Reply with count of subscribers who received the message
+        // Reply with the snapshot count (matches Redis: number of clients
+        // the message was routed to, not number that ultimately received).
         writeIntTo(&conn.write_buf, @intCast(subs.items.len));
     }
 
@@ -2058,6 +2138,7 @@ pub const Worker = struct {
             handler.ckv = self.ckv;
             handler.data_dir = self.data_dir;
             handler.protocol_version = conn.protocol_version;
+            handler.kv_mutex = self.kv_mutex;
             var list: std.ArrayList(u8) = .empty;
             defer list.deinit(self.allocator);
             var aw = std.Io.Writer.Allocating.fromArrayList(self.allocator, &list);
@@ -2091,11 +2172,18 @@ pub const Worker = struct {
         switch (cmd.len) {
             3 => switch (first) {
                 'G' => if (args.len >= 2 and equalsAsciiUpper(cmd, "GET")) {
-                    // Ultra-fast GET with SeqLock — lock-free for inline values.
+                    // Hot-path GET. SeqLock alone is not enough: getPtr walks
+                    // the HashMap bucket array, which a concurrent
+                    // ConcurrentKV.setInternal can free during a rehash.
+                    // Take the stripe rdlock for the duration of the entry
+                    // access so writers (who take wrlock) are excluded.
                     const KVS = @import("../engine/kv.zig").KVStore;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
 
                     const stripe = ckv.getStripePublic(ns_key);
+                    ckv.readLockStripePublic(stripe);
+                    defer ckv.readUnlockStripePublic(stripe);
+
                     const entry_opt = stripe.map.getPtr(ns_key);
                     if (entry_opt == null) {
                         writeNullTo(&conn.write_buf, conn.protocol_version);
@@ -2103,7 +2191,6 @@ pub const Worker = struct {
                     }
                     const entry = entry_opt.?;
 
-                    // Check deleted/expired (these flags are set under write lock, safe to read)
                     if (entry.flags.deleted or
                         (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
                     {
@@ -2114,7 +2201,6 @@ pub const Worker = struct {
                         return true;
                     }
 
-                    // Integer path: read int_value atomically (8-byte aligned, atomic on 64-bit)
                     if (entry.flags.is_integer) {
                         const int_val = entry.int_value;
                         var int_buf: [24]u8 = undefined;
@@ -2128,23 +2214,23 @@ pub const Worker = struct {
                         return true;
                     }
 
-                    // Inline value path: SeqLock — NO pthread_rwlock needed
                     if (entry.flags.is_inline) {
+                        // SeqLock still useful: another rdlock-holding thread
+                        // may be doing an in-place SET via the SeqLock fast
+                        // path, since both paths share the rdlock.
                         var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
                         var vlen: u8 = undefined;
-
-                        // SeqLock read: retry if writer was active
                         var attempts: u32 = 0;
                         while (attempts < 64) : (attempts += 1) {
                             const s1 = entry.seq.load(.acquire);
-                            if (s1 & 1 != 0) { // odd = write in progress
+                            if (s1 & 1 != 0) {
                                 std.atomic.spinLoopHint();
                                 continue;
                             }
                             vlen = entry.inline_len;
                             @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
                             const s2 = entry.seq.load(.acquire);
-                            if (s1 == s2) break; // consistent read
+                            if (s1 == s2) break;
                             std.atomic.spinLoopHint();
                         }
 
@@ -2157,13 +2243,11 @@ pub const Worker = struct {
                         return true;
                     }
 
-                    // Large value fallback: read lock (rare — values > 128 bytes)
-                    ckv.readLockStripePublic(stripe);
+                    // Large value (>INLINE_BUF_SIZE): copy out under rdlock.
                     const vlen = entry.value.len;
                     var val_stack: [4096]u8 = undefined;
                     if (vlen <= val_stack.len) {
                         @memcpy(val_stack[0..vlen], entry.value);
-                        ckv.readUnlockStripePublic(stripe);
                         var hdr_buf: [32]u8 = undefined;
                         const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
                         conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + vlen + 2) catch {};
@@ -2173,14 +2257,10 @@ pub const Worker = struct {
                     } else {
                         conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + vlen + 40) catch {};
                         var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch {
-                            ckv.readUnlockStripePublic(stripe);
-                            return false;
-                        };
+                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
                         conn.write_buf.appendSliceAssumeCapacity(hdr);
                         conn.write_buf.appendSliceAssumeCapacity(entry.value);
                         conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                        ckv.readUnlockStripePublic(stripe);
                     }
                     return true;
                 },
@@ -2202,13 +2282,18 @@ pub const Worker = struct {
                         expires = ckv.nowMillis() + t;
                     }
 
-                    // Lock-free fast path: update existing inline entry via SeqLock
+                    // Fast path: in-place SeqLock update of an existing inline
+                    // entry. Holds rdlock so a concurrent setInternal (which
+                    // takes wrlock and can rehash) cannot free the bucket
+                    // array out from under getPtr. The rdlock must be
+                    // released before any fallthrough that calls setInternal
+                    // — wrlock can't be acquired while we still hold rdlock.
                     if (value.len <= KVS.INLINE_BUF_SIZE and expires == 0) {
                         const stripe = ckv.getStripePublic(ns_key);
-                        const entry_opt = stripe.map.getPtr(ns_key);
-                        if (entry_opt) |entry| {
+                        ckv.readLockStripePublic(stripe);
+                        var fast_path_hit = false;
+                        if (stripe.map.getPtr(ns_key)) |entry| {
                             if (!entry.flags.deleted) {
-                                // SeqLock write: bump to odd, memcpy, bump to even
                                 _ = entry.seq.fetchAdd(1, .release);
                                 @memcpy(entry.inline_buf[0..value.len], value);
                                 entry.inline_len = @intCast(value.len);
@@ -2216,16 +2301,21 @@ pub const Worker = struct {
                                 entry.flags = .{ .is_inline = true };
                                 entry.expires_at = 0;
                                 _ = entry.seq.fetchAdd(1, .release);
-
-                                if (self.aof) |a| a.logCommand(args);
-                                self.bumpWatchVersion(conn.selected_db, args[1]);
-                                conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                                return true;
+                                fast_path_hit = true;
                             }
+                        }
+                        ckv.readUnlockStripePublic(stripe);
+                        if (fast_path_hit) {
+                            if (self.aof) |a| a.logCommand(args);
+                            self.bumpWatchVersion(conn.selected_db, args[1]);
+                            conn.write_buf.appendSlice(ct.resp_ok) catch {};
+                            return true;
                         }
                     }
 
-                    // CKV allocates internally — no ownership transfer
+                    // Fallback: new key or non-inline value — setInternal
+                    // takes its own wrlock, so we must NOT be holding rdlock
+                    // here.
                     ckv.setInternal(ns_key, value, expires) catch return false;
                     if (self.aof) |a| a.logCommand(args);
                     self.bumpWatchVersion(conn.selected_db, args[1]);
@@ -2293,8 +2383,10 @@ pub const Worker = struct {
                             continue;
                         };
                         const stripe = ckv.getStripePublic(ns);
+                        ckv.readLockStripePublic(stripe);
                         const entry_opt = stripe.map.getPtr(ns);
                         if (entry_opt == null) {
+                            ckv.readUnlockStripePublic(stripe);
                             pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
                             continue;
                         }
@@ -2302,13 +2394,16 @@ pub const Worker = struct {
                         if (entry.flags.deleted or
                             (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
                         {
+                            ckv.readUnlockStripePublic(stripe);
                             pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
                             continue;
                         }
 
                         if (entry.flags.is_integer) {
+                            const int_val = entry.int_value;
+                            ckv.readUnlockStripePublic(stripe);
                             const s = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n{d}\r\n", .{
-                                std.fmt.count("{d}", .{entry.int_value}), entry.int_value,
+                                std.fmt.count("{d}", .{int_val}), int_val,
                             }) catch continue;
                             pos += s.len;
                             continue;
@@ -2327,6 +2422,7 @@ pub const Worker = struct {
                                 if (s1 == s2) break;
                                 std.atomic.spinLoopHint();
                             }
+                            ckv.readUnlockStripePublic(stripe);
                             const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
                             pos += vh.len;
                             @memcpy(resp_buf[pos .. pos + vlen], val_copy[0..vlen]);
@@ -2335,7 +2431,6 @@ pub const Worker = struct {
                             continue;
                         }
 
-                        ckv.readLockStripePublic(stripe);
                         const vlen = entry.value.len;
                         if (pos + vlen + 32 > resp_buf.len) {
                             resp_buf = self.allocator.realloc(resp_buf, pos + vlen + 64) catch {
@@ -2374,20 +2469,27 @@ pub const Worker = struct {
                     @memcpy(IK.buf[prefix.len..total_len], user_key);
                     const ns_key = IK.buf[0..total_len];
 
-                    // Lock-free fast path: atomic INCR on existing integer key
+                    // Fast path: atomic increment on an existing integer entry.
+                    // Holds rdlock across getPtr + atomic update so a
+                    // concurrent setInternal rehash cannot free the bucket.
+                    // Must release before the incrBy fallback (which takes
+                    // wrlock) to avoid deadlock.
                     const stripe = ckv.getStripePublic(ns_key);
-                    const entry_opt = stripe.map.getPtr(ns_key);
-                    if (entry_opt) |entry| {
+                    ckv.readLockStripePublic(stripe);
+                    var fast_new_val: ?i64 = null;
+                    if (stripe.map.getPtr(ns_key)) |entry| {
                         if (entry.flags.is_integer and !entry.flags.deleted) {
-                            // Single atomic instruction — minimum possible synchronization
                             const int_ptr: *i64 = &entry.int_value;
-                            const new_val = @atomicRmw(i64, int_ptr, .Add, 1, .monotonic) + 1;
-                            if (self.aof) |a| a.logCommand(args);
-                            var incr_resp: [32]u8 = undefined;
-                            const ir = std.fmt.bufPrint(&incr_resp, ":{d}\r\n", .{new_val}) catch return false;
-                            conn.write_buf.appendSlice(ir) catch {};
-                            return true;
+                            fast_new_val = @atomicRmw(i64, int_ptr, .Add, 1, .monotonic) + 1;
                         }
+                    }
+                    ckv.readUnlockStripePublic(stripe);
+                    if (fast_new_val) |nv| {
+                        if (self.aof) |a| a.logCommand(args);
+                        var incr_resp: [32]u8 = undefined;
+                        const ir = std.fmt.bufPrint(&incr_resp, ":{d}\r\n", .{nv}) catch return false;
+                        conn.write_buf.appendSlice(ir) catch {};
+                        return true;
                     }
 
                     // Fallback: new key or non-integer — use write lock
@@ -2972,6 +3074,7 @@ pub const Worker = struct {
         handler.set_store = self.set_store;
         handler.sorted_set_store = self.sorted_set_store;
         handler.protocol_version = conn.protocol_version;
+        handler.kv_mutex = self.kv_mutex;
 
         var list: std.ArrayList(u8) = .empty;
         defer list.deinit(self.allocator);
@@ -3387,15 +3490,22 @@ fn log(comptime fmt: []const u8, args: anytype) void {
 
 // ─── Tests ──────────────────────────────────────────────────────────
 
+// Tests pass a dummy *Worker. The registry stores the pointer but never
+// dereferences it; routing in handlePublish does the deref, and these
+// tests cover the registry's fd-tracking only. Real storage so the
+// pointer satisfies @alignOf(Worker).
+var test_worker_storage: [@sizeOf(Worker)]u8 align(@alignOf(Worker)) = undefined;
+const test_worker_stub: *Worker = @ptrCast(@alignCast(&test_worker_storage));
+
 test "PubSubRegistry subscribe and getSubscribers" {
     var ps = PubSubRegistry.init(std.testing.allocator);
     defer ps.deinit();
 
-    try ps.subscribe("news", 10);
-    try ps.subscribe("news", 20);
-    try ps.subscribe("sports", 30);
+    try ps.subscribe("news", 10, test_worker_stub);
+    try ps.subscribe("news", 20, test_worker_stub);
+    try ps.subscribe("sports", 30, test_worker_stub);
 
-    var subs = std.array_list.Managed(i32).init(std.testing.allocator);
+    var subs = std.array_list.Managed(Subscriber).init(std.testing.allocator);
     defer subs.deinit();
 
     ps.getSubscribers("news", &subs);
@@ -3404,7 +3514,7 @@ test "PubSubRegistry subscribe and getSubscribers" {
     subs.clearRetainingCapacity();
     ps.getSubscribers("sports", &subs);
     try std.testing.expectEqual(@as(usize, 1), subs.items.len);
-    try std.testing.expectEqual(@as(i32, 30), subs.items[0]);
+    try std.testing.expectEqual(@as(i32, 30), subs.items[0].fd);
 
     subs.clearRetainingCapacity();
     ps.getSubscribers("nonexistent", &subs);
@@ -3415,34 +3525,34 @@ test "PubSubRegistry unsubscribe" {
     var ps = PubSubRegistry.init(std.testing.allocator);
     defer ps.deinit();
 
-    try ps.subscribe("ch", 10);
-    try ps.subscribe("ch", 20);
+    try ps.subscribe("ch", 10, test_worker_stub);
+    try ps.subscribe("ch", 20, test_worker_stub);
 
     ps.unsubscribe("ch", 10);
 
-    var subs = std.array_list.Managed(i32).init(std.testing.allocator);
+    var subs = std.array_list.Managed(Subscriber).init(std.testing.allocator);
     defer subs.deinit();
     ps.getSubscribers("ch", &subs);
     try std.testing.expectEqual(@as(usize, 1), subs.items.len);
-    try std.testing.expectEqual(@as(i32, 20), subs.items[0]);
+    try std.testing.expectEqual(@as(i32, 20), subs.items[0].fd);
 }
 
 test "PubSubRegistry unsubscribeAll" {
     var ps = PubSubRegistry.init(std.testing.allocator);
     defer ps.deinit();
 
-    try ps.subscribe("a", 10);
-    try ps.subscribe("b", 10);
-    try ps.subscribe("a", 20);
+    try ps.subscribe("a", 10, test_worker_stub);
+    try ps.subscribe("b", 10, test_worker_stub);
+    try ps.subscribe("a", 20, test_worker_stub);
 
     ps.unsubscribeAll(10);
 
-    var subs = std.array_list.Managed(i32).init(std.testing.allocator);
+    var subs = std.array_list.Managed(Subscriber).init(std.testing.allocator);
     defer subs.deinit();
 
     ps.getSubscribers("a", &subs);
     try std.testing.expectEqual(@as(usize, 1), subs.items.len);
-    try std.testing.expectEqual(@as(i32, 20), subs.items[0]);
+    try std.testing.expectEqual(@as(i32, 20), subs.items[0].fd);
 
     subs.clearRetainingCapacity();
     ps.getSubscribers("b", &subs);
@@ -3453,10 +3563,10 @@ test "PubSubRegistry duplicate subscribe ignored" {
     var ps = PubSubRegistry.init(std.testing.allocator);
     defer ps.deinit();
 
-    try ps.subscribe("ch", 10);
-    try ps.subscribe("ch", 10); // duplicate
+    try ps.subscribe("ch", 10, test_worker_stub);
+    try ps.subscribe("ch", 10, test_worker_stub); // duplicate
 
-    var subs = std.array_list.Managed(i32).init(std.testing.allocator);
+    var subs = std.array_list.Managed(Subscriber).init(std.testing.allocator);
     defer subs.deinit();
     ps.getSubscribers("ch", &subs);
     try std.testing.expectEqual(@as(usize, 1), subs.items.len);

@@ -100,7 +100,9 @@ fn populateDataset(
 fn benchSnapshotSave(io: std.Io, allocator: std.mem.Allocator, kv: *KVStore, graph: *GraphEngine, path: []const u8) !i64 {
     std.Io.Dir.cwd().deleteFile(io, path) catch {};
     const t0 = std.Io.Clock.Timestamp.now(io, .awake);
-    try snapshot.save(io, allocator, kv, graph, path);
+    const kv_snap = try kv.snapshot(allocator);
+    defer KVStore.freeSnapshot(kv_snap, allocator);
+    try snapshot.save(io, allocator, kv_snap, graph, path);
     const t1 = std.Io.Clock.Timestamp.now(io, .awake);
     return monotonicNs(t0, t1);
 }

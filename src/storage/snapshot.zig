@@ -135,7 +135,7 @@ fn readFileAll(file: std.Io.File, io: std.Io, allocator: Allocator, max_len: usi
 pub fn save(
     io: std.Io,
     allocator: Allocator,
-    kv: *KVStore,
+    kv_snapshot: []const KVStore.SnapshotEntry,
     graph: *GraphEngine,
     path: []const u8,
 ) !void {
@@ -150,20 +150,19 @@ pub fn save(
     try buf.append(FORMAT_VERSION);
     try appendI64(&buf, std.Io.Timestamp.now(io, .real).toMilliseconds());
 
-    // KV section
-    try appendU32(&buf, kv.live_count);
-    {
-        var it = kv.map.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.flags.deleted) continue;
-            try appendBytes(&buf, entry.key_ptr.*);
-            try appendBytes(&buf, entry.value_ptr.value);
-            if (entry.value_ptr.flags.has_ttl) {
-                try buf.append(1);
-                try appendI64(&buf, entry.value_ptr.expires_at);
-            } else {
-                try buf.append(0);
-            }
+    // KV section — iterate the caller-provided snapshot so this function
+    // can run on a background thread without holding kv_mutex through the
+    // full file write. The caller is responsible for building the snapshot
+    // under kv_mutex.
+    try appendU32(&buf, @intCast(kv_snapshot.len));
+    for (kv_snapshot) |e| {
+        try appendBytes(&buf, e.key);
+        try appendBytes(&buf, e.value);
+        if (e.has_ttl) {
+            try buf.append(1);
+            try appendI64(&buf, e.expires_at);
+        } else {
+            try buf.append(0);
         }
     }
 
@@ -401,7 +400,9 @@ test "snapshot round-trip" {
     _ = try g.addEdge("a", "b", "reads", 1.5);
     try g.setNodeProperty("a", "version", "3");
 
-    try save(io, allocator, &kv, &g, path);
+    const kv_snap = try kv.snapshot(allocator);
+    defer KVStore.freeSnapshot(kv_snap, allocator);
+    try save(io, allocator, kv_snap, &g, path);
 
     var kv2 = KVStore.init(allocator, io);
     defer kv2.deinit();
@@ -447,7 +448,9 @@ test "snapshot corrupted CRC" {
     var g = GraphEngine.init(allocator);
     defer g.deinit();
 
-    try save(io, allocator, &kv, &g, path);
+    const kv_snap = try kv.snapshot(allocator);
+    defer KVStore.freeSnapshot(kv_snap, allocator);
+    try save(io, allocator, kv_snap, &g, path);
 
     {
         const f = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_write });
@@ -513,7 +516,9 @@ test "snapshot full persistence round-trip" {
     defer kv.deinit();
     try kv.set("config:timeout", "30");
 
-    try save(io, allocator, &kv, &g, path);
+    const kv_snap = try kv.snapshot(allocator);
+    defer KVStore.freeSnapshot(kv_snap, allocator);
+    try save(io, allocator, kv_snap, &g, path);
 
     // ── Load into fresh instances ──
     var kv2 = KVStore.init(allocator, io);

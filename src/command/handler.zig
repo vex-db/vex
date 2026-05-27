@@ -29,6 +29,7 @@ pub const KeysMode = enum {
 /// and routes to the appropriate KV or graph handler.
 /// Shared atomic flag for BGSAVE (prevents concurrent background saves).
 pub var bgsave_in_progress: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+pub var bgrewriteaof_in_progress: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
 pub const ConcurrentKV = @import("../engine/concurrent_kv.zig").ConcurrentKV;
 
@@ -52,6 +53,10 @@ pub const CommandHandler = struct {
     ckv: ?*ConcurrentKV = null,
     /// Stashed OwnedValue from last kvGet — freed on next kvGet or cleanup
     last_owned_get: ?ConcurrentKV.OwnedValue = null,
+    /// Global per-process command lock. Set by production callers (Worker,
+    /// reactor accept loop) so BGSAVE / BGREWRITEAOF can take it briefly
+    /// to snapshot kv.map. Tests / single-threaded callers leave it null.
+    kv_mutex: ?*std.atomic.Mutex = null,
 
     pub fn init(
         allocator: Allocator,
@@ -3239,7 +3244,15 @@ pub const CommandHandler = struct {
             try resp.serializeError(w, "persistence not configured");
             return;
         };
-        snapshot.save(self.io, self.allocator, self.kv, self.graph, a.snapshot_path) catch |err| {
+        // Foreground SAVE runs on the worker thread which already holds
+        // kv_mutex for the duration of the command, so the snapshot is
+        // built inline (no extra lock needed).
+        const kv_snap = self.kv.snapshot(self.allocator) catch |err| {
+            try resp.serializeError(w, @errorName(err));
+            return;
+        };
+        defer KVStore.freeSnapshot(kv_snap, self.allocator);
+        snapshot.save(self.io, self.allocator, kv_snap, self.graph, a.snapshot_path) catch |err| {
             try resp.serializeError(w, @errorName(err));
             return;
         };
@@ -3277,6 +3290,7 @@ pub const CommandHandler = struct {
             snapshot_path: []const u8,
             aof_ptr: *AOF,
             graph_rwlock: ?*std.c.pthread_rwlock_t,
+            kv_mutex: ?*std.atomic.Mutex,
             data_dir: ?[]const u8,
 
             fn run(ctx: *@This()) void {
@@ -3284,6 +3298,21 @@ pub const CommandHandler = struct {
                     bgsave_in_progress.store(false, .release);
                     ctx.allocator.destroy(ctx);
                 }
+
+                // Phase 1: snapshot kv under kv_mutex (brief — O(N) memcopy).
+                // We release kv_mutex before touching graph_rwlock or disk so
+                // non-hot-path workers aren't blocked through seconds of I/O.
+                const kv_snap = blk: {
+                    if (ctx.kv_mutex) |m| {
+                        while (!m.tryLock()) std.Thread.yield() catch {};
+                    }
+                    defer if (ctx.kv_mutex) |m| m.unlock();
+                    break :blk ctx.kv.snapshot(ctx.allocator) catch return;
+                };
+                defer KVStore.freeSnapshot(kv_snap, ctx.allocator);
+
+                // Phase 2: hold graph rdlock for the file write (writers block,
+                // readers proceed). Graph data is iterated live; no copy.
                 if (ctx.graph_rwlock) |rwl| {
                     _ = std.c.pthread_rwlock_rdlock(rwl);
                 }
@@ -3291,7 +3320,7 @@ pub const CommandHandler = struct {
                     _ = std.c.pthread_rwlock_unlock(rwl);
                 };
 
-                snapshot.save(ctx.io, ctx.allocator, ctx.kv, ctx.graph, ctx.snapshot_path) catch return;
+                snapshot.save(ctx.io, ctx.allocator, kv_snap, ctx.graph, ctx.snapshot_path) catch return;
                 ctx.aof_ptr.truncate() catch {};
                 if (ctx.data_dir) |dd| {
                     ctx.graph.saveVectors(dd) catch {};
@@ -3313,6 +3342,7 @@ pub const CommandHandler = struct {
             .snapshot_path = a.snapshot_path,
             .aof_ptr = a,
             .graph_rwlock = self.graph_rwlock,
+            .kv_mutex = self.kv_mutex,
             .data_dir = self.data_dir,
         };
 
@@ -3332,17 +3362,90 @@ pub const CommandHandler = struct {
         try resp.serializeInteger(w, ts);
     }
 
-    /// BGREWRITEAOF -- rewrite AOF from current state (compacts redundant ops)
+    /// BGREWRITEAOF -- rewrite AOF from current state on a background thread.
+    /// Returns immediately. Holds graph_rwlock rdlock for the duration of
+    /// the iteration (matches BGSAVE). KV map iteration is racy with KV
+    /// writers in the same way BGSAVE is — both background persistence
+    /// paths share that posture; do not diverge here without also fixing
+    /// BGSAVE.
     fn cmdBgRewriteAof(self: *CommandHandler, w: *std.Io.Writer) !void {
         const a = self.aof orelse {
             try resp.serializeError(w, "persistence not configured");
             return;
         };
-        a.rewriteFromState(self.allocator, self.kv, self.graph) catch |err| {
-            try resp.serializeError(w, @errorName(err));
+        // Refuse if a rewrite OR snapshot is already running. They both
+        // hold graph_rwlock rdlock + thrash disk; running concurrently
+        // doubles I/O and serves no purpose.
+        if (bgrewriteaof_in_progress.load(.acquire) or bgsave_in_progress.load(.acquire)) {
+            try resp.serializeError(w, "Background append only file rewriting already in progress");
+            return;
+        }
+        if (bgrewriteaof_in_progress.cmpxchgStrong(false, true, .acq_rel, .monotonic) != null) {
+            try resp.serializeError(w, "Background append only file rewriting already in progress");
+            return;
+        }
+
+        const BgRewriteCtx = struct {
+            allocator: Allocator,
+            kv: *KVStore,
+            graph: *GraphEngine,
+            aof_ptr: *AOF,
+            graph_rwlock: ?*std.c.pthread_rwlock_t,
+            kv_mutex: ?*std.atomic.Mutex,
+
+            fn run(ctx: *@This()) void {
+                defer {
+                    bgrewriteaof_in_progress.store(false, .release);
+                    ctx.allocator.destroy(ctx);
+                }
+
+                // See BGSAVE: snapshot kv briefly under kv_mutex, then drop
+                // it before the file-write phase so workers aren't stalled.
+                const snap_now_ms: i64 = blk_now: {
+                    if (ctx.kv_mutex) |m| {
+                        while (!m.tryLock()) std.Thread.yield() catch {};
+                    }
+                    break :blk_now ctx.kv.cached_now_ms;
+                };
+                const kv_snap = blk: {
+                    defer if (ctx.kv_mutex) |m| m.unlock();
+                    break :blk ctx.kv.snapshot(ctx.allocator) catch return;
+                };
+                defer KVStore.freeSnapshot(kv_snap, ctx.allocator);
+
+                if (ctx.graph_rwlock) |rwl| {
+                    _ = std.c.pthread_rwlock_rdlock(rwl);
+                }
+                defer if (ctx.graph_rwlock) |rwl| {
+                    _ = std.c.pthread_rwlock_unlock(rwl);
+                };
+
+                ctx.aof_ptr.rewriteFromState(ctx.allocator, kv_snap, snap_now_ms, ctx.graph) catch return;
+            }
+        };
+
+        const ctx = self.allocator.create(BgRewriteCtx) catch {
+            bgrewriteaof_in_progress.store(false, .release);
+            try resp.serializeError(w, "out of memory");
             return;
         };
-        try resp.serializeSimpleString(w, "Background AOF rewrite started");
+        ctx.* = .{
+            .allocator = self.allocator,
+            .kv = self.kv,
+            .graph = self.graph,
+            .aof_ptr = a,
+            .graph_rwlock = self.graph_rwlock,
+            .kv_mutex = self.kv_mutex,
+        };
+
+        const t = std.Thread.spawn(.{}, BgRewriteCtx.run, .{ctx}) catch {
+            bgrewriteaof_in_progress.store(false, .release);
+            self.allocator.destroy(ctx);
+            try resp.serializeError(w, "failed to spawn background rewrite thread");
+            return;
+        };
+        t.detach();
+        try resp.serializeSimpleString(w, "Background append only file rewriting started");
     }
 
     fn logToAOF(self: *CommandHandler, args: []const []const u8) void {

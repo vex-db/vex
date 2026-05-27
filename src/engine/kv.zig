@@ -92,6 +92,63 @@ pub const KVStore = struct {
         self.map.deinit();
     }
 
+    /// One row of a frozen kv snapshot. Owned by the snapshot slice; freed
+    /// via freeSnapshot. Used by the background persistence paths (BGSAVE,
+    /// BGREWRITEAOF) so they can iterate without holding kv_mutex through
+    /// disk I/O.
+    pub const SnapshotEntry = struct {
+        key: []u8,
+        value: []u8,
+        expires_at: i64,
+        has_ttl: bool,
+    };
+
+    /// Take a point-in-time snapshot of all live entries. The caller is
+    /// responsible for holding any lock that excludes writers while this
+    /// runs (kv_mutex in the current architecture). The returned slice and
+    /// its bytes must be released via freeSnapshot.
+    pub fn snapshot(self: *KVStore, allocator: Allocator) ![]SnapshotEntry {
+        var list = std.array_list.Managed(SnapshotEntry).init(allocator);
+        errdefer {
+            for (list.items) |e| {
+                allocator.free(e.key);
+                allocator.free(e.value);
+            }
+            list.deinit();
+        }
+
+        try list.ensureTotalCapacity(self.live_count);
+
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.flags.deleted) continue;
+            if (entry.value_ptr.flags.has_ttl) {
+                const remaining = entry.value_ptr.expires_at - self.cached_now_ms;
+                if (remaining <= 0) continue; // already expired
+            }
+            const key_copy = try allocator.dupe(u8, entry.key_ptr.*);
+            errdefer allocator.free(key_copy);
+            const val_copy = try allocator.dupe(u8, entry.value_ptr.value);
+            errdefer allocator.free(val_copy);
+            try list.append(.{
+                .key = key_copy,
+                .value = val_copy,
+                .expires_at = entry.value_ptr.expires_at,
+                .has_ttl = entry.value_ptr.flags.has_ttl,
+            });
+        }
+
+        return list.toOwnedSlice();
+    }
+
+    pub fn freeSnapshot(entries: []SnapshotEntry, allocator: Allocator) void {
+        for (entries) |e| {
+            allocator.free(e.key);
+            allocator.free(e.value);
+        }
+        allocator.free(entries);
+    }
+
     pub fn set(self: *KVStore, key: []const u8, value: []const u8) !void {
         return self.setInternal(key, value, 0);
     }

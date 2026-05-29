@@ -33,33 +33,46 @@ vex:
 
 ## Vex vs Redis 8.0 (`redis-benchmark`, P=50, c=16)
 
+Reproduced via `./tools/bench.sh 15` — runs the standard `redis-benchmark`
+matrix 15 times per command and reports the **median** rps.
+
 ### All commands — TCP and UDS side by side
 
 | Command | Redis TCP | Vex TCP | TCP Δ | Redis UDS | Vex UDS | UDS Δ |
 |---|---|---|---|---|---|---|
-| **LPUSH** | 1.02M | **1.27M** | **+24%** | 3.03M | **7.94M** | **+162%** |
-| **HSET** | 879K | **1.12M** | **+27%** | 3.49M | **8.11M** | **+132%** |
-| **RPUSH** | 1.05M | **1.34M** | **+27%** | 3.90M | **8.57M** | **+120%** |
-| **ZADD** | 891K | **1.18M** | **+32%** | 3.33M | **6.98M** | **+109%** |
-| **SADD** | 1.12M | **1.34M** | **+20%** | 4.17M | **7.50M** | **+79%** |
-| **INCR** | 958K | **1.31M** | **+37%** | 4.13M | **6.17M** | **+49%** |
-| **SET** | 1.08M | **1.22M** | **+13%** | 3.62M | **4.59M** | **+27%** |
-| **GET** | 1.15M | **1.34M** | **+17%** | 5.68M | **7.14M** | **+26%** |
-| **MSET** | 385K | **518K** | **+34%** | 663K | **1.95M** | **+193%** |
-| **LPOP** | 1.52M | **1.64M** | **+8%** | 6.00M | **6.82M** | **+13%** |
-| **RPOP** | 1.54M | **1.65M** | **+7%** | 6.00M | **7.32M** | **+22%** |
+| **LPUSH** | 1.33M | **2.01M** | **+51%** | 3.42M | **8.20M** | **+139%** |
+| **ZADD** | 1.18M | **1.78M** | **+51%** | 3.68M | **8.20M** | **+123%** |
+| **RPUSH** | 1.66M | **1.93M** | **+16%** | 4.39M | **9.09M** | **+107%** |
+| **HSET** | 1.57M | **1.75M** | **+11%** | 3.91M | **7.94M** | **+103%** |
+| **SADD** | 1.42M | **1.97M** | **+39%** | 4.67M | **8.47M** | **+81%** |
+| **INCR** | 1.75M | **2.00M** | **+14%** | 4.85M | **8.33M** | **+72%** |
+| **RPOP** | 2.37M | **2.46M** | **+4%** | 7.14M | **10.20M** | **+43%** |
+| **LPOP** | 1.97M | **2.42M** | **+23%** | 7.14M | **9.43M** | **+32%** |
+| **GET** | 1.71M | **2.00M** | **+17%** | 7.25M | **9.43M** | **+30%** |
+| **SET** | 1.62M | **1.95M** | **+20%** | 4.20M | **4.24M** | **+1%** |
+| **LRANGE_100** | 167K | **191K** | **+14%** | 290K | **327K** | **+13%** |
+| **MSET** | 565K | 564K | ≈ | 715K | 681K | -5% |
 
-All values in requests per second. TCP from host, UDS inside Docker via `docker exec`. Sorted by UDS speedup.
+All values in requests per second. TCP from host, UDS inside the
+container via `docker exec`. Sorted by UDS speedup (descending).
+Median of 15 runs, P=50, c=16, n=500,000 per run.
 
 **Key takeaways:**
-- **TCP**: Vex faster on **11/11 commands** (+7% to +37%).
-- **UDS**: Vex faster on **11/11 commands** (+13% to +162%). UDS shows true engine speed without network overhead.
-- **LPUSH +162% UDS** (7.94M rps): Stripe lease locks hold across pipeline — 1 CAS per batch instead of 50.
-- **HSET +132% UDS** (8.11M rps): Pre-alloc outside lock + lease batching.
-- **RPUSH +120% UDS** (8.57M rps): Quicklist O(1) push + lease fast path.
-- **ZADD +109% UDS** (6.98M rps): Lazy sorted cache + lease batching.
-- **At P=100 c=32 UDS**: ZADD +236%, LPUSH +224%, HSET +178%, SADD +159%.
-- **UDS is 2-6x faster than TCP** for both Redis and Vex — use `--unixsocket` for same-machine deployments.
+- **TCP**: Vex faster on **11 of 12** commands (+4% to +51%); MSET tied.
+- **UDS**: Vex faster on **11 of 12** commands (+1% to +139%); MSET -5%.
+  UDS strips out network framing and shows the engine's true ceiling.
+- **LPUSH +139% UDS** (8.20M rps): stripe lease locks hold across the
+  pipeline — 1 CAS per batch instead of 50.
+- **ZADD +123% UDS** (8.20M rps): lazy sorted cache + lease batching.
+- **RPUSH +107% UDS** (9.09M rps): quicklist O(1) push + lease fast path.
+- **HSET +103% UDS** (7.94M rps): pre-alloc outside lock + lease batching.
+- **UDS is 2-6× faster than TCP** for both Redis and Vex — prefer
+  `--unixsocket` for same-machine deployments.
+- **MSET is the lone soft spot.** Vex's hot-path MSET takes the
+  per-stripe rdlock added in 0.7.3 (B3) — fine for safety, costly here
+  where the pipeline is bottlenecked on lock acquires rather than work.
+  Fix path: skip the rdlock for stripes the writer can already prove are
+  not under rehash. Tracked as a 0.7.x perf TODO.
 
 ### UDS scaling across pipeline depth and concurrency
 
@@ -86,6 +99,12 @@ Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operati
 
 ### KV Strings (`zig build bench-kv -Doptimize=ReleaseFast`)
 
+⚠️ **Build currently broken** on this target — `src/engine/kv.zig` imports
+`../observability/stats.zig` and `../observability/event_stats.zig` which
+fall outside the bench module's path scope. The numbers below are the
+last known-good values from when the target compiled; rerun once
+`build.zig` is fixed to add the missing module imports.
+
 | Operation | Latency |
 |---|---|
 | GET (hit) | **22 ns** |
@@ -99,43 +118,62 @@ Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operati
 
 | Operation | Latency | Notes |
 |---|---|---|
-| RPUSH | **29 ns** | O(1) append to tail block |
-| LPUSH | **22 ns** | O(1) prepend to head block |
-| LPOP | **4 ns** | O(1) pop from head block |
-| RPOP | **4 ns** | O(1) trailer-based reverse pop |
-| LLEN | 3 ns | |
-| LINDEX | 509 ns | O(blocks) — scan through block chain |
+| LLEN | **3.9 ns** | |
+| LPOP | **4.7 ns** | O(1) pop from head block |
+| RPOP | **4.7 ns** | O(1) trailer-based reverse pop |
+| LPUSH | 20.5 ns | O(1) prepend to head block |
+| RPUSH | 38.0 ns | O(1) append to tail block |
+| LINDEX | 619.7 ns | O(blocks) — scan through block chain |
 
 ### Hashes
 
 | Operation | Latency |
 |---|---|
-| HGET | **30 ns** |
-| HSET | 73 ns |
-| HDEL | 48 ns |
-| HLEN | 3 ns |
+| HLEN | **3.8 ns** |
+| HGET | 28.6 ns |
+| HDEL | 46.9 ns |
+| HSET | 80.7 ns |
 
 ### Sets
 
 | Operation | Latency |
 |---|---|
-| SISMEMBER | **29 ns** |
-| SADD | 51 ns |
-| SREM | 36 ns |
-| SCARD | 3 ns |
+| SCARD | **3.7 ns** |
+| SISMEMBER | 24.9 ns |
+| SREM | 34.0 ns |
+| SADD | 54.2 ns |
 
 ### Sorted Sets
 
 | Operation | Latency | Notes |
 |---|---|---|
-| ZSCORE | **29 ns** | O(1) HashMap lookup |
-| ZADD | 61 ns | |
-| ZREM | 29 ns | |
-| ZCARD | 3 ns | |
-| ZRANGE(top 10) | **7.8 us** | Lazy sorted cache |
+| ZCARD | **3.8 ns** | |
+| ZSCORE | 25.6 ns | O(1) HashMap lookup |
+| ZREM | 37.8 ns | |
+| ZADD | 69.4 ns | |
 | ZRANK | **0.5 us** | Lazy sorted cache |
+| ZRANGE(top 10) | **9.3 us** | Lazy sorted cache, 100K-member set |
+
+### Persistence (`zig build bench-persistence -Doptimize=ReleaseFast`)
+
+Measured on a 50,000-key KV store with 10,000-node / 20,000-edge graph
+plus per-entity properties. Each test runs warmup=1 + timed=5 iterations
+and reports the mean.
+
+| Operation | Latency (mean) | Notes |
+|---|---|---|
+| snapshot.save | **14.4 ms** | Whole-state RDB-style file write |
+| snapshot.load | **8.7 ms** | Whole-state restore from RDB |
+| aof.append(SET) | **1.36 us/op** | Per-command AOF buffer append |
+| aof.replay | **0.02 us/op** | Per-command replay during startup |
 
 ### Graph Engine (`zig build bench-graph -Doptimize=ReleaseFast`, 50K nodes / 500K edges / 5 props each)
+
+⚠️ **Build currently broken** on this target — same root cause as
+`bench-kv`: `src/engine/vector_store.zig` and `src/engine/hnsw.zig`
+import `../storage/atomic_io.zig` and `../log.zig` which fall outside
+the bench module's path scope. Numbers below are the last known-good
+values from when the target compiled.
 
 | Operation | Latency | Notes |
 |---|---|---|

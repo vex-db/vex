@@ -53,7 +53,7 @@ RUN apt-get update -qq \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY tools/dpdk/hello_lcore.zig tools/dpdk/dpdk_shim.c ./
+COPY tools/dpdk/hello_lcore.zig tools/dpdk/port_probe.zig tools/dpdk/dpdk_shim.c ./
 
 # Two-step build:
 #   1. zig build-obj   — compile the Zig source to a relocatable object,
@@ -77,8 +77,10 @@ RUN CFLAGS="$(pkg-config --cflags libdpdk | tr ' ' '\n' | grep -E '^-(I|D)' | tr
     && echo "CFLAGS=$CFLAGS" \
     && echo "LIBS=$LIBS" \
     && zig build-obj hello_lcore.zig -OReleaseFast -lc $CFLAGS \
+    && zig build-obj port_probe.zig  -OReleaseFast -lc $CFLAGS \
     && gcc -O2 -c -o dpdk_shim.o dpdk_shim.c $(pkg-config --cflags libdpdk) \
-    && gcc -O2 -o hello_lcore hello_lcore.o dpdk_shim.o $LIBS
+    && gcc -O2 -o hello_lcore hello_lcore.o dpdk_shim.o $LIBS \
+    && gcc -O2 -o port_probe  port_probe.o  dpdk_shim.o $LIBS
 
 FROM debian:bookworm-slim
 RUN apt-get update -qq \
@@ -87,8 +89,12 @@ RUN apt-get update -qq \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/hello_lcore /usr/local/bin/hello_lcore
+COPY --from=builder /build/port_probe  /usr/local/bin/port_probe
 
-# Default args are the "hello world" set: 4 lcores, no PCI scan, no
-# hugepages required. Override at `docker run` for fancier configs.
+# Default args run the hello_lcore probe (cheapest end-to-end check).
+# Override the entrypoint to run port_probe with the null PMD:
+#   docker run --rm vex-dpdk-probe:hello \
+#     /usr/local/bin/port_probe -l 0-1 --no-pci --no-huge \
+#     --vdev=net_null0 -- --duration=2
 ENTRYPOINT ["/usr/local/bin/hello_lcore"]
 CMD ["-l", "0-3", "--no-pci", "--no-huge"]

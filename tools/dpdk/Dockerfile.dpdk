@@ -1,0 +1,94 @@
+# DPDK toolchain probe + (eventually) vex-dpdk runtime.
+#
+# Today the image only builds `hello_lcore` — a tiny Zig program that
+# uses @cImport to call into DPDK and prints per-lcore info. That's
+# enough to prove the Zig+DPDK build chain is wired correctly. Future
+# commits on the dpdk branch will:
+#
+#   - vendor / install F-Stack alongside DPDK,
+#   - build a `vex-dpdk` binary that links DPDK + F-Stack + vex,
+#   - run it with the proper hugepages + NIC bind config.
+#
+# Build (from repo root):
+#   docker buildx build --platform=linux/amd64 \
+#     -f tools/dpdk/Dockerfile.dpdk \
+#     -t vex-dpdk-probe:hello \
+#     --load .
+#
+# Run on any Linux host (anonymous memory, no NIC):
+#   docker run --rm vex-dpdk-probe:hello
+#
+# Run on a Linux host with hugepages (closer to production):
+#   docker run --rm --privileged \
+#     -v /dev/hugepages:/dev/hugepages \
+#     vex-dpdk-probe:hello \
+#     /usr/local/bin/hello_lcore -l 0-3 --no-pci
+#
+# macOS / Docker Desktop: the build works (cross-platform via buildx),
+# but execution depends on the Linux VM exposing the right kernel
+# features — treat this as a Linux-target image and run it on the
+# AWS c5n perf box (see ../../docs/dpdk.md §Test plan).
+
+FROM debian:bookworm-slim AS builder
+
+# DPDK 22.11 ships in Bookworm as libdpdk-dev. pkg-config lets us
+# query the link flags rather than hard-coding them — DPDK's
+# libdpdk.pc knows which sub-libs are present in this install.
+# Zig is fetched from the same nightly the production image uses
+# (Dockerfile.vex), so the Zig + clang frontend versions match.
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends \
+        ca-certificates \
+        curl \
+        gcc \
+        libc-dev \
+        libdpdk-dev \
+        libmd-dev \
+        pkg-config \
+        xz-utils \
+    && arch="$(dpkg --print-architecture)" \
+    && if [ "$arch" = "arm64" ]; then zig_pkg="zig-aarch64-linux-0.17.0-dev.314+eae06cf5c"; else zig_pkg="zig-x86_64-linux-0.17.0-dev.314+eae06cf5c"; fi \
+    && curl -sL "https://ziglang.org/builds/${zig_pkg}.tar.xz" | tar xJ -C /opt \
+    && ln -s "/opt/${zig_pkg}/zig" /usr/local/bin/zig \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY tools/dpdk/hello_lcore.zig tools/dpdk/dpdk_shim.c ./
+
+# Two-step build:
+#   1. zig build-obj   — compile the Zig source to a relocatable object,
+#                        using only the flags Zig accepts (`-I` / `-D`
+#                        from pkg-config). Zig's clang frontend
+#                        understands the DPDK headers via @cImport-less
+#                        extern fn declarations + the include paths.
+#   2. gcc             — link the object against the full DPDK library
+#                        line + libc. gcc honours ldconfig's standard
+#                        search paths, so transitive deps (libbsd ->
+#                        libmd, etc.) resolve without per-distro -L
+#                        soup. Zig's bundled lld doesn't search the
+#                        Debian multiarch path by default and fights
+#                        with -l flags whose .so lives there.
+#
+# -OReleaseFast: same optimization tier the production vex image uses,
+# so any FFI overhead we measure later isn't dominated by debug
+# instrumentation.
+RUN CFLAGS="$(pkg-config --cflags libdpdk | tr ' ' '\n' | grep -E '^-(I|D)' | tr '\n' ' ')" \
+    && LIBS="$(pkg-config --libs libdpdk | tr ' ' '\n' | grep -E '^-(L|l)' | tr '\n' ' ')" \
+    && echo "CFLAGS=$CFLAGS" \
+    && echo "LIBS=$LIBS" \
+    && zig build-obj hello_lcore.zig -OReleaseFast -lc $CFLAGS \
+    && gcc -O2 -c -o dpdk_shim.o dpdk_shim.c $(pkg-config --cflags libdpdk) \
+    && gcc -O2 -o hello_lcore hello_lcore.o dpdk_shim.o $LIBS
+
+FROM debian:bookworm-slim
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends \
+        libdpdk-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/hello_lcore /usr/local/bin/hello_lcore
+
+# Default args are the "hello world" set: 4 lcores, no PCI scan, no
+# hugepages required. Override at `docker run` for fancier configs.
+ENTRYPOINT ["/usr/local/bin/hello_lcore"]
+CMD ["-l", "0-3", "--no-pci", "--no-huge"]

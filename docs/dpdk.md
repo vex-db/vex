@@ -168,6 +168,87 @@ runner has a DPDK-bindable NIC. The plan:
    `aws ec2 run-instances` with the right AMI + user-data (hugepages,
    ENA → vfio-pci, DPDK install) so a perf run is one command.
 
+## Status as of this commit
+
+What's done:
+
+- Design doc (this file).
+- `src/server/net/` abstraction layer (interface + posix/dpdk stubs).
+- `tools/dpdk/hello_lcore.zig` — EAL init + per-lcore hello. Works on
+  any Linux box. Confirms toolchain.
+- `tools/dpdk/port_probe.zig` — full mempool + ethdev + rx_burst
+  pipeline. Works against the software `net_null0` PMD on any Linux
+  box (no NIC required). Pushed ~104M pkt/s through the null PMD on
+  Docker Desktop emulation.
+- `tools/dpdk/dpdk_shim.c` — C wrappers for the ~7 inline / per-thread
+  DPDK symbols that can't be reached from Zig's `extern fn` alone.
+- `tools/dpdk/Dockerfile.dpdk` — builds both probes, two-stage,
+  `zig build-obj` → system gcc link.
+- `tools/dpdk/aws-perf-up.sh` / `aws-perf-down.sh` — symmetrical
+  c5n.18xlarge bring-up / tear-down with DPDK + hugepages baked into
+  the user-data.
+- `tools/dpdk/bind-eni.sh` — on-instance helper that detaches a
+  secondary ENA from the kernel driver and binds it to vfio-pci.
+- `build.zig` — `-Ddpdk=true` option (linux/x86_64 only) that builds
+  the probes via Zig's pkg-config integration.
+- `.github/workflows/regression.yml` — `dpdk-build` job that gates
+  every PR on the DPDK compile path.
+
+What's **not** done:
+
+- F-Stack vendoring + integration. The userspace TCP stack we picked
+  in this doc has had zero code written against it yet.
+- A real-NIC perf run — see "What we still need to run a real-NIC
+  test" below.
+- Real `DpdkDriver` in `src/server/net/dpdk.zig`.
+
+## What we still need to run a real-NIC test
+
+DPDK's whole point is bypassing the kernel network stack. For a
+real-packet number we need a NIC the userspace process can own
+exclusively — i.e. detached from the kernel `ena` driver and bound
+to `vfio-pci`. That puts a hard requirement on the test environment.
+
+### EC2 c5n.18xlarge path (simplest)
+
+The `aws-perf-up.sh` / `bind-eni.sh` pair already does most of this.
+What's still needed from the operator:
+
+| Item | Why |
+|---|---|
+| **AWS keypair** in the target region | `ssh -i ~/.ssh/$KEY_NAME ubuntu@...` after launch. Either reuse an existing perf keypair or `aws ec2 create-key-pair --key-name vex-dpdk --query KeyMaterial --output text > ~/.ssh/vex-dpdk`. |
+| **Security group** allowing inbound 22 from your laptop | Else `aws-perf-up.sh` succeeds but you can't SSH in. `aws ec2 create-security-group` + `authorize-security-group-ingress`. |
+| **Attached secondary ENI** | Needed so `bind-eni.sh` has a NIC to bind without breaking SSH. `aws ec2 create-network-interface` + `attach-network-interface --device-index 1`. Auto-detected by `bind-eni.sh`. |
+| **Run the binary** | `docker save vex-dpdk-probe:hello \| bzip2 \| ssh ... 'bzcat \| docker load'` then `docker run --privileged ... port_probe -a <BDF> -- --duration=10`. |
+
+Cost: ~$3.88/hr on-demand, ~$1.50/hr spot. Single perf run is ~5
+minutes of compute + a couple of minutes of fiddling = ~$0.50.
+
+### EKS path (harder, but lower variable cost)
+
+Running DPDK inside a Kubernetes pod needs:
+
+| Need | Mechanism |
+|---|---|
+| NIC the pod owns exclusively | SR-IOV virtual function (VF) carved out of a secondary ENI on the node. Requires the **`multus`** CNI plugin + **`sriov-cni`** plugin installed cluster-wide, and per-node ENI config in the node's userdata. |
+| Hugepages | Node sysctl reserves them (e.g. via kubelet's `--system-reserved-memory` + `huge-page-size`), pod requests `hugepages-2Mi: 2Gi` in its resource spec. |
+| `vfio-pci` access from inside the pod | `securityContext: { capabilities: { add: [IPC_LOCK, NET_ADMIN] } }` + a `volumeMount` for `/dev/vfio`. |
+| Pod scheduled onto the right node | NodeSelector matching the SR-IOV-configured node pool. |
+
+On `fundsindia-scrum-eks` today, none of this is set up (we already
+established cluster config is ArgoCD-managed and outside our control).
+Asks for the cluster-admin team would be: install `multus` +
+`sriov-cni`, designate one node pool with hugepages reserved and
+secondary ENIs configured, expose an SR-IOV resource the pod can
+request.
+
+### Recommendation
+
+For a *first* real-NIC number, the EC2 c5n path is dramatically
+shorter — the EKS path needs an entire CNI plugin install. Once we
+have the numbers and prove DPDK is worth the operational complexity,
+the EKS conversation becomes much easier to have.
+
 ## Risks
 
 - **F-Stack binding cost** — could be days of small fights with C

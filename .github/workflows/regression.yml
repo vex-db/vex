@@ -27,9 +27,15 @@ on:
         default: 'false'
 
 env:
-  # Pin to a known-working Zig nightly. Bump when build.zig.zon's
-  # minimum_zig_version moves.
-  ZIG_VERSION: '0.16.0-dev.3153+d6f43caad'
+  # Pin to the same Zig nightly the production Dockerfile.vex uses, so
+  # CI builds with the exact toolchain that ships images. Bump
+  # alongside Dockerfile.vex when build.zig.zon's minimum_zig_version
+  # moves. Older dev nightlies eventually get purged from
+  # ziglang.org/builds/; if `setup-zig` ever reports "Unable to locate
+  # executable file: zig", the version below is gone — pick a fresher
+  # one from https://ziglang.org/download/ and update both this file
+  # and Dockerfile.vex together.
+  ZIG_VERSION: '0.17.0-dev.314+eae06cf5c'
 
 jobs:
 
@@ -45,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Zig ${{ env.ZIG_VERSION }}
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -72,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Zig ${{ env.ZIG_VERSION }}
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -110,7 +116,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Zig
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -142,7 +148,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Zig
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 

@@ -260,6 +260,18 @@ const Connection = struct {
     recv_pending: bool,
     send_pending: bool,
     recv_buf: [READ_BUF_SIZE]u8,
+    /// Stable scratch buffer the kernel reads from for io_uring SEND.
+    /// We must NEVER hand the kernel a pointer into write_buf — write_buf
+    /// is an ArrayList whose backing store can be realloc'd by any
+    /// subsequent appendSlice from the worker (triggered when a pipelined
+    /// RECV completion arrives mid-flight). Realloc moves the buffer,
+    /// freeing the chunk the kernel is still DMA-reading; the next time
+    /// glibc reuses that chunk and tries to walk its size header the
+    /// process aborts with `realloc(): invalid next size`. send_scratch
+    /// is owned exclusively by the kernel from submitUringWrite until
+    /// handleSendCompletion, so it can't be reallocated underneath.
+    send_scratch: std.array_list.Managed(u8),
+    send_scratch_offset: usize,
     /// Externally-visible client metadata for CLIENT LIST. Registered on
     /// accept, unregistered on close.
     view: client_registry.ClientView,
@@ -304,6 +316,8 @@ const Connection = struct {
             .recv_pending = false,
             .send_pending = false,
             .recv_buf = undefined,
+            .send_scratch = std.array_list.Managed(u8).init(allocator),
+            .send_scratch_offset = 0,
             .view = .{
                 .id = id,
                 .fd = fd,
@@ -329,6 +343,7 @@ const Connection = struct {
         if (self.client_name) |name| allocator.free(name);
         self.accum.deinit();
         self.write_buf.deinit();
+        self.send_scratch.deinit();
         allocator.destroy(self);
     }
 
@@ -926,33 +941,110 @@ pub const Worker = struct {
             return;
         }
 
-        conn.write_offset += @as(usize, @intCast(bytes));
+        conn.send_scratch_offset += @as(usize, @intCast(bytes));
 
-        if (conn.write_offset >= conn.write_buf.items.len) {
-            // All data sent
-            conn.write_buf.clearRetainingCapacity();
-            conn.write_offset = 0;
-        } else {
-            // Partial send — submit another for remainder
+        if (conn.send_scratch_offset < conn.send_scratch.items.len) {
+            // Partial send: resubmit the remainder of scratch. The kernel
+            // continues to own scratch until this finishes.
+            self.submitUringWriteFromScratch(conn);
+            return;
+        }
+
+        // Scratch fully drained — release it back to the worker.
+        conn.send_scratch.clearRetainingCapacity();
+        conn.send_scratch_offset = 0;
+
+        // If pipelined commands appended new bytes to write_buf during the
+        // send, ship them now.
+        if (conn.write_buf.items.len > conn.write_offset) {
             self.submitUringWrite(conn);
         }
     }
 
     fn submitUringWrite(self: *Worker, conn: *Connection) void {
-        if (conn.send_pending) return; // already in-flight, completion will chain
+        if (conn.send_pending) return; // SEND already in-flight; we'll chain in handleSendCompletion
 
         const remaining = conn.write_buf.items[conn.write_offset..];
         if (remaining.len == 0) return;
 
+        // Copy into send_scratch so write_buf can be reallocated by future
+        // appendSlice calls (pipelined commands) without disturbing the
+        // pointer the kernel is reading from. See Connection.send_scratch
+        // for the corruption pattern this avoids.
+        conn.send_scratch.ensureTotalCapacity(remaining.len) catch {
+            // OOM building scratch — fall back to the synchronous path,
+            // which writes directly via send(2) and returns before the
+            // worker touches write_buf again. Safe (no kernel-DMA-overlap).
+            self.directFlush(conn);
+            return;
+        };
+        conn.send_scratch.clearRetainingCapacity();
+        conn.send_scratch.appendSliceAssumeCapacity(remaining);
+        conn.send_scratch_offset = 0;
+
+        // write_buf has been fully copied out — reset so subsequent
+        // appendSlice calls don't realloc the kernel-owned buffer.
+        conn.write_buf.clearRetainingCapacity();
+        conn.write_offset = 0;
+
+        self.submitUringWriteFromScratch(conn);
+    }
+
+    /// Issue (or re-issue, for partial completions) a SEND from
+    /// send_scratch. Caller must have populated scratch and arranged that
+    /// send_scratch_offset points at the first unsent byte.
+    fn submitUringWriteFromScratch(self: *Worker, conn: *Connection) void {
+        const to_send = conn.send_scratch.items[conn.send_scratch_offset..];
+        if (to_send.len == 0) return;
+
         conn.send_pending = true;
         if (is_linux) {
-            self.loop.submitSend(conn.fd, remaining) catch {
+            self.loop.submitSend(conn.fd, to_send) catch {
                 conn.send_pending = false;
-                // Fallback: synchronous flush
-                self.directFlush(conn);
+                // Submission failed (SQ full, ENOBUFS, etc.). Drain scratch
+                // synchronously via send(2); directFlush handles partial
+                // writes and re-arms epoll if needed.
+                // We have to drain scratch FIRST (not write_buf) because
+                // scratch holds the older un-sent bytes.
+                self.directFlushFromScratch(conn);
                 return;
             };
             self.loop.flushSqes();
+        }
+    }
+
+    /// Synchronous fallback for the io_uring path: drain send_scratch via
+    /// send(2). Used when io_uring submission fails. Does NOT touch
+    /// write_buf — caller must drain that separately after scratch clears.
+    fn directFlushFromScratch(self: *Worker, conn: *Connection) void {
+        while (conn.send_scratch_offset < conn.send_scratch.items.len) {
+            const remaining = conn.send_scratch.items[conn.send_scratch_offset..];
+            const rc = self.connWrite(conn, remaining.ptr, remaining.len);
+            if (rc < 0) {
+                // EAGAIN — register for writable. The fd-writable handler
+                // will re-enter directFlushFromScratch.
+                if (!conn.write_registered) {
+                    self.loop.enableWrite(conn.fd, @intCast(conn.fd)) catch {};
+                    conn.write_registered = true;
+                }
+                return;
+            }
+            if (rc == 0) {
+                self.closeConn(conn.fd);
+                return;
+            }
+            conn.send_scratch_offset += @intCast(rc);
+        }
+        conn.send_scratch.clearRetainingCapacity();
+        conn.send_scratch_offset = 0;
+        if (conn.write_registered) {
+            self.loop.disableWrite(conn.fd, @intCast(conn.fd)) catch {};
+            conn.write_registered = false;
+        }
+        // If new bytes accumulated in write_buf during the sync drain,
+        // ship them via the normal path.
+        if (conn.write_buf.items.len > conn.write_offset) {
+            self.submitUringWrite(conn);
         }
     }
 
@@ -978,19 +1070,42 @@ pub const Worker = struct {
             }
         }
 
-        // Inline command path
+        // Inline command path. Note: redis-cli --pipe sends inline
+        // commands with bare '\n' (Unix line endings) followed by a
+        // final '\r\n*2\r\n$4\r\nECHO\r\n...' sync barrier. Before this
+        // patch we used findCRLF, which skipped over every '\n'-only
+        // line, found the first '\r\n' after the SETs, and called
+        // parseInlineCommand on the multi-line slice. parseInlineCommand
+        // itself breaks at the first '\n', so only the FIRST command
+        // got executed and N-1 commands were silently dropped (the
+        // ECHO at the end still replied OK, so redis-cli reported
+        // success). Use findInlineEnd which matches either '\r\n' or
+        // a bare '\n'.
         if (resp.isInlineCommand(data)) {
-            const eol = findCRLF(data) orelse return false;
-            const line = data[0..eol];
+            const eol_info = findInlineEnd(data) orelse return false;
+            const line = data[0..eol_info.line_end];
+
+            // Empty line (e.g. the '\r\n' delimiter redis-cli --pipe
+            // emits between inline SETs and its trailing RESP ECHO).
+            // Skip silently — dispatching empty args would emit
+            // "-ERR empty command" and confuse pipe clients.
+            if (line.len == 0) {
+                conn.advanceAccum(eol_info.consumed);
+                return true;
+            }
 
             const parts = resp.parseInlineCommand(line, self.allocator) catch return false;
             defer {
                 for (parts) |p| self.allocator.free(p);
                 self.allocator.free(parts);
             }
+            if (parts.len == 0) {
+                conn.advanceAccum(eol_info.consumed);
+                return true;
+            }
 
             self.dispatchCommand(conn, parts);
-            conn.advanceAccum(eol + 2);
+            conn.advanceAccum(eol_info.consumed);
             return true;
         }
 
@@ -3192,6 +3307,29 @@ fn findCRLF(data: []const u8) ?usize {
     if (data.len < 2) return null;
     for (0..data.len - 1) |i| {
         if (data[i] == '\r' and data[i + 1] == '\n') return i;
+    }
+    return null;
+}
+
+/// Find the end of an inline command line. Inline commands (the
+/// telnet-style "PING\n" or "SET k v\n" format that redis-cli --pipe
+/// sends) terminate with either '\r\n' (CRLF) or a bare '\n' (LF).
+/// `line_end` is the offset of the first terminator byte; `consumed`
+/// is the total bytes to skip to land on the start of the next
+/// command. Returns null if no terminator is present.
+const InlineEnd = struct {
+    line_end: usize,
+    consumed: usize,
+};
+
+fn findInlineEnd(data: []const u8) ?InlineEnd {
+    for (data, 0..) |c, i| {
+        if (c == '\r' and i + 1 < data.len and data[i + 1] == '\n') {
+            return .{ .line_end = i, .consumed = i + 2 };
+        }
+        if (c == '\n') {
+            return .{ .line_end = i, .consumed = i + 1 };
+        }
     }
     return null;
 }

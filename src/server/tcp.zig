@@ -1619,10 +1619,22 @@ fn processOneCommand(
         }
     }
 
-    // Inline command path
+    // Inline command path. redis-cli --pipe sends inline commands with
+    // bare '\n' line endings (not '\r\n'); findInlineEnd handles both.
+    // See worker.zig's processOneCommand for the longer explanation of
+    // the silent-drop bug findCRLF caused.
     if (resp.isInlineCommand(data)) {
-        const eol = findCRLF(data) orelse return false;
-        const line = data[0..eol];
+        const eol_info = findInlineEnd(data) orelse return false;
+        const line = data[0..eol_info.line_end];
+
+        // Empty line — e.g. the '\r\n' delimiter redis-cli --pipe puts
+        // between inline SETs and the trailing RESP ECHO. Skip it
+        // silently; emitting "-ERR empty command" makes pipe clients
+        // report a spurious error.
+        if (line.len == 0) {
+            consumeAccum(accum, eol_info.consumed);
+            return true;
+        }
 
         const parse_t0 = std.Io.Clock.Timestamp.now(io, .awake);
         const parts = resp.parseInlineCommand(line, allocator) catch return false;
@@ -1633,17 +1645,22 @@ fn processOneCommand(
             allocator.free(parts);
         }
 
+        if (parts.len == 0) {
+            consumeAccum(accum, eol_info.consumed);
+            return true;
+        }
+
         if (tryHandleSelect(parts, selected_db, fd, conn, queue_count)) {
-            consumeAccum(accum, eol + 2);
+            consumeAccum(accum, eol_info.consumed);
             return true;
         }
         if (tryHandleHello(parts, fd, conn)) {
-            consumeAccum(accum, eol + 2);
+            consumeAccum(accum, eol_info.consumed);
             return true;
         }
 
         if (!enqueueArgs(parts, allocator, fd, conn, queues, queue_count, runtimes, kv_shards, selected_db, io, scale_mode, profile)) return false;
-        consumeAccum(accum, eol + 2);
+        consumeAccum(accum, eol_info.consumed);
         return true;
     }
 
@@ -1920,6 +1937,29 @@ fn findCRLF(data: []const u8) ?usize {
     if (data.len < 2) return null;
     for (0..data.len - 1) |i| {
         if (data[i] == '\r' and data[i + 1] == '\n') return i;
+    }
+    return null;
+}
+
+/// Find the end of an inline command line. Inline commands (the
+/// telnet-style "PING\n" or "SET k v\n" format that redis-cli --pipe
+/// sends) terminate with either '\r\n' (CRLF) or a bare '\n' (LF).
+/// `line_end` is the offset of the first terminator byte; `consumed`
+/// is the total bytes to skip to land on the start of the next
+/// command. Returns null if no terminator is present.
+const InlineEnd = struct {
+    line_end: usize,
+    consumed: usize,
+};
+
+fn findInlineEnd(data: []const u8) ?InlineEnd {
+    for (data, 0..) |c, i| {
+        if (c == '\r' and i + 1 < data.len and data[i + 1] == '\n') {
+            return .{ .line_end = i, .consumed = i + 2 };
+        }
+        if (c == '\n') {
+            return .{ .line_end = i, .consumed = i + 1 };
+        }
     }
     return null;
 }

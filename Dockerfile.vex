@@ -9,7 +9,22 @@ RUN apt-get update -qq && apt-get install -y -qq curl xz-utils ca-certificates >
 
 WORKDIR /app
 COPY . .
-RUN zig build -Doptimize=ReleaseFast
+# On x86_64 hosts, force a portable AVX2 baseline (`x86_64_v3`) so the
+# resulting binary runs on every modern x86_64 CPU. Default
+# `-Doptimize=ReleaseFast` lets Zig pick the build host's native CPU,
+# which on CI runners with newer Intel chips emits instructions older
+# AMD EPYC nodes (Zen 1 Naples / Zen 3 Milan) don't implement → SIGILL
+# at startup on those nodes.
+#
+# On arm64 hosts (Apple Silicon dev, Graviton CI), `x86_64_v3` isn't a
+# valid target — fall through to the default native build. arm64 doesn't
+# have the same fragmentation problem.
+RUN arch="$(uname -m)" \
+    && if [ "$arch" = "x86_64" ]; then \
+        zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v3; \
+    else \
+        zig build -Doptimize=ReleaseFast; \
+    fi
 
 FROM debian:bookworm-slim
 RUN useradd -m -u 10001 vex

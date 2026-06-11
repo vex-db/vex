@@ -379,7 +379,7 @@ Redis-compatible KV + graph DB with multi-reactor architecture.
 - Streams (`XADD`/`XREAD`/`XRANGE`/`XLEN`)
 - Persistence for lists, hashes, sets, sorted sets (snapshot + AOF)
 
-### v0.10 -- DPDK, Scripting & Query
+### v1.0 -- DPDK, Scripting & Query
 - DPDK kernel bypass networking (optional, Linux)
 - Full io_uring event loop with connection lifecycle management (accept, close)
 - Lua scripting (`EVAL`/`EVALSHA`)

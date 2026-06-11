@@ -135,73 +135,6 @@ pub const ConcurrentKV = struct {
         return .{ .data = copy, .allocator = self.allocator };
     }
 
-    /// Zero-allocation GET: holds READ lock, writes RESP bulk string directly to output.
-    /// Multiple GETs on the same stripe run in PARALLEL (no blocking).
-    /// Pre-sizes buffer OUTSIDE the lock so most GETs never allocate under lock.
-    pub fn getAndWriteBulk(self: *ConcurrentKV, key: []const u8, out: *std.array_list.Managed(u8)) bool {
-        // Optimistic pre-size: ensure room for a typical response before taking the lock.
-        // "$" + up to 6 digits + "\r\n" + up to 256 bytes value + "\r\n" = ~270 bytes.
-        // If the value is larger, ensureTotalCapacity will be called under lock (rare path).
-        out.ensureTotalCapacity(out.items.len + 270) catch {};
-
-        const s = self.getStripe(key);
-        readLockStripe(s);
-
-        const entry = s.map.getPtr(key) orelse {
-            readUnlockStripe(s);
-            out.appendSlice("$-1\r\n") catch {};
-            return false;
-        };
-        if (entry.flags.deleted) {
-            readUnlockStripe(s);
-            out.appendSlice("$-1\r\n") catch {};
-            return false;
-        }
-        if (entry.flags.has_ttl and self.cached_now_ms > entry.expires_at) {
-            readUnlockStripe(s);
-            _ = obs_stats.expired_keys.fetchAdd(1, .monotonic);
-            out.appendSlice("$-1\r\n") catch {};
-            return false;
-        }
-        // For integer entries, format from native int_value (no stored string needed)
-        if (entry.flags.is_integer) {
-            var int_buf: [24]u8 = undefined;
-            const int_str = std.fmt.bufPrint(&int_buf, "{d}", .{entry.int_value}) catch {
-                readUnlockStripe(s);
-                return false;
-            };
-            readUnlockStripe(s);
-            // Format RESP outside lock — int_str is on stack, no aliasing issues
-            var hdr2: [32]u8 = undefined;
-            const h2 = std.fmt.bufPrint(&hdr2, "${d}\r\n", .{int_str.len}) catch return false;
-            out.ensureTotalCapacity(out.items.len + h2.len + int_str.len + 2) catch {};
-            out.appendSliceAssumeCapacity(h2);
-            out.appendSliceAssumeCapacity(int_str);
-            out.appendSliceAssumeCapacity("\r\n");
-            return true;
-        }
-
-        // Write RESP bulk string: "$len\r\nvalue\r\n"
-        const vlen = entry.value.len;
-        var hdr: [32]u8 = undefined;
-        const h = std.fmt.bufPrint(&hdr, "${d}\r\n", .{vlen}) catch {
-            readUnlockStripe(s);
-            return false;
-        };
-        const total_needed = out.items.len + h.len + vlen + 2;
-        if (total_needed > out.capacity) {
-            out.ensureTotalCapacity(total_needed) catch {
-                readUnlockStripe(s);
-                return false;
-            };
-        }
-        out.appendSliceAssumeCapacity(h);
-        out.appendSliceAssumeCapacity(entry.value);
-        out.appendSliceAssumeCapacity("\r\n");
-        readUnlockStripe(s);
-        return true;
-    }
-
     pub fn set(self: *ConcurrentKV, key: []const u8, value: []const u8) !void {
         return self.setInternal(key, value, 0);
     }
@@ -210,50 +143,6 @@ pub const ConcurrentKV = struct {
     /// ConcurrentKV takes ownership. Old value freed OUTSIDE the lock.
     /// On insert, owned_key is used. On update, owned_key is freed by caller
     /// (returned as stale_key).
-    /// SET for inline values — no value allocation needed. Copies directly from args buffer.
-    /// Only `owned_key` is heap-allocated (for new key insertion).
-    pub fn setInline(
-        self: *ConcurrentKV,
-        key: []const u8,
-        owned_key: []u8,
-        value: []const u8,
-        expires_at: i64,
-    ) struct { stale_key: ?[]const u8 } {
-        const s = self.getStripe(key);
-        writeLockStripe(s);
-
-        const has_ttl = expires_at != 0;
-        const result = s.map.getPtr(key);
-        if (result) |existing| {
-            _ = existing.seq.fetchAdd(1, .release);
-            @memcpy(existing.inline_buf[0..value.len], value);
-            existing.inline_len = @intCast(value.len);
-            existing.value = existing.inline_buf[0..value.len];
-            existing.flags = .{ .has_ttl = has_ttl, .is_inline = true };
-            existing.expires_at = expires_at;
-            existing.flags.is_integer = false;
-            _ = existing.seq.fetchAdd(1, .release);
-            writeUnlockStripe(s);
-            return .{ .stale_key = owned_key }; // key not needed for update
-        } else {
-            const gop = s.map.getOrPut(owned_key) catch {
-                writeUnlockStripe(s);
-                return .{ .stale_key = owned_key };
-            };
-            gop.key_ptr.* = owned_key;
-            gop.value_ptr.* = .{
-                .expires_at = expires_at,
-                .flags = .{ .has_ttl = has_ttl, .is_inline = true },
-                .value = undefined,
-            };
-            @memcpy(gop.value_ptr.inline_buf[0..value.len], value);
-            gop.value_ptr.inline_len = @intCast(value.len);
-            gop.value_ptr.value = gop.value_ptr.inline_buf[0..value.len];
-            writeUnlockStripe(s);
-            return .{ .stale_key = null }; // key owned by map
-        }
-    }
-
     pub fn setPrealloc(
         self: *ConcurrentKV,
         key: []const u8,
@@ -674,14 +563,6 @@ pub const ConcurrentKV = struct {
 
     fn readUnlockAll(self: *ConcurrentKV) void {
         for (&self.stripes) |*s| readUnlockStripe(s);
-    }
-
-    fn writeLockAll(self: *ConcurrentKV) void {
-        for (&self.stripes) |*s| writeLockStripe(s);
-    }
-
-    fn writeUnlockAll(self: *ConcurrentKV) void {
-        for (&self.stripes) |*s| writeUnlockStripe(s);
     }
 
     /// Update cached clock. Call once per event loop tick.

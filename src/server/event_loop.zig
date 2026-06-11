@@ -2,6 +2,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 const linux = std.os.linux;
 const vex_log = @import("../log.zig");
+const probes_mod = @import("../observability/probes.zig");
+
+/// A submit_and_wait that returns faster than this did not deschedule the
+/// thread (the CQE was already posted); slower means a genuine kernel sleep.
+const WAIT_BLOCKED_NS: u64 = 2_000;
 
 const is_linux = builtin.os.tag == .linux;
 const is_darwin = builtin.os.tag == .macos or builtin.os.tag == .ios or
@@ -61,9 +66,17 @@ pub const EventLoop = struct {
     fd_data: if (is_linux) [FD_TABLE_SIZE]usize else void,
     fd_active: if (is_linux) [FD_TABLE_SIZE]bool else void,
     fd_want_write: if (is_linux) [FD_TABLE_SIZE]bool else void,
+    /// Whether OP_POLL completions for this fd should re-arm the poll.
+    /// True for poll-driven fds (TLS, legacy); false for recv-mode fds,
+    /// which are driven by recv/send SQEs and only arm a poll transiently
+    /// while write interest is registered (send(2) EAGAIN fallback).
+    fd_poll_rearm: if (is_linux) [FD_TABLE_SIZE]bool else void,
 
     /// use_uring is set at init time; if io_uring fails we fall back to epoll.
     use_uring: if (is_linux) bool else void,
+    /// Set when the one-shot notify poll_add could not be re-armed (SQ full);
+    /// retried at the top of every pollIoUring tick.
+    notify_rearm_pending: if (is_linux) bool else void,
     epoll_events_buf: if (is_linux) [MAX_EVENTS]linux.epoll_event else void,
 
     pub fn init() !EventLoop {
@@ -77,11 +90,12 @@ pub const EventLoop = struct {
     }
 
     fn initLinux() !EventLoop {
-        // Try io_uring with SQPOLL (kernel poll thread, eliminates submit syscalls).
-        // Fall back to plain io_uring, then epoll.
-        if (linux.IoUring.init(1024, linux.IORING_SETUP_SQPOLL)) |ring_val| {
-            return initLinuxUring(ring_val);
-        } else |_| {}
+        // Plain io_uring, falling back to epoll. SQPOLL is deliberately NOT
+        // used: each ring's kernel busy-poll thread costs a full core, which
+        // oversubscribes the host at --workers > 1 (measured: thousands of
+        // involuntary preemptions and ms-scale wakeup tails with 4 workers
+        // + 4 sqpoll kthreads on 8 vCPUs), while batched submit_and_wait
+        // already amortizes the submit syscalls SQPOLL would save.
         if (linux.IoUring.init(1024, 0)) |ring_val| {
             return initLinuxUring(ring_val);
         } else |_| {
@@ -102,6 +116,7 @@ pub const EventLoop = struct {
             .kq_or_epfd = 0,
             .ring = ring,
             .use_uring = true,
+            .notify_rearm_pending = false,
             .epoll_events_buf = undefined,
             .notify_read_fd = efd,
             .notify_write_fd = efd,
@@ -109,6 +124,7 @@ pub const EventLoop = struct {
             .fd_data = @splat(0),
             .fd_active = @splat(false),
             .fd_want_write = @splat(false),
+            .fd_poll_rearm = @splat(false),
         };
 
         self.submitPollAdd(efd, @as(u32, linux.POLL.IN)) catch {
@@ -116,6 +132,10 @@ pub const EventLoop = struct {
             _ = std.c.close(efd);
             return initLinuxEpoll();
         };
+
+        const sqpoll = (self.ring.flags & linux.IORING_SETUP_SQPOLL) != 0;
+        probes_mod.ring_mode.store(if (sqpoll) 3 else 2, .monotonic);
+        vex_log.info("event_loop: io_uring backend active (sqpoll={})", .{sqpoll});
 
         return self;
     }
@@ -140,10 +160,14 @@ pub const EventLoop = struct {
             return error.EpollCtlFailed;
         }
 
+        probes_mod.ring_mode.store(1, .monotonic);
+        vex_log.warn("event_loop: epoll backend (io_uring unavailable)", .{});
+
         return .{
             .kq_or_epfd = epfd,
             .ring = undefined,
             .use_uring = false,
+            .notify_rearm_pending = false,
             .epoll_events_buf = undefined,
             .notify_read_fd = efd,
             .notify_write_fd = efd,
@@ -151,12 +175,14 @@ pub const EventLoop = struct {
             .fd_data = @splat(0),
             .fd_active = @splat(false),
             .fd_want_write = @splat(false),
+            .fd_poll_rearm = @splat(false),
         };
     }
 
     fn initDarwin() !EventLoop {
         const kq = std.c.kqueue();
         if (kq < 0) return error.KqueueFailed;
+        probes_mod.ring_mode.store(1, .monotonic);
 
         var pipe_fds: [2]std.c.fd_t = undefined;
         if (std.c.pipe(&pipe_fds) != 0) {
@@ -192,6 +218,8 @@ pub const EventLoop = struct {
             .fd_data = {},
             .fd_active = {},
             .fd_want_write = {},
+            .fd_poll_rearm = {},
+            .notify_rearm_pending = {},
             .use_uring = {},
             .epoll_events_buf = {},
         };
@@ -213,6 +241,19 @@ pub const EventLoop = struct {
     }
 
     pub fn addFd(self: *EventLoop, fd: i32, data: usize) !void {
+        return self.addFdInternal(fd, data, true);
+    }
+
+    /// Register an fd whose I/O is driven by recv/send SQEs rather than poll
+    /// readiness. No poll_add is armed — a poll CQE would only duplicate the
+    /// recv completion (plus a wasted read() -> EAGAIN per request). Write
+    /// interest still arms a poll transiently via enableWrite.
+    /// Falls back to normal poll registration on non-uring backends.
+    pub fn addFdRecvMode(self: *EventLoop, fd: i32, data: usize) !void {
+        return self.addFdInternal(fd, data, false);
+    }
+
+    fn addFdInternal(self: *EventLoop, fd: i32, data: usize, poll_mode: bool) !void {
         setNonBlocking(fd);
 
         if (is_linux) {
@@ -220,8 +261,9 @@ pub const EventLoop = struct {
             self.fd_data[idx] = data;
             self.fd_active[idx] = true;
             self.fd_want_write[idx] = false;
+            self.fd_poll_rearm[idx] = poll_mode;
             if (self.use_uring) {
-                try self.submitPollAdd(fd, @as(u32, linux.POLL.IN));
+                if (poll_mode) try self.submitPollAdd(fd, @as(u32, linux.POLL.IN));
             } else {
                 var ev = linux.epoll_event{ .events = linux.EPOLL.IN | linux.EPOLL.ET, .data = .{ .fd = fd } };
                 const rc = linux.epoll_ctl(self.kq_or_epfd, linux.EPOLL.CTL_ADD, fd, &ev);
@@ -247,6 +289,7 @@ pub const EventLoop = struct {
                 self.fd_active[idx] = false;
                 self.fd_data[idx] = 0;
                 self.fd_want_write[idx] = false;
+                self.fd_poll_rearm[idx] = false;
             }
             if (!self.use_uring) {
                 _ = linux.epoll_ctl(self.kq_or_epfd, linux.EPOLL.CTL_DEL, fd, null);
@@ -265,6 +308,13 @@ pub const EventLoop = struct {
             if (fdIdx(fd)) |idx| {
                 self.fd_data[idx] = data;
                 self.fd_want_write[idx] = true;
+                // recv-mode fds have no poll_add in flight, so arm one now;
+                // pollIoUring keeps re-arming it while fd_want_write holds.
+                // OUT only: reads stay owned by the pending recv SQE.
+                // Poll-mode fds pick up OUT interest on their next re-arm.
+                if (self.use_uring and !self.fd_poll_rearm[idx]) {
+                    try self.submitPollAdd(fd, @as(u32, linux.POLL.OUT));
+                }
             }
             if (!self.use_uring) {
                 var ev = linux.epoll_event{ .events = linux.EPOLL.IN | linux.EPOLL.OUT | linux.EPOLL.ET, .data = .{ .fd = fd } };
@@ -323,13 +373,44 @@ pub const EventLoop = struct {
     fn pollIoUring(self: *EventLoop, out: []Event, timeout_ms: i32) ![]Event {
         _ = timeout_ms; // io_uring submit_and_wait with wait_nr=1 blocks until at least 1 completion
 
+        // A failed notify re-arm (SQ full) would otherwise permanently deafen
+        // this worker to new-connection/pub-sub wakeups. Retry it here, where
+        // the SQE rides the imminent submit_and_wait; poll_add is level-
+        // checked at arm time, so a notify written in the meantime still fires.
+        if (self.notify_rearm_pending) {
+            self.notify_rearm_pending = false;
+            self.submitPollAdd(self.notify_read_fd, @as(u32, linux.POLL.IN)) catch {
+                self.notify_rearm_pending = true;
+            };
+        }
+
+        const probe_on = probes_mod.isEnabled();
+        const wait_t0: u64 = if (probe_on) probes_mod.start() else 0;
+
         // Submit any pending SQEs and wait for at least 1 completion
         _ = self.ring.submit_and_wait(1) catch return error.IoUringSubmitFailed;
 
-        // Harvest completions
+        // Harvest completions. The copy MUST be capped at out.len: anything
+        // copied out of the ring beyond what fits in `out` would be silently
+        // dropped (a lost send CQE wedges send_pending; a lost recv CQE kills
+        // the connection's recv loop). Capping leaves the excess in the CQ
+        // for the next tick instead.
         var cqes: [MAX_EVENTS]linux.io_uring_cqe = undefined;
         const max_cqes: u32 = @intCast(@min(out.len, MAX_EVENTS));
-        const n = self.ring.copy_cqes(&cqes, 0) catch return error.IoUringCqeFailed;
+        const n = self.ring.copy_cqes(cqes[0..max_cqes], 0) catch return error.IoUringCqeFailed;
+
+        if (probe_on) {
+            if (probes_mod.current) |p| {
+                const waited = probes_mod.sinceNs(wait_t0);
+                p.wait_enter.record(waited);
+                if (waited > WAIT_BLOCKED_NS) p.wait_blocked.record(waited);
+                p.cqes_per_wake.record(n);
+            }
+        }
+
+        var n_recv: u64 = 0;
+        var n_send: u64 = 0;
+        var n_poll: u64 = 0;
 
         var out_idx: usize = 0;
         for (cqes[0..n]) |cqe| {
@@ -340,6 +421,7 @@ pub const EventLoop = struct {
             const res = cqe.res;
 
             if (op == OP_RECV) {
+                n_recv += 1;
                 // recv completion — deliver bytes to worker
                 const idx = fdIdx(fd) orelse continue;
                 if (!self.fd_active[idx]) continue;
@@ -371,6 +453,7 @@ pub const EventLoop = struct {
                 };
                 out_idx += 1;
             } else if (op == OP_SEND) {
+                n_send += 1;
                 // send completion — deliver result to worker
                 const idx = fdIdx(fd) orelse continue;
                 if (!self.fd_active[idx]) continue;
@@ -387,12 +470,14 @@ pub const EventLoop = struct {
                 out_idx += 1;
             } else {
                 // OP_POLL: existing poll_add completion logic
+                n_poll += 1;
 
                 if (fd == self.notify_read_fd) {
                     out[out_idx] = .{ .fd = fd, .data = 0, .readable = true, .writable = false, .err = false, .hup = false };
                     out_idx += 1;
                     self.submitPollAdd(fd, linux.POLL.IN) catch |err| {
-                        vex_log.warn("event_loop: re-arm poll on notify fd={d} failed: {s}", .{ fd, @errorName(err) });
+                        vex_log.warn("event_loop: re-arm poll on notify fd={d} failed: {s} (will retry)", .{ fd, @errorName(err) });
+                        self.notify_rearm_pending = true;
                     };
                     continue;
                 }
@@ -417,11 +502,18 @@ pub const EventLoop = struct {
                 };
                 out_idx += 1;
 
-                // Re-arm the poll for this fd (io_uring poll_add is one-shot)
-                if (self.fd_active[idx]) {
+                // Re-arm the poll for this fd (io_uring poll_add is one-shot).
+                // recv-mode fds (fd_poll_rearm=false) only keep a poll alive
+                // while write interest is registered (send EAGAIN fallback).
+                if (self.fd_active[idx] and (self.fd_poll_rearm[idx] or self.fd_want_write[idx])) {
                     const poll_in: u32 = linux.POLL.IN;
                     const poll_out: u32 = linux.POLL.OUT;
-                    const poll_mask: u32 = if (self.fd_want_write[idx]) poll_in | poll_out else poll_in;
+                    const poll_mask: u32 = if (!self.fd_poll_rearm[idx])
+                        poll_out // recv-mode: write interest only; recv SQEs own reads
+                    else if (self.fd_want_write[idx])
+                        poll_in | poll_out
+                    else
+                        poll_in;
                     self.submitPollAdd(fd, poll_mask) catch |err| {
                         vex_log.warn("event_loop: re-arm poll on fd={d} failed: {s}", .{ fd, @errorName(err) });
                     };
@@ -429,10 +521,18 @@ pub const EventLoop = struct {
             }
         }
 
-        // Flush any re-arm SQEs we just queued (non-blocking submit)
-        _ = self.ring.submit() catch |err| {
-            vex_log.warn("event_loop: ring submit (re-arm batch) failed: {s}", .{@errorName(err)});
-        };
+        // SQEs queued during processing (sends, recv re-arms, poll re-arms)
+        // are NOT flushed here — the submit_and_wait(1) at the top of the
+        // next tick submits them in the same enter it waits with, keeping
+        // the hot path at one syscall per wakeup.
+
+        if (probe_on) {
+            if (probes_mod.current) |p| {
+                p.cqe_recv.record(n_recv);
+                p.cqe_send.record(n_send);
+                p.cqe_poll.record(n_poll);
+            }
+        }
 
         return out[0..out_idx];
     }
@@ -520,26 +620,22 @@ pub const EventLoop = struct {
     // --- io_uring helpers ---
 
     fn submitPollAdd(self: *EventLoop, fd: i32, poll_mask: u32) !void {
-        if (!is_linux) unreachable;
         _ = try self.ring.poll_add(encodeUserData(OP_POLL, fd), fd, poll_mask);
     }
 
     /// Submit a recv SQE. Buffer must remain valid until CQE.
     pub fn submitRecv(self: *EventLoop, fd: i32, buf: []u8) !void {
-        if (!is_linux) unreachable;
         _ = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
     }
 
     /// Submit a send SQE. Buffer must remain valid until CQE.
     pub fn submitSend(self: *EventLoop, fd: i32, buf: []const u8) !void {
-        if (!is_linux) unreachable;
         _ = try self.ring.send(encodeUserData(OP_SEND, fd), fd, buf, 0);
     }
 
     /// Submit a write SQE linked to fsync for AOF durability.
     /// The write and fsync are chained: fsync executes only after write completes.
     pub fn submitAofWriteFsync(self: *EventLoop, fd: i32, buf: []const u8, offset: u64) !void {
-        if (!is_linux) unreachable;
         // Write SQE — linked to next SQE (fsync)
         const write_sqe = try self.ring.write(encodeUserData(OP_AOF_WRITE, fd), fd, buf, offset);
         write_sqe.flags |= linux.IOSQE_IO_LINK;
@@ -550,9 +646,14 @@ pub const EventLoop = struct {
     /// Flush any queued SQEs to the kernel (non-blocking).
     pub fn flushSqes(self: *EventLoop) void {
         if (is_linux and self.use_uring) {
+            const probe_on = probes_mod.isEnabled();
+            const t0: u64 = if (probe_on) probes_mod.start() else 0;
             _ = self.ring.submit() catch |err| {
                 vex_log.warn("event_loop: flushSqes ring.submit failed: {s}", .{@errorName(err)});
             };
+            if (probe_on) {
+                if (probes_mod.current) |p| probes_mod.finish(&p.flush_enter, t0);
+            }
         }
     }
 

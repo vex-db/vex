@@ -9,10 +9,6 @@ pub const Profile = struct {
     parse_ns: std.atomic.Value(u64) = .init(0),
     parse_n: std.atomic.Value(u64) = .init(0),
 
-    /// Time blocked on the global command mutex (legacy threaded mode only).
-    lock_wait_ns: std.atomic.Value(u64) = .init(0),
-    lock_wait_n: std.atomic.Value(u64) = .init(0),
-
     /// Time inside `CommandHandler.execute` (single-writer or post-lock).
     exec_ns: std.atomic.Value(u64) = .init(0),
     exec_n: std.atomic.Value(u64) = .init(0),
@@ -54,12 +50,6 @@ pub const Profile = struct {
         if (ns <= 0) return;
         _ = self.parse_n.fetchAdd(1, .monotonic);
         _ = self.parse_ns.fetchAdd(@as(u64, @intCast(ns)), .monotonic);
-    }
-
-    pub fn recordLockWait(self: *Profile, ns: i64) void {
-        if (ns <= 0) return;
-        _ = self.lock_wait_n.fetchAdd(1, .monotonic);
-        _ = self.lock_wait_ns.fetchAdd(@as(u64, @intCast(ns)), .monotonic);
     }
 
     pub fn recordExec(self: *Profile, ns: i64) void {
@@ -113,7 +103,6 @@ pub const Profile = struct {
 
     fn printSnapshot(self: *Profile, cmd_count: u64) void {
         const pn = self.parse_n.load(.monotonic);
-        const lwn = self.lock_wait_n.load(.monotonic);
         const en = self.exec_n.load(.monotonic);
         const wn = self.write_n.load(.monotonic);
         const qn = self.queue_wait_n.load(.monotonic);
@@ -124,7 +113,6 @@ pub const Profile = struct {
         const jon = self.job_overhead_n.load(.monotonic);
 
         const pns = self.parse_ns.load(.monotonic);
-        const lwns = self.lock_wait_ns.load(.monotonic);
         const ens = self.exec_ns.load(.monotonic);
         const wns = self.write_ns.load(.monotonic);
         const qns = self.queue_wait_ns.load(.monotonic);
@@ -140,7 +128,6 @@ pub const Profile = struct {
         }.us;
 
         const parse_avg_us = avg(pns, pn);
-        const lock_wait_avg_us = avg(lwns, lwn);
         const exec_avg_us = avg(ens, en);
         const write_avg_us = avg(wns, wn);
         const queue_wait_avg_us = avg(qns, qn);
@@ -150,8 +137,8 @@ pub const Profile = struct {
         const job_overhead_avg_us = avg(jons, jon);
 
         std.debug.print(
-            "[vex-profile] cmds={d} parse={d:.2}us queue_wait={d:.2}us exec={d:.2}us write={d:.2}us batch_wait={d:.2}us job_oh={d:.2}us avg_batch={d:.1} aof={d:.2}us lock={d:.2}us\n",
-            .{ cmd_count, parse_avg_us, queue_wait_avg_us, exec_avg_us, write_avg_us, batch_wait_avg_us, job_overhead_avg_us, avg_batch_size, aof_avg_us, lock_wait_avg_us },
+            "[vex-profile] cmds={d} parse={d:.2}us queue_wait={d:.2}us exec={d:.2}us write={d:.2}us batch_wait={d:.2}us job_oh={d:.2}us avg_batch={d:.1} aof={d:.2}us\n",
+            .{ cmd_count, parse_avg_us, queue_wait_avg_us, exec_avg_us, write_avg_us, batch_wait_avg_us, job_overhead_avg_us, avg_batch_size, aof_avg_us },
         );
         _ = self.io;
     }

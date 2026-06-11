@@ -292,17 +292,21 @@ pub fn serializeErrorTyped(w: *std.Io.Writer, err_type: []const u8, msg: []const
     try w.writeAll("\r\n");
 }
 
-pub fn serializeInteger(w: *std.Io.Writer, val: i64) std.Io.Writer.Error!void {
+/// Write a RESP frame header of the form `<prefix><number>\r\n`.
+/// 32-byte buffer fits any i64, usize, or default-formatted f64.
+inline fn writePrefixedNum(w: *std.Io.Writer, comptime prefix: u8, n: anytype) std.Io.Writer.Error!void {
     var buf: [32]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, ":{d}\r\n", .{val}) catch unreachable;
+    const s = std.fmt.bufPrint(&buf, "{c}{d}\r\n", .{ prefix, n }) catch unreachable;
     try w.writeAll(s);
+}
+
+pub fn serializeInteger(w: *std.Io.Writer, val: i64) std.Io.Writer.Error!void {
+    try writePrefixedNum(w, ':', val);
 }
 
 pub fn serializeBulkString(w: *std.Io.Writer, data: ?[]const u8) std.Io.Writer.Error!void {
     if (data) |d| {
-        var hdr: [32]u8 = undefined;
-        const h = std.fmt.bufPrint(&hdr, "${d}\r\n", .{d.len}) catch unreachable;
-        try w.writeAll(h);
+        try writePrefixedNum(w, '$', d.len);
         try w.writeAll(d);
         try w.writeAll("\r\n");
     } else {
@@ -312,9 +316,7 @@ pub fn serializeBulkString(w: *std.Io.Writer, data: ?[]const u8) std.Io.Writer.E
 
 pub fn serializeArrayHeader(w: *std.Io.Writer, len: ?usize) std.Io.Writer.Error!void {
     if (len) |l| {
-        var hdr: [32]u8 = undefined;
-        const h = std.fmt.bufPrint(&hdr, "*{d}\r\n", .{l}) catch unreachable;
-        try w.writeAll(h);
+        try writePrefixedNum(w, '*', l);
     } else {
         try w.writeAll("*-1\r\n");
     }
@@ -382,43 +384,31 @@ pub fn serializeDouble(w: *std.Io.Writer, val: f64) std.Io.Writer.Error!void {
     if (std.math.isInf(val)) {
         try w.writeAll(if (val > 0) ",inf\r\n" else ",-inf\r\n");
     } else {
-        var buf: [64]u8 = undefined;
-        const s = std.fmt.bufPrint(&buf, ",{d}\r\n", .{val}) catch unreachable;
-        try w.writeAll(s);
+        try writePrefixedNum(w, ',', val);
     }
 }
 
 pub fn serializeMapHeader(w: *std.Io.Writer, count: usize) std.Io.Writer.Error!void {
-    var hdr: [32]u8 = undefined;
-    const h = std.fmt.bufPrint(&hdr, "%{d}\r\n", .{count}) catch unreachable;
-    try w.writeAll(h);
+    try writePrefixedNum(w, '%', count);
 }
 
 pub fn serializeSetHeader(w: *std.Io.Writer, count: usize) std.Io.Writer.Error!void {
-    var hdr: [32]u8 = undefined;
-    const h = std.fmt.bufPrint(&hdr, "~{d}\r\n", .{count}) catch unreachable;
-    try w.writeAll(h);
+    try writePrefixedNum(w, '~', count);
 }
 
 pub fn serializePushHeader(w: *std.Io.Writer, count: usize) std.Io.Writer.Error!void {
-    var hdr: [32]u8 = undefined;
-    const h = std.fmt.bufPrint(&hdr, ">{d}\r\n", .{count}) catch unreachable;
-    try w.writeAll(h);
+    try writePrefixedNum(w, '>', count);
 }
 
 pub fn serializeBlobError(w: *std.Io.Writer, msg: []const u8) std.Io.Writer.Error!void {
-    var hdr: [32]u8 = undefined;
-    const h = std.fmt.bufPrint(&hdr, "!{d}\r\n", .{msg.len}) catch unreachable;
-    try w.writeAll(h);
+    try writePrefixedNum(w, '!', msg.len);
     try w.writeAll(msg);
     try w.writeAll("\r\n");
 }
 
 pub fn serializeVerbatimString(w: *std.Io.Writer, encoding: []const u8, data: []const u8) std.Io.Writer.Error!void {
     const total = encoding.len + 1 + data.len;
-    var hdr: [32]u8 = undefined;
-    const h = std.fmt.bufPrint(&hdr, "={d}\r\n", .{total}) catch unreachable;
-    try w.writeAll(h);
+    try writePrefixedNum(w, '=', total);
     try w.writeAll(encoding);
     try w.writeAll(":");
     try w.writeAll(data);

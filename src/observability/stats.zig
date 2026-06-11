@@ -140,21 +140,6 @@ pub fn packArgs(buf: []u8, args: []const []const u8) usize {
     return pos;
 }
 
-/// Iterate args packed by `packArgs`. Calls `cb` with each (idx, bytes).
-pub fn unpackArgs(blob: []const u8, ctx: anytype, comptime cb: fn (@TypeOf(ctx), u8, []const u8) anyerror!void) !void {
-    if (blob.len == 0) return;
-    const argc = blob[0];
-    var pos: usize = 1;
-    var i: u8 = 0;
-    while (i < argc and pos < blob.len) : (i += 1) {
-        const alen = blob[pos];
-        pos += 1;
-        if (pos + alen > blob.len) return;
-        try cb(ctx, i, blob[pos .. pos + alen]);
-        pos += alen;
-    }
-}
-
 /// Process-wide counters that don't fit per-worker ownership (events that
 /// fire in shared code paths). Uses atomics — these fire on rare events
 /// (eviction, expiration, accept/close) so contention is irrelevant.

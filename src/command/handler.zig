@@ -1447,14 +1447,11 @@ pub const CommandHandler = struct {
     }
 
     fn cmdHgetall(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 2) { try resp.serializeError(w, "wrong number of arguments for 'HGETALL'"); return; }
+        if (args.len != 2) { try resp.serializeError(w, "wrong number of arguments for 'HGETALL'"); return; }
         var key_buf: [512]u8 = undefined;
         var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch { try resp.serializeMapOrArrayHeader(w, 0, self.protocol_version); return; };
         defer key_ref.deinit(self.allocator);
-        const pairs = self.getHashStore().hgetall(key_ref.key, self.allocator) catch { try resp.serializeMapOrArrayHeader(w, 0, self.protocol_version); return; };
-        defer if (pairs.len > 0) self.allocator.free(pairs);
-        try resp.serializeMapOrArrayHeader(w, pairs.len / 2, self.protocol_version);
-        for (pairs) |s| try resp.serializeBulkString(w, s);
+        try self.getHashStore().hgetallWriteIo(key_ref.key, w, self.protocol_version == .resp3);
     }
 
     fn cmdHlen(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
@@ -1503,10 +1500,7 @@ pub const CommandHandler = struct {
         var key_buf: [512]u8 = undefined;
         var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch { try resp.serializeArrayHeader(w, 0); return; };
         defer key_ref.deinit(self.allocator);
-        const keys = self.getHashStore().hkeys(key_ref.key, self.allocator) catch { try resp.serializeArrayHeader(w, 0); return; };
-        defer if (keys.len > 0) self.allocator.free(keys);
-        try resp.serializeArrayHeader(w, keys.len);
-        for (keys) |k| try resp.serializeBulkString(w, k);
+        try self.getHashStore().hkeysWriteIo(key_ref.key, w);
     }
 
     fn cmdHvals(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
@@ -1514,10 +1508,7 @@ pub const CommandHandler = struct {
         var key_buf: [512]u8 = undefined;
         var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch { try resp.serializeArrayHeader(w, 0); return; };
         defer key_ref.deinit(self.allocator);
-        const vals = self.getHashStore().hvals(key_ref.key, self.allocator) catch { try resp.serializeArrayHeader(w, 0); return; };
-        defer if (vals.len > 0) self.allocator.free(vals);
-        try resp.serializeArrayHeader(w, vals.len);
-        for (vals) |v| try resp.serializeBulkString(w, v);
+        try self.getHashStore().hvalsWriteIo(key_ref.key, w);
     }
 
     fn cmdHincrby(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
@@ -2235,11 +2226,56 @@ pub const CommandHandler = struct {
             try resp.serializeSimpleString(w, "OK");
             return;
         }
+        if (std.mem.eql(u8, sub, "PROBES")) {
+            const probes = @import("../observability/probes.zig");
+            // Optional sub-sub-arg controls behavior:
+            //   DEBUG PROBES          -- dump current values
+            //   DEBUG PROBES ON       -- enable timing collection
+            //   DEBUG PROBES OFF      -- disable timing collection
+            //   DEBUG PROBES RESET    -- zero all per-worker probes
+            if (args.len >= 3) {
+                var ctl_buf: [8]u8 = undefined;
+                const ctl = toUpperBuf(args[2], &ctl_buf);
+                if (std.mem.eql(u8, ctl, "ON")) {
+                    probes.enabled.store(true, .release);
+                    try resp.serializeSimpleString(w, "OK");
+                    return;
+                }
+                if (std.mem.eql(u8, ctl, "OFF")) {
+                    probes.enabled.store(false, .release);
+                    try resp.serializeSimpleString(w, "OK");
+                    return;
+                }
+                if (std.mem.eql(u8, ctl, "RESET")) {
+                    probes.resetAll();
+                    try resp.serializeSimpleString(w, "OK");
+                    return;
+                }
+            }
+            // Dump as a bulk string.
+            var buf = std.array_list.Managed(u8).init(self.allocator);
+            defer buf.deinit();
+            var hdr_line: [64]u8 = undefined;
+            const en = probes.enabled.load(.monotonic);
+            const hdr = std.fmt.bufPrint(&hdr_line, "probes_enabled={} backend={s}\n", .{ en, probes.ringModeName() }) catch "probes_enabled=?\n";
+            buf.appendSlice(hdr) catch {};
+            const Ctx = struct { buf: *std.array_list.Managed(u8) };
+            const ctx = Ctx{ .buf = &buf };
+            const cb = struct {
+                fn run(c: Ctx, worker_id: u32, p: *const probes.WorkerProbes) !void {
+                    try probes.formatInto(c.buf, p, worker_id);
+                }
+            }.run;
+            probes.forEach(ctx, cb) catch {};
+            try resp.serializeBulkString(w, buf.items);
+            return;
+        }
         if (std.mem.eql(u8, sub, "HELP")) {
             const lines = [_][]const u8{
-                "DEBUG OBJECT <key>   -- Metadata about a key (encoding, serializedlength).",
-                "DEBUG SLEEP <secs>   -- Block the worker for N seconds (capped at 60). For testing SLOWLOG.",
-                "DEBUG HELP           -- This help.",
+                "DEBUG OBJECT <key>      -- Metadata about a key (encoding, serializedlength).",
+                "DEBUG SLEEP <secs>      -- Block the worker for N seconds (capped at 60). For testing SLOWLOG.",
+                "DEBUG PROBES [ON|OFF|RESET] -- Hot-path timing probes per worker.",
+                "DEBUG HELP              -- This help.",
             };
             try resp.serializeArrayHeader(w, lines.len);
             for (lines) |line| try resp.serializeBulkString(w, line);

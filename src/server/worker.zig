@@ -18,6 +18,7 @@ const stats_mod = @import("../observability/stats.zig");
 const cmd_table = @import("../observability/cmd_table.zig");
 const stats_event = @import("../observability/event_stats.zig");
 const client_registry = @import("../observability/clients.zig");
+const probes = @import("../observability/probes.zig");
 const SSL = @import("tls.zig").SSL;
 const ListStore = @import("../engine/list.zig").ListStore;
 const HashStore = @import("../engine/hash.zig").HashStore;
@@ -156,7 +157,18 @@ pub const DsStripeLocks = struct {
     }
 
     pub fn stripeIndex(key: []const u8) usize {
-        return @as(usize, std.hash.Wyhash.hash(0, key)) % DS_STRIPE_COUNT;
+        // FNV-1a 32-bit — ~5-15ns for short keys vs Wyhash's ~40-60ns.
+        // Modulo replaced with power-of-2 mask (DS_STRIPE_COUNT must stay
+        // a power of two; comptime-asserted below). The stripe collision
+        // rate for 256-bucket hashing on Redis-style keys is dominated by
+        // birthday-paradox, not hash quality — FNV-1a is plenty.
+        comptime std.debug.assert(DS_STRIPE_COUNT & (DS_STRIPE_COUNT - 1) == 0);
+        var h: u32 = 0x811c9dc5; // FNV offset basis
+        for (key) |b| {
+            h ^= b;
+            h *%= 0x01000193; // FNV prime
+        }
+        return @as(usize, h) & (DS_STRIPE_COUNT - 1);
     }
 
     pub fn acquire(self: *DsStripeLocks, key: []const u8, worker_id: u16, last: *u16) void {
@@ -403,6 +415,12 @@ pub const Worker = struct {
     new_fds: [MAX_NEW_FDS]i32,
     new_fd_head: std.atomic.Value(usize),
     new_fd_tail: std.atomic.Value(usize),
+    /// Serializes the PRODUCER side of the new-fd ring: both the main-thread
+    /// TCP accept loop and the UDS acceptor thread push into it, and the ring
+    /// is only safe single-producer. Unguarded, colliding pushes overwrite a
+    /// slot and leak the open fd (eventually EMFILE -> accept backlog fills
+    /// -> ECONNREFUSED with the process still alive).
+    new_fd_push_mutex: std.c.pthread_mutex_t,
     /// Cross-worker pub/sub delivery queue. Other workers push PendingPush
     /// entries here; this worker drains them in its event loop and writes
     /// to its own connections via the normal connWrite/sslWrite path.
@@ -416,6 +434,10 @@ pub const Worker = struct {
     /// worker's thread, so no atomics are needed on increment. Readers
     /// (INFO, /metrics) use @atomicLoad when aggregating.
     stats: stats_mod.WorkerStats,
+    /// Per-worker hot-path timing probes. Single-owner writes (this worker's
+    /// thread) — no atomics needed. Off by default; enabled at runtime via
+    /// the probes.enabled atomic so default builds pay nothing.
+    probes: probes.WorkerProbes = .{},
     /// When true: time every command, push entries to the slowlog ring
     /// when duration > slowlog_threshold_us. Default off so the bench
     /// numbers are not perturbed by default.
@@ -486,6 +508,7 @@ pub const Worker = struct {
             .new_fds = @splat(-1),
             .new_fd_head = std.atomic.Value(usize).init(0),
             .new_fd_tail = std.atomic.Value(usize).init(0),
+            .new_fd_push_mutex = std.c.PTHREAD_MUTEX_INITIALIZER,
             .push_queue = std.array_list.Managed(PendingPush).init(allocator),
             .push_mutex = std.c.PTHREAD_MUTEX_INITIALIZER,
             .last_stripe = STRIPE_UNOWNED,
@@ -497,14 +520,17 @@ pub const Worker = struct {
     }
 
     pub fn pushNewFd(self: *Worker, fd: i32) void {
+        _ = std.c.pthread_mutex_lock(&self.new_fd_push_mutex);
         const tail = self.new_fd_tail.load(.monotonic);
         const head = self.new_fd_head.load(.acquire);
         if (tail -% head >= MAX_NEW_FDS) {
+            _ = std.c.pthread_mutex_unlock(&self.new_fd_push_mutex);
             _ = std.c.close(fd);
             return;
         }
         self.new_fds[tail % MAX_NEW_FDS] = fd;
         self.new_fd_tail.store(tail +% 1, .release);
+        _ = std.c.pthread_mutex_unlock(&self.new_fd_push_mutex);
         self.loop.notify();
     }
 
@@ -533,6 +559,9 @@ pub const Worker = struct {
         if (is_linux) {
             self.use_uring_io = self.loop.use_uring;
         }
+        // Make this worker's probes visible to engine code (hash.zig etc)
+        // via thread-local — avoids threading a pointer through every call.
+        probes.current = &self.probes;
 
         var event_buf: [128]EventLoop.Event = undefined;
 
@@ -737,7 +766,15 @@ pub const Worker = struct {
             _ = std.c.close(fd);
             return;
         };
-        self.loop.addFd(fd, @intCast(fd)) catch {
+        // Non-TLS io_uring connections are driven by recv/send SQEs; register
+        // without a poll_add (a poll CQE would only duplicate every recv
+        // completion). TLS and non-uring connections use poll readiness.
+        const recv_mode = self.use_uring_io and conn.ssl == null;
+        const add_result = if (recv_mode)
+            self.loop.addFdRecvMode(fd, @intCast(fd))
+        else
+            self.loop.addFd(fd, @intCast(fd));
+        add_result catch {
             _ = self.conns.remove(fd);
             if (conn.ssl) |s| self.tls_ctx.?.sslClose(s);
             conn.deinit(self.allocator);
@@ -747,8 +784,7 @@ pub const Worker = struct {
             return;
         };
 
-        // For non-TLS io_uring connections: submit recv to replace poll_add
-        if (self.use_uring_io and conn.ssl == null) {
+        if (recv_mode) {
             self.rearmRecv(conn);
         }
     }
@@ -757,14 +793,21 @@ pub const Worker = struct {
         self.loop.removeFd(fd);
         // Unsubscribe from all pub/sub channels
         if (self.pubsub) |ps| ps.unsubscribeAll(fd);
+        // Only adjust the connection counters when fetchRemove actually
+        // returned an entry — i.e. this is the FIRST close for this fd.
+        // io_uring can deliver multiple terminating completions for a
+        // single connection (recv-err + send-err for the same fd); without
+        // this guard the second call would double-decrement `active_connections`,
+        // u32-underflow it, and the maxclients gate would reject every new
+        // connection forever.
         if (self.conns.fetchRemove(fd)) |kv| {
             if (kv.value.ssl) |s| {
                 if (self.tls_ctx) |tls| tls.sslClose(s);
             }
             kv.value.deinit(self.allocator);
+            _ = self.active_connections.fetchSub(1, .monotonic);
+            _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
         }
-        _ = self.active_connections.fetchSub(1, .monotonic);
-        _ = stats_mod.connected_clients.fetchSub(1, .monotonic);
         _ = std.c.close(fd);
     }
 
@@ -878,6 +921,9 @@ pub const Worker = struct {
         }
         const n: usize = @intCast(bytes);
 
+        const probe_on = probes.isEnabled();
+        const recv_batch_t0: u64 = if (probe_on) probes.start() else 0;
+
         // Same parsing logic as handleRead, but from conn.recv_buf (single batch)
         if (conn.accum_pos >= conn.accum.items.len) {
             conn.accum.clearRetainingCapacity();
@@ -912,7 +958,12 @@ pub const Worker = struct {
             };
 
             if (conn.accum.items.len > self.max_client_buffer) {
-                _ = std.c.write(conn.fd, "-ERR max client buffer exceeded\r\n", 33);
+                // Only write the courtesy error if no uring SEND owns the
+                // stream — a raw write here would splice into a reply
+                // mid-frame. Either way the connection closes.
+                if (!conn.send_pending and conn.send_scratch.items.len == 0) {
+                    _ = std.c.write(conn.fd, "-ERR max client buffer exceeded\r\n", 33);
+                }
                 self.closeConn(conn.fd);
                 return;
             }
@@ -923,14 +974,21 @@ pub const Worker = struct {
         }
 
         // Flush response via io_uring send
+        const io_t0: u64 = if (probe_on) probes.start() else 0;
         if (conn.write_buf.items.len > conn.write_offset) {
             self.submitUringWrite(conn);
         }
 
         // Re-arm recv for next data (recv_buf is independent from write_buf)
         self.rearmRecv(conn);
+        if (probe_on) probes.finish(&self.probes.io_submit, io_t0);
 
+        const stripe_release_t0: u64 = if (probe_on) probes.start() else 0;
         if (self.ds_locks) |dsl| dsl.releaseAll(&self.last_stripe);
+        if (probe_on) {
+            probes.finish(&self.probes.stripe_lock, stripe_release_t0);
+            probes.finish(&self.probes.recv_batch, recv_batch_t0);
+        }
     }
 
     fn handleSendCompletion(self: *Worker, conn: *Connection, bytes: i32) void {
@@ -950,9 +1008,15 @@ pub const Worker = struct {
             return;
         }
 
-        // Scratch fully drained — release it back to the worker.
+        // Scratch fully drained — release it back to the worker, and drop
+        // any write-interest poll left over from an EAGAIN fallback whose
+        // remainder was since handed to the uring send path.
         conn.send_scratch.clearRetainingCapacity();
         conn.send_scratch_offset = 0;
+        if (conn.write_registered) {
+            self.loop.disableWrite(conn.fd, @intCast(conn.fd)) catch {};
+            conn.write_registered = false;
+        }
 
         // If pipelined commands appended new bytes to write_buf during the
         // send, ship them now.
@@ -965,27 +1029,61 @@ pub const Worker = struct {
         if (conn.send_pending) return; // SEND already in-flight; we'll chain in handleSendCompletion
 
         const remaining = conn.write_buf.items[conn.write_offset..];
-        if (remaining.len == 0) return;
-
-        // Copy into send_scratch so write_buf can be reallocated by future
-        // appendSlice calls (pipelined commands) without disturbing the
-        // pointer the kernel is reading from. See Connection.send_scratch
-        // for the corruption pattern this avoids.
-        conn.send_scratch.ensureTotalCapacity(remaining.len) catch {
-            // OOM building scratch — fall back to the synchronous path,
-            // which writes directly via send(2) and returns before the
-            // worker touches write_buf again. Safe (no kernel-DMA-overlap).
-            self.directFlush(conn);
+        const stranded = conn.send_scratch.items.len > conn.send_scratch_offset;
+        if (remaining.len == 0) {
+            // Nothing new, but scratch may hold bytes stranded by an earlier
+            // EAGAIN fallback — retry shipping those.
+            if (stranded) self.submitUringWriteFromScratch(conn);
             return;
-        };
-        conn.send_scratch.clearRetainingCapacity();
-        conn.send_scratch.appendSliceAssumeCapacity(remaining);
-        conn.send_scratch_offset = 0;
+        }
 
-        // write_buf has been fully copied out — reset so subsequent
-        // appendSlice calls don't realloc the kernel-owned buffer.
-        conn.write_buf.clearRetainingCapacity();
-        conn.write_offset = 0;
+        if (stranded) {
+            // Scratch still holds older un-sent wire bytes. APPEND the new
+            // bytes after them — clobbering scratch here would drop the
+            // older bytes and corrupt the stream mid-frame.
+            conn.send_scratch.appendSlice(remaining) catch {
+                // OOM: drain scratch synchronously; if it fully drains, that
+                // path ships write_buf afterwards. Never reorder.
+                self.directFlushFromScratch(conn);
+                return;
+            };
+            conn.write_buf.clearRetainingCapacity();
+            conn.write_offset = 0;
+            self.submitUringWriteFromScratch(conn);
+            return;
+        }
+
+        // Hand write_buf's bytes to send_scratch so write_buf can be
+        // reallocated by future appendSlice calls (pipelined commands)
+        // without disturbing the pointer the kernel is reading from. See
+        // Connection.send_scratch for the corruption pattern this avoids.
+        //
+        // Large whole-buffer replies (HGETALL etc.) SWAP the two lists
+        // instead of copying — same ownership transfer, zero memcpy. Only
+        // valid when the entire write_buf is unsent (write_offset == 0);
+        // a partially-flushed buffer must fall back to copying its suffix.
+        if (conn.write_offset == 0 and remaining.len >= 4096) {
+            std.mem.swap(std.array_list.Managed(u8), &conn.write_buf, &conn.send_scratch);
+            conn.write_buf.clearRetainingCapacity(); // old scratch storage, now reusable
+            conn.send_scratch_offset = 0;
+        } else {
+            conn.send_scratch.ensureTotalCapacity(remaining.len) catch {
+                // OOM building scratch — fall back to the synchronous path,
+                // which writes directly via send(2) and returns before the
+                // worker touches write_buf again. Safe (no kernel-DMA-overlap:
+                // scratch is empty and no SEND is in flight here).
+                self.directFlush(conn);
+                return;
+            };
+            conn.send_scratch.clearRetainingCapacity();
+            conn.send_scratch.appendSliceAssumeCapacity(remaining);
+            conn.send_scratch_offset = 0;
+
+            // write_buf has been fully copied out — reset so subsequent
+            // appendSlice calls don't realloc the kernel-owned buffer.
+            conn.write_buf.clearRetainingCapacity();
+            conn.write_offset = 0;
+        }
 
         self.submitUringWriteFromScratch(conn);
     }
@@ -1009,7 +1107,8 @@ pub const Worker = struct {
                 self.directFlushFromScratch(conn);
                 return;
             };
-            self.loop.flushSqes();
+            // No eager flush: the SQE rides the next submit_and_wait(1),
+            // which submits and waits in a single io_uring_enter.
         }
     }
 
@@ -1056,7 +1155,7 @@ pub const Worker = struct {
                 conn.recv_pending = false;
                 return;
             };
-            self.loop.flushSqes();
+            // No eager flush — see submitUringWriteFromScratch.
         }
     }
 
@@ -1134,6 +1233,10 @@ pub const Worker = struct {
     fn dispatchCommand(self: *Worker, conn: *Connection, args: []const []const u8) void {
         if (args.len == 0) return;
 
+        const probe_on = probes.isEnabled();
+        const dispatch_t0: u64 = if (probe_on) probes.start() else 0;
+        defer if (probe_on) probes.finish(&self.probes.cmd_dispatch, dispatch_t0);
+
         // Per-command call counter. Single-owner write (this worker's thread)
         // so no atomic needed. ~15ns total (uppercase + perfect-hash lookup).
         const cmd_idx = cmd_table.lookup(args[0]);
@@ -1143,7 +1246,10 @@ pub const Worker = struct {
         // ENOSPC), reject writes with Redis-shaped -MISCONF so the client
         // doesn't get +OK for data that won't be durable. One atomic load
         // per command — same cost class as the timing check below.
-        if (stats_mod.persistence_broken.load(.monotonic) and cmd_table.isWriteCommand(args[0])) {
+        const atomic_t0: u64 = if (probe_on) probes.start() else 0;
+        const broken = stats_mod.persistence_broken.load(.monotonic);
+        if (probe_on) probes.finish(&self.probes.shared_atomics, atomic_t0);
+        if (broken and cmd_table.isWriteCommand(args[0])) {
             conn.write_buf.appendSlice("-MISCONF Errors writing to the AOF file: persistence is in STOP-WRITE state. CONFIG SET appendfsync no to bypass, or restart after fixing the underlying issue.\r\n") catch {};
             return;
         }
@@ -2283,6 +2389,14 @@ pub const Worker = struct {
         const cmd = args[0];
         if (cmd.len == 0) return false;
 
+        const probe_on = probes.isEnabled();
+        const op_t0: u64 = if (probe_on) probes.start() else 0;
+        // We don't know yet if this command will be handled here. Update
+        // storage_op only if the path returns true (handled).
+        defer {
+            if (probe_on) probes.finish(&self.probes.storage_op, op_t0);
+        }
+
         const first = std.ascii.toUpper(cmd[0]);
         switch (cmd.len) {
             3 => switch (first) {
@@ -2295,11 +2409,15 @@ pub const Worker = struct {
                     const KVS = @import("../engine/kv.zig").KVStore;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
 
+                    const lock_t0: u64 = if (probe_on) probes.start() else 0;
                     const stripe = ckv.getStripePublic(ns_key);
                     ckv.readLockStripePublic(stripe);
+                    if (probe_on) probes.finish(&self.probes.get_stripe_lock, lock_t0);
                     defer ckv.readUnlockStripePublic(stripe);
 
+                    const lookup_t0: u64 = if (probe_on) probes.start() else 0;
                     const entry_opt = stripe.map.getPtr(ns_key);
+                    if (probe_on) probes.finish(&self.probes.get_hashmap_lookup, lookup_t0);
                     if (entry_opt == null) {
                         writeNullTo(&conn.write_buf, conn.protocol_version);
                         return true;
@@ -2333,6 +2451,7 @@ pub const Worker = struct {
                         // SeqLock still useful: another rdlock-holding thread
                         // may be doing an in-place SET via the SeqLock fast
                         // path, since both paths share the rdlock.
+                        const copy_t0: u64 = if (probe_on) probes.start() else 0;
                         var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
                         var vlen: u8 = undefined;
                         var attempts: u32 = 0;
@@ -2348,13 +2467,16 @@ pub const Worker = struct {
                             if (s1 == s2) break;
                             std.atomic.spinLoopHint();
                         }
+                        if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
 
+                        const fmt_t0: u64 = if (probe_on) probes.start() else 0;
                         var hdr_buf: [32]u8 = undefined;
                         const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
                         conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + vlen + 2) catch {};
                         conn.write_buf.appendSliceAssumeCapacity(hdr);
                         conn.write_buf.appendSliceAssumeCapacity(val_copy[0..vlen]);
                         conn.write_buf.appendSliceAssumeCapacity("\r\n");
+                        if (probe_on) probes.finish(&self.probes.get_resp_format, fmt_t0);
                         return true;
                     }
 
@@ -2404,17 +2526,30 @@ pub const Worker = struct {
                     // released before any fallthrough that calls setInternal
                     // — wrlock can't be acquired while we still hold rdlock.
                     if (value.len <= KVS.INLINE_BUF_SIZE and expires == 0) {
+                        const lock_t0: u64 = if (probe_on) probes.start() else 0;
                         const stripe = ckv.getStripePublic(ns_key);
                         ckv.readLockStripePublic(stripe);
+                        if (probe_on) probes.finish(&self.probes.set_stripe_lock, lock_t0);
+
                         var fast_path_hit = false;
-                        if (stripe.map.getPtr(ns_key)) |entry| {
+                        const map_t0: u64 = if (probe_on) probes.start() else 0;
+                        const got = stripe.map.getPtr(ns_key);
+                        if (probe_on) probes.finish(&self.probes.set_hashmap_op, map_t0);
+
+                        if (got) |entry| {
                             if (!entry.flags.deleted) {
+                                const seq_t0: u64 = if (probe_on) probes.start() else 0;
                                 _ = entry.seq.fetchAdd(1, .release);
+                                if (probe_on) probes.finish(&self.probes.set_seqlock, seq_t0);
+
+                                const copy_t0: u64 = if (probe_on) probes.start() else 0;
                                 @memcpy(entry.inline_buf[0..value.len], value);
                                 entry.inline_len = @intCast(value.len);
                                 entry.value = entry.inline_buf[0..value.len];
                                 entry.flags = .{ .is_inline = true };
                                 entry.expires_at = 0;
+                                if (probe_on) probes.finish(&self.probes.set_value_copy, copy_t0);
+
                                 _ = entry.seq.fetchAdd(1, .release);
                                 fast_path_hit = true;
                             }
@@ -2622,33 +2757,34 @@ pub const Worker = struct {
                     return true;
                 },
                 'H' => {
+                    // HashStore now owns its per-stripe rwlocks; no DsStripeLocks
+                    // lease acquire is needed on this path (probe data showed
+                    // dsl.acquire was ~300ns/op of pure overhead here).
                     if (args.len >= 4 and equalsAsciiUpper(cmd, "HSET")) {
                         if (self.hash_store) |hs| {
+                            const nskey_t0: u64 = if (probe_on) probes.start() else 0;
                             const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            const fv = args[2..];
-                            var owned_buf: [32][]u8 = undefined;
-                            if (fv.len > owned_buf.len) return false;
-                            for (fv, 0..) |v, i| {
-                                owned_buf[i] = self.allocator.dupe(u8, v) catch return false;
-                            }
-                            const owned = owned_buf[0..fv.len];
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            const added = hs.hsetOwned(ns, owned) catch {
-                                    for (owned) |o| self.allocator.free(o);
-                                return false;
-                            };
+                            if (probe_on) probes.finish(&self.probes.nskey, nskey_t0);
+
+                            const hset_t0: u64 = if (probe_on) probes.start() else 0;
+                            const added = hs.hset(ns, args[2..]) catch return false;
+                            if (probe_on) probes.finish(&self.probes.hset_total, hset_t0);
+
                             if (self.aof) |a| a.logCommand(args);
+
+                            const bw_t0: u64 = if (probe_on) probes.start() else 0;
                             self.bumpWatchVersion(conn.selected_db, args[1]);
+                            if (probe_on) probes.finish(&self.probes.bump_watch, bw_t0);
+
+                            const rw_t0: u64 = if (probe_on) probes.start() else 0;
                             writeIntTo(&conn.write_buf, @intCast(added));
+                            if (probe_on) probes.finish(&self.probes.reply_write, rw_t0);
                             return true;
                         }
                     }
                     if (args.len >= 3 and equalsAsciiUpper(cmd, "HGET")) {
                         if (self.hash_store) |hs| {
                             const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
                             if (hs.hget(ns, args[2])) |val| {
                                 writeBulkTo(&conn.write_buf, val);
                             } else {
@@ -2660,8 +2796,6 @@ pub const Worker = struct {
                     if (args.len >= 2 and equalsAsciiUpper(cmd, "HLEN")) {
                         if (self.hash_store) |hs| {
                             const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
                             writeIntTo(&conn.write_buf, @intCast(hs.hlen(ns)));
                             return true;
                         }
@@ -2670,8 +2804,6 @@ pub const Worker = struct {
                     if (args.len >= 3 and equalsAsciiUpper(cmd, "HMGET")) {
                         if (self.hash_store) |hs| {
                             const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
                             const fields = args[2..];
                             var stack_buf: [8192]u8 = undefined;
                             const need_heap = fields.len * 80 > stack_buf.len;
@@ -2705,61 +2837,10 @@ pub const Worker = struct {
                     if (args.len >= 4 and equalsAsciiUpper(cmd, "HMSET")) {
                         if (self.hash_store) |hs| {
                             const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            const fv = args[2..];
-                            var owned_buf: [64][]u8 = undefined;
-                            if (fv.len > owned_buf.len) return false;
-                            for (fv, 0..) |v, i| {
-                                owned_buf[i] = self.allocator.dupe(u8, v) catch return false;
-                            }
-                            const owned = owned_buf[0..fv.len];
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            _ = hs.hsetOwned(ns, owned) catch {
-                                for (owned) |o| self.allocator.free(o);
-                                return false;
-                            };
+                            _ = hs.hset(ns, args[2..]) catch return false;
                             if (self.aof) |a| a.logCommand(args);
                             self.bumpWatchVersion(conn.selected_db, args[1]);
                             conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                            return true;
-                        }
-                    }
-                    // HGETALL: stack buffer for typical hashes, heap for large
-                    if (args.len >= 2 and equalsAsciiUpper(cmd, "HGETALL")) {
-                        if (self.hash_store) |hs| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            const pairs = hs.hgetall(ns, self.allocator) catch {
-                                const empty_hdr: []const u8 = if (conn.protocol_version == .resp3) "%0\r\n" else "*0\r\n";
-                                conn.write_buf.appendSlice(empty_hdr) catch {};
-                                return true;
-                            };
-                            defer if (pairs.len > 0) self.allocator.free(pairs);
-                            // Stack buffer for ≤128 fields (typical), heap for larger
-                            var stack_buf: [16384]u8 = undefined;
-                            const need_heap = pairs.len * 48 > stack_buf.len;
-                            const heap_buf: ?[]u8 = if (need_heap)
-                                self.allocator.alloc(u8, 32 + pairs.len * 64) catch null
-                            else
-                                null;
-                            defer if (heap_buf) |hb| self.allocator.free(hb);
-                            const buf: []u8 = heap_buf orelse &stack_buf;
-                            var pos: usize = 0;
-                            const arr_hdr = if (conn.protocol_version == .resp3)
-                                std.fmt.bufPrint(buf[pos..], "%{d}\r\n", .{pairs.len / 2}) catch return false
-                            else
-                                std.fmt.bufPrint(buf[pos..], "*{d}\r\n", .{pairs.len}) catch return false;
-                            pos += arr_hdr.len;
-                            for (pairs) |item| {
-                                if (pos + item.len + 16 > buf.len) break;
-                                const vh = std.fmt.bufPrint(buf[pos..], "${d}\r\n", .{item.len}) catch continue;
-                                pos += vh.len;
-                                @memcpy(buf[pos .. pos + item.len], item);
-                                pos += item.len;
-                                buf[pos] = '\r'; buf[pos + 1] = '\n'; pos += 2;
-                            }
-                            conn.write_buf.appendSlice(buf[0..pos]) catch {};
                             return true;
                         }
                     }
@@ -2977,6 +3058,31 @@ pub const Worker = struct {
                 else => {},
             },
             7 => switch (first) {
+                'H' => {
+                    // HGETALL: serialized straight into write_buf under the
+                    // stripe lock (wire-cached for large hashes, exact-sized,
+                    // no intermediate buffer). NOTE: this arm is cmd.len == 7
+                    // — "HGETALL" never matches in the len-4 'H' arm where
+                    // HSET/HGET live (a previous version of this path was
+                    // unreachable for exactly that reason).
+                    if (equalsAsciiUpper(cmd, "HGETALL")) {
+                        if (self.hash_store) |hs| {
+                            if (args.len != 2) {
+                                conn.write_buf.appendSlice("-ERR wrong number of arguments for 'hgetall' command\r\n") catch {};
+                                return true;
+                            }
+                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
+                            const resp3 = conn.protocol_version == .resp3;
+                            hs.hgetallWrite(ns, &conn.write_buf, resp3) catch {
+                                // OOM reserving the reply — nothing was
+                                // appended, so an empty reply keeps the
+                                // stream well-formed.
+                                conn.write_buf.appendSlice(if (resp3) "%0\r\n" else "*0\r\n") catch {};
+                            };
+                            return true;
+                        }
+                    }
+                },
                 'M' => {
                     // MEXISTS key1 key2 key3 ... — count of existing keys
                     if (args.len >= 2 and equalsAsciiUpper(cmd, "MEXISTS")) {
@@ -3225,6 +3331,14 @@ pub const Worker = struct {
     /// Most responses fit in the TCP send buffer, so write() succeeds immediately.
     /// Only registers for writable events if EAGAIN (partial write).
     fn directFlush(self: *Worker, conn: *Connection) void {
+        // A uring SEND may own send_scratch right now (in flight, or queued
+        // for the next submit_and_wait). Writing write_buf to the fd here
+        // would interleave bytes mid-frame on the wire. Route through the
+        // uring send path instead — it ships write_buf after scratch drains.
+        if (conn.send_pending or conn.send_scratch.items.len > conn.send_scratch_offset) {
+            self.submitUringWrite(conn);
+            return;
+        }
         // Cork the socket: buffer writes into one TCP segment (uncork sends).
         // macOS: TCP_NOPUSH (4), Linux: TCP_CORK (3). IPPROTO_TCP = 6.
         const cork_opt: c_int = if (comptime @import("builtin").os.tag == .linux) 3 else 4;
@@ -3554,36 +3668,6 @@ fn writeNullTo(list: *std.array_list.Managed(u8), proto: resp.ProtocolVersion) v
     switch (proto) {
         .resp2 => list.appendSlice("$-1\r\n") catch return,
         .resp3 => list.appendSlice("_\r\n") catch return,
-    }
-}
-
-/// Write array header (RESP2) or map header (RESP3) for key-value pair collections.
-fn writeMapHeaderTo(list: *std.array_list.Managed(u8), pair_count: usize, proto: resp.ProtocolVersion) void {
-    var buf: [32]u8 = undefined;
-    switch (proto) {
-        .resp2 => {
-            const s = std.fmt.bufPrint(&buf, "*{d}\r\n", .{pair_count * 2}) catch return;
-            list.appendSlice(s) catch return;
-        },
-        .resp3 => {
-            const s = std.fmt.bufPrint(&buf, "%{d}\r\n", .{pair_count}) catch return;
-            list.appendSlice(s) catch return;
-        },
-    }
-}
-
-/// Write array header (RESP2) or set header (RESP3).
-fn writeSetHeaderTo(list: *std.array_list.Managed(u8), count: usize, proto: resp.ProtocolVersion) void {
-    var buf: [32]u8 = undefined;
-    switch (proto) {
-        .resp2 => {
-            const s = std.fmt.bufPrint(&buf, "*{d}\r\n", .{count}) catch return;
-            list.appendSlice(s) catch return;
-        },
-        .resp3 => {
-            const s = std.fmt.bufPrint(&buf, "~{d}\r\n", .{count}) catch return;
-            list.appendSlice(s) catch return;
-        },
     }
 }
 

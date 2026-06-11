@@ -546,7 +546,7 @@ test "LPUSH/RPUSH/LRANGE/LPOP/RPOP" {
     defer g.deinit();
     var ls = ListStore.init(allocator);
     defer ls.deinit();
-    var hs = HashStore.init(allocator);
+    var hs = HashStore.init(allocator); hs.initStripes();
     defer hs.deinit();
     var db = std.atomic.Value(u8).init(0);
     var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
@@ -594,7 +594,7 @@ test "HSET/HGET/HGETALL/HDEL/HINCRBY" {
     defer g.deinit();
     var ls = ListStore.init(allocator);
     defer ls.deinit();
-    var hs = HashStore.init(allocator);
+    var hs = HashStore.init(allocator); hs.initStripes();
     defer hs.deinit();
     var db = std.atomic.Value(u8).init(0);
     var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);

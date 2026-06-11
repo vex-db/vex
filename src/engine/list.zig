@@ -34,13 +34,37 @@ pub const ListStore = struct {
             ring_dirty: bool, // true = ring needs rebuild before LINDEX/LRANGE
         };
 
+        /// Position cache for `get()`. Lets sequential / clustered LINDEX,
+        /// LRANGE, LSET, LREM hit the same block at O(1) after the first
+        /// lookup. Cleared whenever an entry shifts logical positions.
+        const Cursor = struct { block: *Block, base: usize };
+
         first: ?*Block,
         last: ?*Block,
         total_count: usize,
         allocator: Allocator,
 
+        /// Parallel arrays giving O(log blocks) `get()`:
+        /// `block_index[i]` is the i-th block; `block_cumcount[i]` is the
+        /// total entries in blocks[0..=i]. Rebuilt lazily when `index_dirty`
+        /// is set. `pushTail` updates them incrementally so RPUSH-only
+        /// workloads never rebuild.
+        block_index: std.array_list.Managed(*Block),
+        block_cumcount: std.array_list.Managed(usize),
+        index_dirty: bool,
+        cursor: ?Cursor,
+
         fn init(allocator: Allocator) List {
-            return .{ .first = null, .last = null, .total_count = 0, .allocator = allocator };
+            return .{
+                .first = null,
+                .last = null,
+                .total_count = 0,
+                .allocator = allocator,
+                .block_index = std.array_list.Managed(*Block).init(allocator),
+                .block_cumcount = std.array_list.Managed(usize).init(allocator),
+                .index_dirty = false,
+                .cursor = null,
+            };
         }
 
         fn deinit(self: *List, _: Allocator) void {
@@ -53,6 +77,9 @@ pub const ListStore = struct {
             self.first = null;
             self.last = null;
             self.total_count = 0;
+            self.block_index.deinit();
+            self.block_cumcount.deinit();
+            self.cursor = null;
         }
 
         fn len(self: *const List) usize {
@@ -84,6 +111,12 @@ pub const ListStore = struct {
                 const b = try self.newBlock();
                 self.first = b;
                 self.last = b;
+                self.block_index.append(b) catch {
+                    self.index_dirty = true;
+                };
+                self.block_cumcount.append(0) catch {
+                    self.index_dirty = true;
+                };
                 break :blk b;
             };
 
@@ -96,6 +129,16 @@ pub const ListStore = struct {
                 block.next = new;
                 self.last = new;
                 block = new;
+                const prev_cum = if (self.block_cumcount.items.len > 0)
+                    self.block_cumcount.items[self.block_cumcount.items.len - 1]
+                else
+                    0;
+                self.block_index.append(new) catch {
+                    self.index_dirty = true;
+                };
+                self.block_cumcount.append(prev_cum) catch {
+                    self.index_dirty = true;
+                };
             }
 
             // Record offset in ring buffer (append at end)
@@ -110,6 +153,14 @@ pub const ListStore = struct {
             block.tail += needed;
             block.entry_count += 1;
             self.total_count += 1;
+
+            // Bump the tail-block cumcount. Skipped if dirty — the rebuild
+            // on the next get() will pick up the correct totals.
+            if (!self.index_dirty and self.block_cumcount.items.len > 0) {
+                self.block_cumcount.items[self.block_cumcount.items.len - 1] += 1;
+            }
+            // Cursor pointing at any block remains valid: pushTail only
+            // grows the tail block's entry_count, never shifts bases.
         }
 
         /// LPUSH: prepend to head of first block. If full or max entries, allocate new block.
@@ -147,6 +198,10 @@ pub const ListStore = struct {
             block.off_ring[block.off_start] = @intCast(block.head);
             block.entry_count += 1;
             self.total_count += 1;
+
+            // Every block's logical base shifts; rebuild on next get().
+            self.index_dirty = true;
+            self.cursor = null;
         }
 
         /// LPOP: remove from head of first block.
@@ -170,6 +225,9 @@ pub const ListStore = struct {
             block.ring_dirty = true;
             block.entry_count -= 1;
             self.total_count -= 1;
+            // Head pop shifts every other block's logical base down by 1.
+            self.index_dirty = true;
+            self.cursor = null;
             return val;
         }
 
@@ -192,21 +250,91 @@ pub const ListStore = struct {
             block.ring_dirty = true;
             block.entry_count -= 1;
             self.total_count -= 1;
+            // Mirror pushTail's incremental bump: decrement cumcount[last] so
+            // a subsequent pushTail that overflows into a new block carries
+            // the *correct* prev_cum forward. Without this, popTail-then-
+            // pushTail-with-overflow sequences route reads to the wrong block.
+            // Cursor stays valid: only the tail block's entry_count changes,
+            // and the fast path reads it dynamically.
+            if (!self.index_dirty and self.block_cumcount.items.len > 0) {
+                self.block_cumcount.items[self.block_cumcount.items.len - 1] -= 1;
+            }
             return val;
         }
 
-        /// Get element at logical index. O(blocks) to find block, O(1) within block via offset ring.
-        fn get(self: *const List, logical_idx: usize) ?[]const u8 {
+        /// Get element at logical index.
+        /// Fast path (cursor hit on cached block): O(1).
+        /// Slow path: O(log blocks) via binary search on the cumulative-count
+        /// table, with O(blocks) one-time rebuild after a structure-changing
+        /// mutation. Falls back to a linear walk if the index allocator OOMs.
+        fn get(self: *List, logical_idx: usize) ?[]const u8 {
             if (logical_idx >= self.total_count) return null;
+
+            if (self.cursor) |cur| {
+                const end = cur.base + cur.block.entry_count;
+                if (logical_idx >= cur.base and logical_idx < end) {
+                    return readWithinBlock(cur.block, logical_idx - cur.base);
+                }
+            }
+
+            if (self.index_dirty) {
+                self.rebuildIndex() catch return self.getLinear(logical_idx);
+            }
+
+            const cumcounts = self.block_cumcount.items;
+            const blocks = self.block_index.items;
+            if (cumcounts.len == 0) return self.getLinear(logical_idx);
+
+            // Smallest i where cumcounts[i] > logical_idx — the block holding it.
+            var lo: usize = 0;
+            var hi: usize = cumcounts.len;
+            while (lo < hi) {
+                const mid = lo + (hi - lo) / 2;
+                if (cumcounts[mid] <= logical_idx) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            if (lo >= cumcounts.len) return null;
+
+            const block = blocks[lo];
+            const base = if (lo == 0) 0 else cumcounts[lo - 1];
+            self.cursor = .{ .block = block, .base = base };
+            return readWithinBlock(block, logical_idx - base);
+        }
+
+        fn readWithinBlock(block: *Block, within_idx: usize) []const u8 {
+            if (block.ring_dirty) rebuildRing(block);
+            const ring_idx = (block.off_start +% @as(u16, @intCast(within_idx))) % MAX_ENTRIES;
+            const pos = block.off_ring[ring_idx];
+            const vlen = std.mem.bytesAsValue(u16, block.data[pos..][0..2]).*;
+            return block.data[pos + HEADER_SIZE ..][0..vlen];
+        }
+
+        fn rebuildIndex(self: *List) !void {
+            self.block_index.clearRetainingCapacity();
+            self.block_cumcount.clearRetainingCapacity();
+            var cur = self.first;
+            var cum: usize = 0;
+            while (cur) |block| {
+                cum += block.entry_count;
+                try self.block_index.append(block);
+                try self.block_cumcount.append(cum);
+                cur = block.next;
+            }
+            self.index_dirty = false;
+        }
+
+        /// Linear-walk fallback used when the index arrays can't be rebuilt
+        /// (rare — only on allocator OOM). Same logic as the original
+        /// pre-cache implementation.
+        fn getLinear(self: *List, logical_idx: usize) ?[]const u8 {
             var remaining = logical_idx;
             var cur = self.first;
             while (cur) |block| {
                 if (remaining < block.entry_count) {
-                    if (block.ring_dirty) rebuildRing(block);
-                    const ring_idx = (block.off_start +% @as(u16, @intCast(remaining))) % MAX_ENTRIES;
-                    const pos = block.off_ring[ring_idx];
-                    const vlen = std.mem.bytesAsValue(u16, block.data[pos..][0..2]).*;
-                    return block.data[pos + HEADER_SIZE ..][0..vlen];
+                    return readWithinBlock(block, remaining);
                 }
                 remaining -= block.entry_count;
                 cur = block.next;
@@ -230,6 +358,9 @@ pub const ListStore = struct {
         fn removeBlock(self: *List, block: *Block) void {
             if (block.prev) |p| p.next = block.next else self.first = block.next;
             if (block.next) |n| n.prev = block.prev else self.last = block.prev;
+            // Cursor may be aimed at the about-to-be-freed block.
+            self.cursor = null;
+            self.index_dirty = true;
             self.allocator.destroy(block);
         }
     };

@@ -35,12 +35,7 @@ pub const ConfigFile = struct {
         var line_start: usize = 0;
         for (data, 0..) |byte, i| {
             if (byte == '\n' or i == data.len - 1) {
-                var line_end = i;
-                if (byte == '\n' and line_end > 0) {
-                    line_end = i;
-                } else if (i == data.len - 1 and byte != '\n') {
-                    line_end = i + 1;
-                }
+                const line_end: usize = if (i == data.len - 1 and byte != '\n') i + 1 else i;
                 const line = std.mem.trim(u8, data[line_start..line_end], &[_]u8{ ' ', '\t', '\r' });
                 line_start = i + 1;
 

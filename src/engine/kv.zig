@@ -403,10 +403,6 @@ pub const KVStore = struct {
         self.live_count -= 1;
     }
 
-    fn isExpired(self: *KVStore, entry: *const Entry) bool {
-        if (!entry.flags.has_ttl) return false;
-        return self.nowMillis() > entry.expires_at;
-    }
 };
 
 /// Minimal glob matcher supporting '*' (match any) and '?' (match one).

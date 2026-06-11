@@ -1040,10 +1040,13 @@ pub const Server = struct {
         {
             const mutex_init_fn = @extern(*const fn (*std.c.pthread_mutex_t, ?*const anyopaque) callconv(.c) c_int, .{ .name = "pthread_mutex_init" });
             _ = mutex_init_fn(&list_store.map_mutex, null);
-            _ = mutex_init_fn(&hash_store.map_mutex, null);
             _ = mutex_init_fn(&set_store.map_mutex, null);
             _ = mutex_init_fn(&sorted_set_store.map_mutex, null);
         }
+        // HashStore migrated to per-stripe rwlocks (32 stripes). Same post-
+        // construct init dance as ConcurrentKV: rwlocks must be initialised
+        // at their final address for macOS.
+        hash_store.initStripes();
         const DsStripeLocks = @import("worker.zig").DsStripeLocks;
         var ds_locks: DsStripeLocks = undefined;
         ds_locks.init();
@@ -1115,8 +1118,10 @@ pub const Server = struct {
         // Safe to take stable pointers now — workers slice lives for the
         // remainder of runReactor.
         const stats_mod = @import("../observability/stats.zig");
+        const probes_mod = @import("../observability/probes.zig");
         for (workers) |*w| {
             _ = stats_mod.register(&w.stats);
+            probes_mod.register(&w.probes);
         }
 
         // Spawn worker threads.
@@ -1204,7 +1209,10 @@ const UdsAcceptCtx = struct {
 
 fn udsAcceptLoop(ctx: *UdsAcceptCtx) void {
     const sock = std.c.socket(std.c.AF.UNIX, std.c.SOCK.STREAM, 0);
-    if (sock < 0) return;
+    if (sock < 0) {
+        vex_log.err("uds: socket() failed; unix socket listener disabled", .{});
+        return;
+    }
     defer _ = std.c.close(sock);
 
     // Build sockaddr_un
@@ -1221,14 +1229,23 @@ fn udsAcceptLoop(ctx: *UdsAcceptCtx) void {
     if (std.c.bind(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) < 0) {
         // Second attempt: force remove and retry
         _ = std.c.unlink(path_z);
-        if (std.c.bind(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) < 0) return;
+        if (std.c.bind(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.un)) < 0) {
+            vex_log.err("uds: bind({s}) failed; unix socket listener disabled", .{ctx.path});
+            return;
+        }
     }
 
     // chmod 777 so any user can connect
     const path_z_buf = @as([*:0]const u8, @ptrCast(&addr.path));
     _ = std.c.chmod(path_z_buf, 0o777);
 
-    if (std.c.listen(sock, 128) < 0) return;
+    if (std.c.listen(sock, 128) < 0) {
+        // Remove the bound-but-dead socket file: leaving it gives clients a
+        // silent ECONNREFUSED instead of a clear "no such file".
+        _ = std.c.unlink(path_z);
+        vex_log.err("uds: listen({s}) failed; unix socket listener disabled", .{ctx.path});
+        return;
+    }
 
     while (!ctx.shutdown.load(.acquire)) {
         var pfd = [1]std.c.pollfd{.{ .fd = sock, .events = std.c.POLL.IN, .revents = 0 }};
@@ -1238,7 +1255,24 @@ fn udsAcceptLoop(ctx: *UdsAcceptCtx) void {
         var client_addr: std.c.sockaddr.un = undefined;
         var addr_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.un);
         const client_fd = std.c.accept(sock, @ptrCast(&client_addr), &addr_len);
-        if (client_fd < 0) continue;
+        if (client_fd < 0) {
+            const e = std.c._errno().*;
+            if (e == @intFromEnum(std.c.E.MFILE) or e == @intFromEnum(std.c.E.NFILE)) {
+                // Out of fds: accept cannot make progress, and poll() reports
+                // the listener readable, so a silent `continue` becomes a
+                // 100% CPU spin while the backlog fills (clients then see
+                // ECONNREFUSED with the process alive). Back off, loudly.
+                vex_log.warn("uds accept: out of file descriptors (errno={d}); backing off 100ms", .{e});
+                var backoff: std.c.timespec = .{ .sec = 0, .nsec = 100 * std.time.ns_per_ms };
+                _ = std.c.nanosleep(&backoff, null);
+            } else if (e != @intFromEnum(std.c.E.AGAIN) and
+                e != @intFromEnum(std.c.E.INTR) and
+                e != @intFromEnum(std.c.E.CONNABORTED))
+            {
+                vex_log.warn("uds accept failed: errno={d}", .{e});
+            }
+            continue;
+        }
 
         // Set non-blocking
         _ = std.c.fcntl(client_fd, std.c.F.SETFL, @as(c_int, @bitCast(std.c.O{ .NONBLOCK = true })));

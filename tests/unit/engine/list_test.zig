@@ -90,3 +90,51 @@ test "empty after pop keeps key (deferred cleanup)" {
     // Cleanup happens on next operation or DEL/FLUSHALL.
     try std.testing.expectEqual(@as(usize, 0), store.llen("tmp"));
 }
+
+// Regression: popTail must decrement cumcount[last] symmetrically to
+// pushTail's bump. Sequence: fill past one block, RPOP a few to drift the
+// last block's cumcount, then RPUSH enough to overflow into a new block.
+// Without the fix, the new block inherits the drift via prev_cum and
+// binary search routes near-boundary reads to the wrong block.
+test "RPOP then RPUSH across block boundary keeps reads correct" {
+    var store = ListStore.init(std.testing.allocator);
+    defer store.deinit();
+
+    // ~155 bytes per entry → ~52 entries per 8KB block (size-limited).
+    var buf: [200]u8 = undefined;
+
+    var i: usize = 0;
+    while (i < 70) : (i += 1) {
+        const s = try std.fmt.bufPrint(&buf, "v{d:0>150}", .{i});
+        _ = try store.rpush("L", &[_][]const u8{s});
+    }
+
+    var p: usize = 0;
+    while (p < 5) : (p += 1) _ = store.rpop("L").?;
+
+    i = 0;
+    while (i < 50) : (i += 1) {
+        const s = try std.fmt.bufPrint(&buf, "w{d:0>149}", .{i});
+        _ = try store.rpush("L", &[_][]const u8{s});
+    }
+
+    try std.testing.expectEqual(@as(usize, 115), store.llen("L"));
+
+    var verify_buf: [200]u8 = undefined;
+    const expected_v64 = try std.fmt.bufPrint(&verify_buf, "v{d:0>150}", .{64});
+    try std.testing.expectEqualStrings(expected_v64, store.lindex("L", 64).?);
+
+    const expected_w0 = try std.fmt.bufPrint(&verify_buf, "w{d:0>149}", .{0});
+    try std.testing.expectEqualStrings(expected_w0, store.lindex("L", 65).?);
+
+    const expected_w39 = try std.fmt.bufPrint(&verify_buf, "w{d:0>149}", .{39});
+    try std.testing.expectEqualStrings(expected_w39, store.lindex("L", 104).?);
+
+    const expected_w44 = try std.fmt.bufPrint(&verify_buf, "w{d:0>149}", .{44});
+    try std.testing.expectEqualStrings(expected_w44, store.lindex("L", 109).?);
+
+    const expected_w49 = try std.fmt.bufPrint(&verify_buf, "w{d:0>149}", .{49});
+    try std.testing.expectEqualStrings(expected_w49, store.lindex("L", 114).?);
+
+    try std.testing.expect(store.lindex("L", 115) == null);
+}

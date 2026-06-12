@@ -28,8 +28,23 @@ pub const TraversalOptions = struct {
     max_depth: u32 = 10,
     direction: Direction = .outgoing,
     edge_type_filter: ?[]const u8 = null,
+    /// Multiple edge types (OR semantics). Takes effect alongside
+    /// edge_type_filter; either or both may be set.
+    edge_type_filters: ?[]const []const u8 = null,
     node_type_filter: ?[]const u8 = null,
     max_results: u32 = 0, // 0 = unlimited
+};
+
+/// Traversal hits with per-node BFS depth (seed node at depth 0).
+/// ids and depths are parallel arrays.
+pub const TraverseHits = struct {
+    ids: []NodeId,
+    depths: []u32,
+
+    pub fn deinit(self: *TraverseHits, allocator: Allocator) void {
+        allocator.free(self.ids);
+        allocator.free(self.depths);
+    }
 };
 
 pub const PathResult = struct {
@@ -54,6 +69,20 @@ pub fn traverse(
     start_key: []const u8,
     opts: TraversalOptions,
 ) ![]NodeId {
+    const hits = try traverseWithDepths(g, allocator, start_key, opts);
+    allocator.free(hits.depths);
+    return hits.ids;
+}
+
+/// Maximum number of edge types accepted in one filter list.
+pub const MAX_EDGE_TYPE_FILTERS: usize = 16;
+
+pub fn traverseWithDepths(
+    g: *const GraphEngine,
+    allocator: Allocator,
+    start_key: []const u8,
+    opts: TraversalOptions,
+) !TraverseHits {
     const start_id = g.resolveKey(start_key) orelse return error.NodeNotFound;
     const node_cap = g.node_keys.items.len;
 
@@ -68,29 +97,60 @@ pub fn traverse(
 
     var result = std.array_list.Managed(NodeId).init(allocator);
     errdefer result.deinit();
+    var depths = std.array_list.Managed(u32).init(allocator);
+    errdefer depths.deinit();
 
-    // Resolve type filter to bitmask once (bitmask only covers first 64 types)
-    const edge_type_mask: TypeMask = if (opts.edge_type_filter) |filter|
-        if (g.type_intern.find(filter)) |id| (if (id < 64) StringIntern.mask(id) else 0) else 0
-    else
-        0;
-    const has_edge_filter = opts.edge_type_filter != null;
-    // Resolve edge type ID for fallback filtering when type_id >= 64
-    const edge_type_id_exact: ?u16 = if (opts.edge_type_filter) |filter| g.type_intern.find(filter) else null;
+    // Resolve edge type filter(s). Types with id < 64 go into one OR'd
+    // bitmask (fast path); rarer ids >= 64 go into a small exact-match
+    // list. Unknown type names contribute nothing.
+    var edge_type_mask: TypeMask = 0;
+    var exact_buf: [MAX_EDGE_TYPE_FILTERS]u16 = undefined;
+    var exact_len: usize = 0;
+    var filter_requested = false;
+    var known_types: usize = 0;
+    {
+        var single: [1][]const u8 = undefined;
+        const lists: [2]?[]const []const u8 = .{
+            if (opts.edge_type_filter) |f| blk: {
+                single[0] = f;
+                break :blk single[0..1];
+            } else null,
+            opts.edge_type_filters,
+        };
+        for (lists) |maybe_list| {
+            const list = maybe_list orelse continue;
+            for (list) |filter| {
+                filter_requested = true;
+                const id = g.type_intern.find(filter) orelse continue;
+                known_types += 1;
+                if (id < 64) {
+                    edge_type_mask |= StringIntern.mask(id);
+                } else if (exact_len < exact_buf.len) {
+                    exact_buf[exact_len] = id;
+                    exact_len += 1;
+                }
+            }
+        }
+    }
+    const edge_type_ids_exact: []const u16 = exact_buf[0..exact_len];
+    const has_edge_filter = filter_requested;
     const node_type_id: ?u16 = if (opts.node_type_filter) |filter|
         g.type_intern.find(filter)
     else
         null;
 
-    if (has_edge_filter and edge_type_id_exact == null) {
-        // Edge type doesn't exist in the graph at all — only return start node
+    if (has_edge_filter and known_types == 0) {
+        // None of the requested edge types exist in the graph —
+        // only return the start node.
         try result.append(start_id);
-        return result.toOwnedSlice();
+        try depths.append(0);
+        return .{ .ids = try result.toOwnedSlice(), .depths = try depths.toOwnedSlice() };
     }
 
     visited.set(start_id);
     frontier_a.set(start_id);
     try result.append(start_id);
+    try depths.append(0);
 
     const all_alive = g.all_base_edges_alive;
     const has_delta = g.delta_edges.items.len > 0;
@@ -123,7 +183,7 @@ pub fn traverse(
 
         if (num_threads <= 1) {
             // Sequential path — same as before
-            expandFrontierSeq(g, frontier_nodes.items, &visited, next, all_alive, has_delta, csrs, edge_type_mask, node_type_id, opts.direction, has_edge_filter, edge_type_id_exact);
+            expandFrontierSeq(g, frontier_nodes.items, &visited, next, all_alive, has_delta, csrs, edge_type_mask, node_type_id, opts.direction, has_edge_filter, edge_type_ids_exact);
         } else {
             // Parallel path — thread-local next bitsets, merge with OR
             var local_nexts: [MAX_BFS_THREADS]std.DynamicBitSet = undefined;
@@ -136,7 +196,7 @@ pub fn traverse(
 
             if (inited < num_threads) {
                 // Allocation failed — fall back to sequential
-                expandFrontierSeq(g, frontier_nodes.items, &visited, next, all_alive, has_delta, csrs, edge_type_mask, node_type_id, opts.direction, has_edge_filter, edge_type_id_exact);
+                expandFrontierSeq(g, frontier_nodes.items, &visited, next, all_alive, has_delta, csrs, edge_type_mask, node_type_id, opts.direction, has_edge_filter, edge_type_ids_exact);
             } else {
                 const chunk = (frontier_count + num_threads - 1) / num_threads;
                 const ExpandCtx = struct {
@@ -151,10 +211,10 @@ pub fn traverse(
                     node_type_id: ?u16,
                     direction: Direction,
                     has_edge_filter: bool,
-                    edge_type_id_exact: ?u16,
+                    edge_type_ids_exact: []const u16,
 
                     fn run(ctx: *@This()) void {
-                        expandFrontierSeq(ctx.g, ctx.nodes, ctx.visited, ctx.local_next, ctx.all_alive, ctx.has_delta, ctx.csrs, ctx.edge_type_mask, ctx.node_type_id, ctx.direction, ctx.has_edge_filter, ctx.edge_type_id_exact);
+                        expandFrontierSeq(ctx.g, ctx.nodes, ctx.visited, ctx.local_next, ctx.all_alive, ctx.has_delta, ctx.csrs, ctx.edge_type_mask, ctx.node_type_id, ctx.direction, ctx.has_edge_filter, ctx.edge_type_ids_exact);
                     }
                 };
 
@@ -179,7 +239,7 @@ pub fn traverse(
                         .node_type_id = node_type_id,
                         .direction = opts.direction,
                         .has_edge_filter = has_edge_filter,
-                        .edge_type_id_exact = edge_type_id_exact,
+                        .edge_type_ids_exact = edge_type_ids_exact,
                     };
 
                     if (t == 0) {
@@ -224,9 +284,13 @@ pub fn traverse(
                 visited.set(nid);
                 any_in_next = true;
                 result.append(nid) catch break;
+                depths.append(depth + 1) catch {
+                    _ = result.pop(); // keep the parallel arrays in sync
+                    break;
+                };
                 // Early exit if limit reached
                 if (opts.max_results > 0 and result.items.len >= opts.max_results) {
-                    return result.toOwnedSlice();
+                    return .{ .ids = try result.toOwnedSlice(), .depths = try depths.toOwnedSlice() };
                 }
             }
         }
@@ -239,7 +303,7 @@ pub fn traverse(
         next = tmp;
     }
 
-    return result.toOwnedSlice();
+    return .{ .ids = try result.toOwnedSlice(), .depths = try depths.toOwnedSlice() };
 }
 
 /// Bidirectional BFS shortest path (unweighted).
@@ -815,6 +879,13 @@ fn inlineContains(buf: []const NodeId, count: usize, val: NodeId) bool {
 /// Expand a subset of frontier nodes into the next bitset.
 /// Thread-safe: reads graph state (immutable during BFS), writes only to local `next` bitset.
 /// Does NOT update `visited` — caller merges and updates after all threads complete.
+
+fn containsTypeId(ids: []const u16, etid: u16) bool {
+    for (ids) |id| {
+        if (id == etid) return true;
+    }
+    return false;
+}
 fn expandFrontierSeq(
     g: *const GraphEngine,
     frontier_nodes: []const NodeId,
@@ -827,11 +898,11 @@ fn expandFrontierSeq(
     node_type_id: ?u16,
     direction: Direction,
     has_edge_filter: bool,
-    edge_type_id_exact: ?u16,
+    edge_type_ids_exact: []const u16,
 ) void {
     for (frontier_nodes) |node_id| {
         // Early exit: check node's edge type mask (only when bitmask is usable)
-        if (edge_type_mask != 0) {
+        if (edge_type_mask != 0 and edge_type_ids_exact.len == 0) {
             const node_mask = switch (direction) {
                 .outgoing => g.node_out_type_mask.items[node_id],
                 .incoming => g.node_in_type_mask.items[node_id],
@@ -860,13 +931,11 @@ fn expandFrontierSeq(
 
                     if (has_edge_filter) {
                         const etid = g.edge_type_id.items[eidx];
-                        if (edge_type_mask != 0) {
-                            // Fast bitmask check for type_id < 64
-                            if (etid >= 64 or edge_type_mask & StringIntern.mask(etid) == 0) continue;
-                        } else if (edge_type_id_exact) |exact| {
-                            // Fallback: direct type_id comparison for type_id >= 64
-                            if (etid != exact) continue;
-                        }
+                        const etype_ok = if (etid < 64)
+                            edge_type_mask & StringIntern.mask(etid) != 0
+                        else
+                            containsTypeId(edge_type_ids_exact, etid);
+                        if (!etype_ok) continue;
                     }
                     if (node_type_id) |ntid| {
                         if (g.node_type_id.items[nid] != ntid) continue;
@@ -893,11 +962,11 @@ fn expandFrontierSeq(
 
                 if (has_edge_filter) {
                     const etid = g.edge_type_id.items[de.eidx];
-                    if (edge_type_mask != 0) {
-                        if (etid >= 64 or edge_type_mask & StringIntern.mask(etid) == 0) continue;
-                    } else if (edge_type_id_exact) |exact| {
-                        if (etid != exact) continue;
-                    }
+                    const etype_ok = if (etid < 64)
+                        edge_type_mask & StringIntern.mask(etid) != 0
+                    else
+                        containsTypeId(edge_type_ids_exact, etid);
+                    if (!etype_ok) continue;
                 }
                 if (node_type_id) |ntid| {
                     if (g.node_type_id.items[nid] != ntid) continue;

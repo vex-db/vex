@@ -851,3 +851,88 @@ test "GRAPH.TRAVERSE response handles neighbor key larger than initial buf" {
     try std.testing.expect(out.len > long_key.len);
     try std.testing.expect(std.mem.indexOf(u8, out, long_key) != null);
 }
+
+test "GRAPH.TRAVERSE hits are typed: [key, node_type, via_edge, depth]" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    inline for (.{ .{ "a", "service" }, .{ "b", "api" }, .{ "c", "table" } }) |n| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDNODE", n[0], n[1] });
+        allocator.free(r);
+    }
+    inline for (.{ .{ "a", "b", "calls" }, .{ "b", "c", "reads_from" } }) |e| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDEDGE", e[0], e[1], e[2], "1.0" });
+        allocator.free(r);
+    }
+
+    const out = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.TRAVERSE", "a", "DEPTH", "2" });
+    defer allocator.free(out);
+
+    // 3 hits, each a 4-element array. Seed at depth 0, b at 1, c at 2.
+    try std.testing.expect(std.mem.startsWith(u8, out, "*3\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, out, "*4\r\n$1\r\na\r\n$7\r\nservice\r\n$0\r\n\r\n$1\r\n0\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "*4\r\n$1\r\nb\r\n$3\r\napi\r\n$0\r\n\r\n$1\r\n1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "*4\r\n$1\r\nc\r\n$5\r\ntable\r\n$0\r\n\r\n$1\r\n2\r\n") != null);
+}
+
+test "GRAPH.TRAVERSE EDGETYPE accepts a comma-separated list (OR semantics)" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    inline for (.{ .{ "a", "service" }, .{ "b", "api" }, .{ "c", "table" } }) |n| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDNODE", n[0], n[1] });
+        allocator.free(r);
+    }
+    inline for (.{ .{ "a", "b", "calls" }, .{ "b", "c", "reads_from" } }) |e| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDEDGE", e[0], e[1], e[2], "1.0" });
+        allocator.free(r);
+    }
+
+    // Single type: only the calls edge is followed — c is unreachable.
+    const single = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.TRAVERSE", "a", "DEPTH", "2", "EDGETYPE", "calls" });
+    defer allocator.free(single);
+    try std.testing.expect(std.mem.startsWith(u8, single, "*2\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, single, "$1\r\nc\r\n") == null);
+
+    // Comma list: both types followed — c reachable at depth 2.
+    const multi = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.TRAVERSE", "a", "DEPTH", "2", "EDGETYPE", "calls,reads_from" });
+    defer allocator.free(multi);
+    try std.testing.expect(std.mem.startsWith(u8, multi, "*3\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, multi, "$1\r\nc\r\n") != null);
+
+    // Unknown types only: just the seed node.
+    const bogus = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.TRAVERSE", "a", "DEPTH", "2", "EDGETYPE", "NOPE,ALSO_NOPE" });
+    defer allocator.free(bogus);
+    try std.testing.expect(std.mem.startsWith(u8, bogus, "*1\r\n"));
+}
+
+test "GRAPH.NEIGHBORS returns [key, node_type] pairs" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    inline for (.{ .{ "a", "service" }, .{ "b", "api" } }) |n| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDNODE", n[0], n[1] });
+        allocator.free(r);
+    }
+    const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDEDGE", "a", "b", "calls", "1.0" });
+    allocator.free(r);
+
+    const out = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.NEIGHBORS", "a" });
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("*1\r\n*2\r\n$1\r\nb\r\n$3\r\napi\r\n", out);
+}

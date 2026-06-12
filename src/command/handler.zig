@@ -2606,12 +2606,17 @@ pub const CommandHandler = struct {
         };
         defer self.allocator.free(ids);
 
+        // Each neighbor is a structured [node_key, node_type] pair — the
+        // node_type was previously omitted, forcing a GETNODE per neighbor
+        // to classify results.
         try resp.serializeArrayHeader(w, ids.len);
         for (ids) |nid| {
             const node = self.graph.getNodeById(nid);
             if (node) |n| {
                 const user_key = stripGraphDbPrefix(self, n.key) orelse n.key;
+                try resp.serializeArrayHeader(w, 2);
                 try resp.serializeBulkString(w, user_key);
+                try resp.serializeBulkString(w, n.node_type);
             } else {
                 try resp.serializeNullValue(w, self.protocol_version);
             }
@@ -2626,6 +2631,7 @@ pub const CommandHandler = struct {
         }
 
         var opts = query.TraversalOptions{};
+        var edge_filter_buf: [query.MAX_EDGE_TYPE_FILTERS][]const u8 = undefined;
         var i: usize = 2;
         while (i < args.len) {
             var flag_buf: [64]u8 = undefined;
@@ -2645,7 +2651,22 @@ pub const CommandHandler = struct {
                 }
                 i += 2;
             } else if (std.mem.eql(u8, flag, "EDGETYPE") and i + 1 < args.len) {
-                opts.edge_type_filter = args[i + 1];
+                // Single type, or a comma-separated list (OR semantics):
+                //   EDGETYPE calls            EDGETYPE calls,reads_from
+                const val = args[i + 1];
+                if (std.mem.indexOfScalar(u8, val, ',') != null) {
+                    var n: usize = 0;
+                    var it = std.mem.splitScalar(u8, val, ',');
+                    while (it.next()) |part| {
+                        if (part.len == 0) continue;
+                        if (n >= edge_filter_buf.len) break;
+                        edge_filter_buf[n] = part;
+                        n += 1;
+                    }
+                    opts.edge_type_filters = edge_filter_buf[0..n];
+                } else {
+                    opts.edge_type_filter = val;
+                }
                 i += 2;
             } else if (std.mem.eql(u8, flag, "NODETYPE") and i + 1 < args.len) {
                 opts.node_type_filter = args[i + 1];
@@ -2664,44 +2685,62 @@ pub const CommandHandler = struct {
         };
         defer self.allocator.free(nk);
 
-        const ids = query.traverse(self.graph, self.allocator, nk, opts) catch |err| {
+        var hits = query.traverseWithDepths(self.graph, self.allocator, nk, opts) catch |err| {
             try resp.serializeError(w, @errorName(err));
             return;
         };
-        defer self.allocator.free(ids);
+        defer hits.deinit(self.allocator);
+        const ids = hits.ids;
 
-        // Pre-build entire RESP response in one buffer — single writeAll instead of 3*N calls.
-        // The previous manual buf+pos+realloc(buf, buf.len * 2) doubling pattern silently
-        // OOB'd on @memcpy whenever a single user_key.len > buf.len * 2 - pos. In ReleaseFast
-        // that corrupted an adjacent heap chunk and surfaced later as glibc's
-        //   realloc(): invalid next size
-        // Fix: walk ids once to compute the exact response size, allocate once, then
-        // fill with appendSliceAssumeCapacity. Single allocation, no realloc cycle,
-        // no in-loop error paths.
+        // Each hit is a structured 4-element array:
+        //   [node_key, node_type, via_edge_type, depth]
+        // node_type was previously omitted entirely, which forced callers
+        // into a GETNODE round-trip per hit to classify results (and the
+        // main consumer silently mis-scored everything instead).
+        // via_edge_type is reserved (always "" today — the bitset BFS
+        // doesn't track which edge reached a node); depth is a decimal
+        // bulk string, seed node included at depth 0.
+        //
+        // Pre-build the entire RESP response in one exact-sized buffer —
+        // single writeAll, no realloc cycle, no in-loop error paths (the
+        // historical doubling pattern here heap-corrupted under ReleaseFast).
         const keys = self.graph.node_keys.items;
+        const node_type_ids = self.graph.node_type_id.items;
         const null_bytes: []const u8 = if (self.protocol_version == .resp3) "_\r\n" else "$-1\r\n";
+        const empty_bulk: []const u8 = "$0\r\n\r\n"; // via_edge_type placeholder
 
-        // Pass 1: exact size. "$N\r\n<bytes>" framing costs 3 + digits(N) + bytes.len.
+        var dbuf: [12]u8 = undefined;
+
+        // Pass 1: exact size. A bulk string costs 1 + digits(len) + 2 + len + 2.
         var total: usize = 3 + std.fmt.count("{d}", .{ids.len}); // "*N\r\n" array header
-        for (ids) |nid| {
+        for (ids, hits.depths) |nid, dep| {
             if (nid < keys.len) {
                 const user_key = stripGraphDbPrefix(self, keys[nid]) orelse keys[nid];
-                total += 3 + std.fmt.count("{d}", .{user_key.len}) + user_key.len;
+                const ntype = self.graph.type_intern.resolve(node_type_ids[nid]);
+                const dep_s = std.fmt.bufPrint(&dbuf, "{d}", .{dep}) catch unreachable;
+                total += 4; // "*4\r\n"
+                total += 3 + std.fmt.count("{d}", .{user_key.len}) + user_key.len + 2;
+                total += 3 + std.fmt.count("{d}", .{ntype.len}) + ntype.len + 2;
+                total += empty_bulk.len;
+                total += 3 + std.fmt.count("{d}", .{dep_s.len}) + dep_s.len + 2;
             } else {
                 total += null_bytes.len;
             }
-            total += 2; // trailing "\r\n" written for both branches
         }
 
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.allocator);
         buf.ensureTotalCapacity(self.allocator, total) catch {
-            // Fallback on OOM: stream per-node. Matches the prior code's behavior
-            // when the initial alloc failed, so OOM degradation is unchanged.
+            // Fallback on OOM: stream per-hit.
             try resp.serializeArrayHeader(w, ids.len);
-            for (ids) |nid| {
+            for (ids, hits.depths) |nid, dep| {
                 if (nid < keys.len) {
+                    const dep_s = std.fmt.bufPrint(&dbuf, "{d}", .{dep}) catch unreachable;
+                    try resp.serializeArrayHeader(w, 4);
                     try resp.serializeBulkString(w, stripGraphDbPrefix(self, keys[nid]) orelse keys[nid]);
+                    try resp.serializeBulkString(w, self.graph.type_intern.resolve(node_type_ids[nid]));
+                    try resp.serializeBulkString(w, "");
+                    try resp.serializeBulkString(w, dep_s);
                 } else {
                     try resp.serializeNullValue(w, self.protocol_version);
                 }
@@ -2713,19 +2752,29 @@ pub const CommandHandler = struct {
         var hdr_buf: [16]u8 = undefined;
         const arr_hdr = std.fmt.bufPrint(&hdr_buf, "*{d}\r\n", .{ids.len}) catch unreachable;
         buf.appendSliceAssumeCapacity(arr_hdr);
-        for (ids) |nid| {
+        for (ids, hits.depths) |nid, dep| {
             if (nid < keys.len) {
-                const user_key = stripGraphDbPrefix(self, keys[nid]) orelse keys[nid];
-                const entry_hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{user_key.len}) catch unreachable;
-                buf.appendSliceAssumeCapacity(entry_hdr);
-                buf.appendSliceAssumeCapacity(user_key);
+                buf.appendSliceAssumeCapacity("*4\r\n");
+                appendBulkAssume(&buf, &hdr_buf, stripGraphDbPrefix(self, keys[nid]) orelse keys[nid]);
+                appendBulkAssume(&buf, &hdr_buf, self.graph.type_intern.resolve(node_type_ids[nid]));
+                buf.appendSliceAssumeCapacity(empty_bulk);
+                const dep_s = std.fmt.bufPrint(&dbuf, "{d}", .{dep}) catch unreachable;
+                appendBulkAssume(&buf, &hdr_buf, dep_s);
             } else {
                 buf.appendSliceAssumeCapacity(null_bytes);
             }
-            buf.appendSliceAssumeCapacity("\r\n");
         }
 
         try w.writeAll(buf.items);
+    }
+
+    /// Append one RESP bulk string ("$len\r\n<bytes>\r\n") to a buffer whose
+    /// capacity was pre-computed. hdr_buf must hold the length header.
+    fn appendBulkAssume(buf: *std.ArrayList(u8), hdr_buf: *[16]u8, bytes: []const u8) void {
+        const h = std.fmt.bufPrint(hdr_buf, "${d}\r\n", .{bytes.len}) catch unreachable;
+        buf.appendSliceAssumeCapacity(h);
+        buf.appendSliceAssumeCapacity(bytes);
+        buf.appendSliceAssumeCapacity("\r\n");
     }
 
     /// GRAPH.PATH <from_key> <to_key> [MAXDEPTH <n>]

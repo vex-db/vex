@@ -204,8 +204,8 @@ See [Pub/Sub](pubsub.md) for full details.
 | `GRAPH.SETPROP key prop value` | Set a property on a node |
 | `GRAPH.ADDEDGE from to type [weight]` | Create a directed edge (default weight 1.0) |
 | `GRAPH.DELEDGE edge_id` | Delete an edge by its numeric ID |
-| `GRAPH.NEIGHBORS key [OUT\|IN\|BOTH]` | Get direct neighbors in specified direction |
-| `GRAPH.TRAVERSE key [DEPTH n] [DIR d] [EDGETYPE t] [NODETYPE t]` | BFS traversal with filters |
+| `GRAPH.NEIGHBORS key [OUT\|IN\|BOTH]` | Get direct neighbors; each element is a `[key, node_type]` pair |
+| `GRAPH.TRAVERSE key [DEPTH n] [DIR d] [EDGETYPE t[,t2,...]] [NODETYPE t]` | BFS traversal with filters; each hit is `[key, node_type, via_edge, depth]` |
 | `GRAPH.PATH from to [MAXDEPTH n]` | Shortest unweighted path (bidirectional BFS) |
 | `GRAPH.WPATH from to` | Shortest weighted path (bidirectional Dijkstra, CH-accelerated after CHBUILD) |
 | `GRAPH.COMPACT` | Rebuild CSR from delta edges (improves traverse speed 3x) |
@@ -235,9 +235,20 @@ See [Pub/Sub](pubsub.md) for full details.
 127.0.0.1:6380> GRAPH.SETPROP service:auth version "3.2"
 OK
 127.0.0.1:6380> GRAPH.TRAVERSE service:auth DEPTH 3 DIR OUT
-1) "service:auth"
-2) "service:user"
-3) "db:postgres"
+1) 1) "service:auth"
+   2) "service"
+   3) ""
+   4) "0"
+2) 1) "service:user"
+   2) "service"
+   3) ""
+   4) "1"
+3) 1) "db:postgres"
+   2) "database"
+   3) ""
+   4) "2"
+127.0.0.1:6380> GRAPH.TRAVERSE service:auth DEPTH 3 EDGETYPE calls,reads
+1) ...
 127.0.0.1:6380> GRAPH.PATH service:auth db:postgres
 1) "service:auth"
 2) "service:user"
@@ -248,9 +259,21 @@ OK
 3) "service:user"
 4) "db:postgres"
 127.0.0.1:6380> GRAPH.NEIGHBORS service:user BOTH
-1) "service:auth"
-2) "db:postgres"
+1) 1) "service:auth"
+   2) "service"
+2) 1) "db:postgres"
+   2) "database"
 ```
+
+**TRAVERSE / NEIGHBORS reply format (since 0.7.5):** each hit is a
+structured array instead of a bare key, so callers can classify results
+without a GETNODE round-trip per hit. TRAVERSE hits are
+`[key, node_type, via_edge, depth]` — `via_edge` is reserved (currently
+always `""`), `depth` is a decimal string with the seed node included at
+depth `0`. NEIGHBORS elements are `[key, node_type]`. `EDGETYPE` accepts
+a single type or a comma-separated list (OR semantics, max 16); unknown
+type names match nothing, and a filter consisting only of unknown types
+returns just the seed node.
 
 ---
 

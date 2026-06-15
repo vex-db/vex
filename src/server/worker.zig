@@ -1193,7 +1193,17 @@ pub const Worker = struct {
                 return true;
             }
 
-            const parts = resp.parseInlineCommand(line, self.allocator) catch return false;
+            const parts = resp.parseInlineCommand(line, self.allocator) catch |err| switch (err) {
+                // Reply and consume the line — treating this as
+                // "incomplete" would reparse the same bytes forever and
+                // wedge the connection.
+                error.UnbalancedQuotes => {
+                    conn.write_buf.appendSlice("-ERR Protocol error: unbalanced quotes in request\r\n") catch {};
+                    conn.advanceAccum(eol_info.consumed);
+                    return true;
+                },
+                else => return false,
+            };
             defer {
                 for (parts) |p| self.allocator.free(p);
                 self.allocator.free(parts);

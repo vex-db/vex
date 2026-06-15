@@ -138,3 +138,51 @@ test "version-aware null" {
         try std.testing.expectEqualStrings("_\r\n", aw.written());
     }
 }
+
+test "inline command: double-quoted values are unquoted (sdssplitargs)" {
+    const allocator = std.testing.allocator;
+    const parts = try parseInlineCommand("SET k1 \"hello world\"\r\n", allocator);
+    defer {
+        for (parts) |p| allocator.free(p);
+        allocator.free(parts);
+    }
+    try std.testing.expectEqual(@as(usize, 3), parts.len);
+    try std.testing.expectEqualStrings("hello world", parts[2]);
+}
+
+test "inline command: escapes in double quotes" {
+    const allocator = std.testing.allocator;
+    const parts = try parseInlineCommand("SET k \"a\\x41b\\nc\\\"d\"\r\n", allocator);
+    defer {
+        for (parts) |p| allocator.free(p);
+        allocator.free(parts);
+    }
+    try std.testing.expectEqualStrings("aAb\nc\"d", parts[2]);
+}
+
+test "inline command: single quotes are literal except escaped quote" {
+    const allocator = std.testing.allocator;
+    const parts = try parseInlineCommand("SET k 'a\\x41 \\'b'\r\n", allocator);
+    defer {
+        for (parts) |p| allocator.free(p);
+        allocator.free(parts);
+    }
+    try std.testing.expectEqualStrings("a\\x41 'b", parts[2]);
+}
+
+test "inline command: unbalanced quotes error" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.UnbalancedQuotes, parseInlineCommand("SET k \"oops\r\n", allocator));
+    try std.testing.expectError(error.UnbalancedQuotes, parseInlineCommand("SET k \"a\"b\r\n", allocator));
+}
+
+test "inline command: unquoted tokens unchanged" {
+    const allocator = std.testing.allocator;
+    const parts = try parseInlineCommand("SET k1 plain-value\r\n", allocator);
+    defer {
+        for (parts) |p| allocator.free(p);
+        allocator.free(parts);
+    }
+    try std.testing.expectEqual(@as(usize, 3), parts.len);
+    try std.testing.expectEqualStrings("plain-value", parts[2]);
+}

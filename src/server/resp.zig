@@ -459,6 +459,13 @@ pub fn isInlineCommand(data: []const u8) bool {
     return data[0] != '*' and data[0] != '+' and data[0] != '-' and data[0] != ':' and data[0] != '$';
 }
 
+/// Split an inline command line into arguments, Redis-compatible
+/// (a port of sds.c sdssplitargs): double-quoted strings support
+/// \xHH and \n \r \t \b \a escapes; single-quoted strings are literal
+/// except \'. A closing quote must be followed by whitespace or EOL.
+/// Unbalanced/malformed quoting returns error.UnbalancedQuotes — the
+/// previous whitespace-only tokenizer stored quoted SET values WITH
+/// their quote characters (8192-byte payload → 8194 stored bytes).
 pub fn parseInlineCommand(data: []const u8, allocator: Allocator) ![][]const u8 {
     var end = data.len;
     for (data, 0..) |c, i| {
@@ -474,10 +481,86 @@ pub fn parseInlineCommand(data: []const u8, allocator: Allocator) ![][]const u8 
         for (parts.items) |p| allocator.free(p);
         parts.deinit();
     }
+    var cur = std.array_list.Managed(u8).init(allocator);
+    defer cur.deinit();
 
-    var iter = std.mem.tokenizeScalar(u8, line, ' ');
-    while (iter.next()) |token| {
-        const copy = try allocator.dupe(u8, token);
+    var i: usize = 0;
+    while (i < line.len) {
+        while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+        if (i >= line.len) break;
+
+        cur.clearRetainingCapacity();
+        var in_dq = false; // inside "double quotes"
+        var in_sq = false; // inside 'single quotes'
+        var done = false;
+        while (!done) {
+            if (i >= line.len) {
+                if (in_dq or in_sq) return error.UnbalancedQuotes;
+                break;
+            }
+            const c = line[i];
+            if (in_dq) {
+                if (c == '\\' and i + 3 < line.len and line[i + 1] == 'x' and
+                    std.ascii.isHex(line[i + 2]) and std.ascii.isHex(line[i + 3]))
+                {
+                    const hi = std.fmt.charToDigit(line[i + 2], 16) catch unreachable;
+                    const lo = std.fmt.charToDigit(line[i + 3], 16) catch unreachable;
+                    try cur.append(hi * 16 + lo);
+                    i += 4;
+                } else if (c == '\\' and i + 1 < line.len) {
+                    try cur.append(switch (line[i + 1]) {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        'b' => 0x08,
+                        'a' => 0x07,
+                        else => |e| e,
+                    });
+                    i += 2;
+                } else if (c == '"') {
+                    // Closing quote must terminate the token.
+                    if (i + 1 < line.len and line[i + 1] != ' ' and line[i + 1] != '\t')
+                        return error.UnbalancedQuotes;
+                    in_dq = false;
+                    i += 1;
+                    done = true;
+                } else {
+                    try cur.append(c);
+                    i += 1;
+                }
+            } else if (in_sq) {
+                if (c == '\\' and i + 1 < line.len and line[i + 1] == '\'') {
+                    try cur.append('\'');
+                    i += 2;
+                } else if (c == '\'') {
+                    if (i + 1 < line.len and line[i + 1] != ' ' and line[i + 1] != '\t')
+                        return error.UnbalancedQuotes;
+                    in_sq = false;
+                    i += 1;
+                    done = true;
+                } else {
+                    try cur.append(c);
+                    i += 1;
+                }
+            } else switch (c) {
+                ' ', '\t' => done = true,
+                '"' => {
+                    in_dq = true;
+                    i += 1;
+                },
+                '\'' => {
+                    in_sq = true;
+                    i += 1;
+                },
+                else => {
+                    try cur.append(c);
+                    i += 1;
+                },
+            }
+        }
+
+        const copy = try allocator.dupe(u8, cur.items);
+        errdefer allocator.free(copy);
         try parts.append(copy);
     }
     return parts.toOwnedSlice();

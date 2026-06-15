@@ -1671,7 +1671,16 @@ fn processOneCommand(
         }
 
         const parse_t0 = std.Io.Clock.Timestamp.now(io, .awake);
-        const parts = resp.parseInlineCommand(line, allocator) catch return false;
+        const parts = resp.parseInlineCommand(line, allocator) catch |err| switch (err) {
+            // Reply and consume the line — treating this as "incomplete"
+            // would reparse the same bytes forever and wedge the conn.
+            error.UnbalancedQuotes => {
+                writeAll(fd, "-ERR Protocol error: unbalanced quotes in request\r\n");
+                consumeAccum(accum, eol_info.consumed);
+                return true;
+            },
+            else => return false,
+        };
         const parse_t1 = std.Io.Clock.Timestamp.now(io, .awake);
         if (profile) |p| p.recordParse(span.monotonicNs(parse_t0, parse_t1));
         defer {

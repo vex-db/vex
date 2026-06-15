@@ -8,7 +8,16 @@ const CSR = graph_mod.CSR;
 const INVALID: NodeId = graph_mod.INVALID_ID;
 const INF: f64 = std.math.inf(f64);
 const WITNESS_MAX_SETTLED: u32 = 100;
-const WITNESS_SKIP_THRESHOLD: u64 = 100; // skip witness search when in_deg * out_deg exceeds this
+const WITNESS_SKIP_THRESHOLD: u64 = 100; // defer contraction when in_deg * out_deg exceeds this
+const DENSE_DEFER_MAX: u8 = 3; // times a dense node is pushed back before contracting anyway
+const DENSE_DEFER_PENALTY: i32 = 1 << 20; // priority penalty per deferral
+/// Abort the build when the work graph accumulates this many shortcut
+/// edges per original edge. Random/dense graphs can otherwise go
+/// quadratic during contraction (observed: unbounded ~370MB/s growth →
+/// OOM kill on a 5k-node random multigraph). No CH beats a dead server;
+/// WPATH falls back to plain bidirectional Dijkstra when CH is absent.
+const SHORTCUT_BUDGET_PER_EDGE: u64 = 16;
+const SHORTCUT_BUDGET_MIN: u64 = 200_000;
 
 // ─── Public Data Structure ────────────────────────────────────────────
 
@@ -399,6 +408,21 @@ pub fn build(g: *const GraphEngine, allocator: Allocator) !CHData {
         try pq.push(allocator, .{ .id = @intCast(i), .priority = priority });
     }
 
+    // Dense-node deferral bookkeeping + global shortcut budget. The old
+    // behavior on pairs > WITNESS_SKIP_THRESHOLD was to SKIP the witness
+    // search and add every in×out pair as a shortcut — on random/dense
+    // graphs that self-amplifies (each hub contraction raises neighbor
+    // degrees), growing the work graph without bound until the OOM
+    // killer takes the process. Dense nodes are now contracted LAST
+    // (with witness checks), and the build aborts cleanly if shortcuts
+    // still explode.
+    var defer_count = try allocator.alloc(u8, n);
+    defer allocator.free(defer_count);
+    @memset(defer_count, 0);
+    const edge_total: u64 = @intCast(g.edge_from.items.len);
+    const shortcut_budget: u64 = @max(SHORTCUT_BUDGET_MIN, edge_total * SHORTCUT_BUDGET_PER_EDGE);
+    var shortcuts_added: u64 = 0;
+
     // Contract nodes with lazy updates
     var order: u32 = 0;
     while (pq.pop()) |item| {
@@ -409,6 +433,18 @@ pub fn build(g: *const GraphEngine, allocator: Allocator) !CHData {
         const cur_priority = computePriority(&wg, v, cn);
         if (cur_priority > item.priority) {
             try pq.push(allocator, .{ .id = v, .priority = cur_priority });
+            continue;
+        }
+
+        // Dense node: push it back so sparse nodes contract first
+        // (also improves hierarchy quality). After DENSE_DEFER_MAX
+        // deferrals contract it anyway — with witness checks.
+        const deg = wg.liveDegree(v);
+        const pairs = @as(u64, deg.in_deg) * @as(u64, deg.out_deg);
+        if (pairs > WITNESS_SKIP_THRESHOLD and defer_count[v] < DENSE_DEFER_MAX and pq.count() > 0) {
+            defer_count[v] += 1;
+            const penalty: i32 = DENSE_DEFER_PENALTY *| @as(i32, defer_count[v]);
+            try pq.push(allocator, .{ .id = v, .priority = cur_priority +| penalty });
             continue;
         }
 
@@ -426,17 +462,15 @@ pub fn build(g: *const GraphEngine, allocator: Allocator) !CHData {
         }
 
         // Add shortcuts (staged witness: 1-hop → 2-hop → full Dijkstra)
-        const deg = wg.liveDegree(v);
-        const pairs = @as(u64, deg.in_deg) * @as(u64, deg.out_deg);
-        const skip_witness = pairs > WITNESS_SKIP_THRESHOLD;
-
         for (wg.in_edges[v].items) |in_e| {
             if (wg.contracted[in_e.target]) continue;
             for (wg.out_edges[v].items) |out_e| {
                 if (wg.contracted[out_e.target]) continue;
                 if (in_e.target == out_e.target) continue;
                 const sw = in_e.weight + out_e.weight;
-                if (skip_witness or !witnessExists(&wg, &ws, in_e.target, out_e.target, v, sw)) {
+                if (!witnessExists(&wg, &ws, in_e.target, out_e.target, v, sw)) {
+                    shortcuts_added += 1;
+                    if (shortcuts_added > shortcut_budget) return error.GraphTooDenseForCH;
                     wg.out_edges[in_e.target].append(allocator, .{ .target = out_e.target, .weight = sw, .middle = v }) catch {};
                     wg.in_edges[out_e.target].append(allocator, .{ .target = in_e.target, .weight = sw, .middle = v }) catch {};
                 }

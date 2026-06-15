@@ -120,3 +120,47 @@ test "ch larger graph validation" {
     }
     try std.testing.expectEqual(@as(u32, 0), mismatches);
 }
+
+test "CH build aborts cleanly on a pathologically dense graph (no OOM)" {
+    // Regression for finding #2: GRAPH.CHBUILD grew the work graph
+    // without bound on random/dense multigraphs (~370MB/s → OOM kill).
+    // The shortcut budget now aborts with error.GraphTooDenseForCH and
+    // the caller (rebuildCH) leaves CH absent so WPATH falls back to
+    // plain Dijkstra. We don't assert WHICH outcome a given graph hits —
+    // only that the build terminates and never corrupts/leaks.
+    const allocator = std.testing.allocator;
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+
+    // 400 nodes, ~6000 edges with heavy fan-in/out and 1.0 weights so
+    // few witnesses exist → maximal shortcut pressure.
+    var i: u32 = 0;
+    while (i < 400) : (i += 1) {
+        var buf: [16]u8 = undefined;
+        const key = try std.fmt.bufPrint(&buf, "n{d}", .{i});
+        _ = try g.addNode(key, "node");
+    }
+    var seed: u64 = 12345;
+    var e: u32 = 0;
+    while (e < 6000) : (e += 1) {
+        seed = seed *% 6364136223846793005 +% 1442695040888963407;
+        const from = (seed >> 33) % 400;
+        seed = seed *% 6364136223846793005 +% 1442695040888963407;
+        const to = (seed >> 33) % 400;
+        if (from == to) continue;
+        var fb: [16]u8 = undefined;
+        var tb: [16]u8 = undefined;
+        const fk = try std.fmt.bufPrint(&fb, "n{d}", .{from});
+        const tk = try std.fmt.bufPrint(&tb, "n{d}", .{to});
+        _ = try g.addEdge(fk, tk, "e", 1.0);
+    }
+
+    // Either it builds, or it aborts with GraphTooDenseForCH — both are
+    // clean terminations. testing.allocator fails the test on any leak.
+    if (build(&g, allocator)) |ch_data| {
+        var cd = ch_data;
+        cd.deinit();
+    } else |err| {
+        try std.testing.expectEqual(error.GraphTooDenseForCH, err);
+    }
+}

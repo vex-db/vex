@@ -337,6 +337,7 @@ pub const CommandHandler = struct {
                     if (std.mem.eql(u8, sub, "COMPACT")) return self.cmdGraphCompact(w);
                     if (std.mem.eql(u8, sub, "CHBUILD")) return self.cmdGraphCHBuild(w);
                     if (std.mem.eql(u8, sub, "CHSTATS")) return self.cmdGraphCHStats(w);
+                    if (std.mem.eql(u8, sub, "COOCCUR")) return self.cmdGraphCooccur(args, w);
                 },
                 'V' => if (std.mem.eql(u8, sub, "VECSEARCH")) return self.cmdGraphVecSearch(args, w),
                 'R' => if (std.mem.eql(u8, sub, "RAG")) return self.cmdGraphRag(args, w),
@@ -2908,6 +2909,45 @@ pub const CommandHandler = struct {
             return;
         };
         try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// GRAPH.COOCCUR <prop> [TYPE t] [WINDOW n] [WEIGHT w] [INCR]
+    /// Auto-link nodes that share a value for <prop>. Returns edge count.
+    fn cmdGraphCooccur(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2) {
+            try resp.serializeError(w, "usage: GRAPH.COOCCUR <prop> [TYPE t] [WINDOW n] [WEIGHT w] [INCR]");
+            return;
+        }
+        const prop = args[1];
+        var edge_type: []const u8 = "CO_OCCURS";
+        var window: u32 = 50;
+        var weight: f64 = 1.0;
+        var incr = false;
+        var i: usize = 2;
+        while (i < args.len) {
+            var flag_buf: [64]u8 = undefined;
+            const flag = toUpper(args[i], &flag_buf);
+            if (std.mem.eql(u8, flag, "TYPE") and i + 1 < args.len) {
+                edge_type = args[i + 1];
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "WINDOW") and i + 1 < args.len) {
+                window = std.fmt.parseInt(u32, args[i + 1], 10) catch 50;
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "WEIGHT") and i + 1 < args.len) {
+                weight = std.fmt.parseFloat(f64, args[i + 1]) catch 1.0;
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "INCR")) {
+                incr = true;
+                i += 1;
+            } else {
+                i += 1;
+            }
+        }
+        const n = self.graph.cooccur(prop, edge_type, window, weight, incr) catch |err| {
+            try resp.serializeError(w, @errorName(err));
+            return;
+        };
+        try resp.serializeInteger(w, @intCast(n));
     }
 
     /// GRAPH.COMPACT -- rebuild CSR from delta edges for fast traversals

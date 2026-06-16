@@ -147,6 +147,7 @@ pub const command_names = [_][]const u8{
     "GRAPH.COMPACT",
     "GRAPH.CHBUILD",
     "GRAPH.CHSTATS",
+    "GRAPH.COOCCUR",
 
     // Catch-all for unknown / unlisted commands.
     "OTHER",

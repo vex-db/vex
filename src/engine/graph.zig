@@ -547,6 +547,68 @@ pub const GraphEngine = struct {
         return result.toOwnedSlice();
     }
 
+    /// GRAPH.COOCCUR — link nodes that share a value for `prop_key`.
+    /// Groups all live nodes by their value of `prop_key`, then for each
+    /// group of size in [2, window] creates a `edge_type` edge between every
+    /// unordered pair (canonical direction: lower node id → higher). With
+    /// `incr`, an existing pair's edge has `weight` added instead of being
+    /// skipped. Returns the number of edges created or incremented.
+    /// O(Σ group_size²) — `window` bounds the per-group quadratic.
+    pub fn cooccur(
+        self: *GraphEngine,
+        prop_key: []const u8,
+        edge_type: []const u8,
+        window: u32,
+        weight: f64,
+        incr: bool,
+    ) !usize {
+        // Group node ids by their property value. The value slices are owned
+        // by node_props and stay valid for this call (we never mutate props
+        // here — only edges).
+        var groups = std.StringHashMap(std.array_list.Managed(NodeId)).init(self.allocator);
+        defer {
+            var it = groups.valueIterator();
+            while (it.next()) |list| list.deinit();
+            groups.deinit();
+        }
+
+        var nit = self.node_alive.iterator(.{});
+        while (nit.next()) |i| {
+            const id: NodeId = @intCast(i);
+            const val = self.node_props.get(id, prop_key) orelse continue;
+            const gop = try groups.getOrPut(val);
+            if (!gop.found_existing) gop.value_ptr.* = std.array_list.Managed(NodeId).init(self.allocator);
+            try gop.value_ptr.append(id);
+        }
+
+        var count: usize = 0;
+        var git = groups.valueIterator();
+        while (git.next()) |list| {
+            const members = list.items;
+            if (members.len < 2 or members.len > window) continue;
+            for (members, 0..) |a, ai| {
+                for (members[ai + 1 ..]) |b| {
+                    const lo = if (a < b) a else b;
+                    const hi = if (a < b) b else a;
+                    const lo_key = self.node_keys.items[lo];
+                    const hi_key = self.node_keys.items[hi];
+                    if (self.findEdge(lo_key, hi_key, edge_type)) |eid| {
+                        if (incr) {
+                            self.edge_weight.items[eid] += weight;
+                            if (weight != 0) self.flags.uniform_weights = false;
+                            count += 1;
+                        }
+                        // exists and not incr → skip (uncounted)
+                    } else {
+                        _ = try self.addEdge(lo_key, hi_key, edge_type, weight);
+                        count += 1;
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
     // ─── Edge Operations ──────────────────────────────────────────────
 
     pub fn addEdge(self: *GraphEngine, from_key: []const u8, to_key: []const u8, edge_type: []const u8, weight: f64) !EdgeId {

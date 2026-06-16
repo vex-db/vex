@@ -936,3 +936,72 @@ test "GRAPH.NEIGHBORS returns [key, node_type] pairs" {
     defer allocator.free(out);
     try std.testing.expectEqualStrings("*1\r\n*2\r\n$1\r\nb\r\n$3\r\napi\r\n", out);
 }
+
+test "GRAPH.COOCCUR links nodes sharing a property value" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    // Three nodes sharing chunk_id=c1, one in c2.
+    inline for (.{ "a", "b", "c", "d" }) |k| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDNODE", k, "entity" });
+        allocator.free(r);
+    }
+    inline for (.{ .{ "a", "c1" }, .{ "b", "c1" }, .{ "c", "c1" }, .{ "d", "c2" } }) |p| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.SETPROP", p[0], "chunk", p[1] });
+        allocator.free(r);
+    }
+
+    // 3-clique among a,b,c → C(3,2)=3 edges; d isolated.
+    const r1 = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.COOCCUR", "chunk", "TYPE", "CO", "INCR" });
+    defer allocator.free(r1);
+    try std.testing.expectEqualStrings(":3\r\n", r1);
+
+    // Re-run with INCR: same 3 pairs, weights incremented, count 3 again.
+    const r2 = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.COOCCUR", "chunk", "TYPE", "CO", "INCR" });
+    defer allocator.free(r2);
+    try std.testing.expectEqualStrings(":3\r\n", r2);
+
+    // Without INCR: all edges exist → 0 created.
+    const r3 = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.COOCCUR", "chunk", "TYPE", "CO" });
+    defer allocator.free(r3);
+    try std.testing.expectEqualStrings(":0\r\n", r3);
+
+    // WINDOW smaller than the group size skips it entirely (new edge type).
+    const r4 = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.COOCCUR", "chunk", "TYPE", "LNK", "WINDOW", "2" });
+    defer allocator.free(r4);
+    try std.testing.expectEqualStrings(":0\r\n", r4);
+}
+
+test "GRAPH.COOCCUR INCR accumulates edge weight" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    inline for (.{ "x", "y" }) |k| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.ADDNODE", k, "e" });
+        allocator.free(r);
+    }
+    inline for (.{ "x", "y" }) |k| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.SETPROP", k, "tag", "t" });
+        allocator.free(r);
+    }
+    // Two INCR passes → single edge, weight 1.0 + 1.0 = 2.0.
+    inline for (0..2) |_| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "GRAPH.COOCCUR", "tag", "TYPE", "CO", "WEIGHT", "1.0", "INCR" });
+        allocator.free(r);
+    }
+    // One undirected edge exists between x and y.
+    const eid = g.findEdge(g.node_keys.items[0], g.node_keys.items[1], "CO") orelse
+        g.findEdge(g.node_keys.items[1], g.node_keys.items[0], "CO");
+    try std.testing.expect(eid != null);
+    try std.testing.expectEqual(@as(f64, 2.0), g.edge_weight.items[eid.?]);
+}

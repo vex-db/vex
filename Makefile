@@ -129,6 +129,12 @@ test-release-safe:
 test-tsan:
 	$(ZIG) build test -Dsanitize-thread=true --summary all
 
+# Line coverage via kcov (brew install kcov / apt-get install kcov).
+# Report lands in coverage/index.html; src/ only. coverage/ is gitignored.
+coverage:
+	$(ZIG) build coverage
+	@echo "coverage report: coverage/index.html"
+
 # ── Stress / chaos suite ──────────────────────────────────────────────
 # A chaos script PASS means vex stayed alive under a specific load
 # shape. Failure surfaces as the script printing FAIL + the relevant

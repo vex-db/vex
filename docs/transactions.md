@@ -110,10 +110,20 @@ The engine mutex is held for the entire batch, not per-command.
 
 ---
 
+## Optimistic Locking (WATCH)
+
+`WATCH key [key ...]` marks keys for optimistic concurrency control before a
+`MULTI`. If any watched key is modified by another connection before `EXEC`,
+the transaction aborts and `EXEC` returns a nil reply instead of running the
+queued commands. `UNWATCH` clears all watched keys. Each key carries a version
+that the write path bumps on mutation; `EXEC` compares the versions captured
+at `WATCH` time. `WATCH` is rejected inside an open `MULTI`.
+
+---
+
 ## Limitations
 
 - **Single-shard only**: in reactor mode, all keys in a transaction must hash to the same worker. Cross-shard transactions are not supported
-- **No WATCH**: optimistic locking (`WATCH`/`UNWATCH`) is not yet implemented. Planned for v0.4
 - **No nested transactions**: `MULTI` inside `MULTI` returns an error
 - **No MULTI in pub/sub mode**: transactions and pub/sub are mutually exclusive
 - **Max queue size**: limited only by available memory. No hard cap on queued commands

@@ -10,7 +10,7 @@
               Accept Thread (main)
               /    |    |    \
          Worker0  W1   W2   W3     -- N event-loop threads (auto-detected)
-         (kqueue) ...              -- io_uring (SQPOLL) on Linux, kqueue on macOS
+         (kqueue) ...              -- io_uring (batched submit_and_wait) on Linux, kqueue on macOS
          /  |  \
       conn conn conn               -- non-blocking I/O per worker
             |
@@ -71,7 +71,7 @@ The KV store is split into 256 independent stripes, each with its own `pthread_r
 ### Collection Stores
 
 - **ListStore**: doubly-linked list with O(1) push/pop, O(n) index access
-- **HashStore**: per-key field→value maps (HSET/HGET/HGETALL)
+- **HashStore**: per-key field→value maps (HSET/HGET/HGETALL); 32-stripe with a per-stripe `pthread_rwlock`, plus a per-hash HGETALL wire cache (serialized reply cached for hashes ≥16 fields, invalidated on any mutation)
 - **SetStore**: unordered unique member sets (SADD/SREM/SMEMBERS/SINTER/SUNION/SDIFF)
 - **SortedSetStore**: score-ordered members (ZADD/ZRANGE/ZRANK/ZSCORE)
 
@@ -121,7 +121,7 @@ src/
 │   ├── hnsw.zig            # HNSW approximate nearest neighbor index (serialize/deserialize to .vhi)
 │   ├── rag.zig             # RAG: vector search + graph BFS expansion
 │   ├── list.zig            # List data structure (LPUSH/RPUSH/LPOP/RPOP/LRANGE)
-│   ├── hash.zig            # Hash data structure (HSET/HGET/HDEL/HGETALL)
+│   ├── hash.zig            # 32-stripe rwlock hash store + HGETALL wire cache
 │   ├── set.zig             # Set data structure (SADD/SREM/SMEMBERS/SINTER)
 │   └── sorted_set.zig      # Sorted set (ZADD/ZREM/ZRANGE/ZSCORE/ZRANK)
 ├── command/
@@ -147,9 +147,8 @@ Platform-abstracted with automatic selection:
 | Platform | Backend | Notes |
 |----------|---------|-------|
 | macOS | kqueue | EVFILT_READ + EVFILT_WRITE |
-| Linux | io_uring + SQPOLL | Kernel poll thread, async recv/send/AOF write+fsync |
-| Linux (fallback 1) | io_uring | poll_add one-shot with re-arming |
-| Linux (fallback 2) | epoll | Edge-triggered (EPOLLET) |
+| Linux | io_uring | Batched submit_and_wait, async recv/send/AOF write+fsync (SQPOLL deliberately not used — it oversubscribes cores at workers > 1) |
+| Linux (fallback) | epoll | Edge-triggered (EPOLLET) |
 
 The event loop supports:
 - `addFd(fd, data)`: register for read events

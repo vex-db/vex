@@ -4,6 +4,15 @@
 
 ---
 
+> **Status: design proposal — NOT yet implemented.** There is no MCP server in
+> the codebase today: the `--mcp*` flags, the `vex --mcp` quick-start, and the
+> `MEMORY.*` / `CACHE.SEM*` commands referenced below do not exist. This page
+> describes the intended design. (The `GRAPH.*`, KV, and vector commands it
+> references *are* real — see [Commands](commands.md).) Track status in
+> [LLM Ecosystem](llm-ecosystem.md).
+
+---
+
 ## Overview
 
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) is an open standard for LLMs to interact with external tools. Vex supports MCP natively -- any MCP-compatible agent (Claude Code, Cursor, Windsurf, Cline, custom agents) can use Vex as a tool to store memories, query knowledge graphs, cache responses, and manage session state.

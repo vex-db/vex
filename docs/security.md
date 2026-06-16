@@ -10,7 +10,7 @@
 zig build run -- --reactor --requirepass mysecret
 ```
 
-When `--requirepass` is set, clients must authenticate with `AUTH <password>` before any command except `PING`.
+When `--requirepass` is set, clients must authenticate with `AUTH <password>` before any command except `PING`, `HELLO`, and `AUTH` itself.
 
 ```
 127.0.0.1:6380> SET key value

@@ -51,7 +51,7 @@ Redis is single-threaded. To scale, you add more instances. Vex does the same --
 | **[Semantic Cache](docs/semantic-cache.md)** | Cache LLM responses by query meaning, not exact match |
 | **[Agent Memory](docs/agent-memory.md)** | Persistent memory primitives for LLM agents with decay and relationships |
 | **[MCP Server](docs/mcp-server.md)** | Model Context Protocol support -- LLMs use Vex as a tool directly |
-| **[Testing](docs/testing.md)** | 168 tests, coverage table, test patterns |
+| **[Testing](docs/testing.md)** | 233 tests, coverage table, test patterns |
 
 ---
 
@@ -69,7 +69,7 @@ redis-cli -p 6380
 ```bash
 zig build                                          # Build
 zig build run -- --reactor                        # Reactor mode (recommended)
-zig build test                                     # Run tests (168 tests)
+zig build test                                     # Run tests (233 tests)
 redis-cli -p 6380                                  # Connect
 ```
 

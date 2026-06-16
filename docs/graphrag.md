@@ -4,6 +4,19 @@
 
 ---
 
+> **Partial implementation — read carefully.** The core `GRAPH.RAG`,
+> `GRAPH.VECSEARCH`, `GRAPH.SETVEC`, and `GRAPH.GETVEC` commands are real, but
+> the accurate signatures live in [Vector Search](vector-search.md): the query
+> vector is passed as **raw f32 bytes**, `K` / `DEPTH` / `DIR` / `EDGETYPE` are
+> keyword flags (not positional), and the reply is always the flat
+> `[key, score, props, neighbors]` array. `GRAPH.COOCCUR` **is implemented**
+> (see its section below — it matches this design). **Not implemented** (design
+> proposal only): the `FORMAT subgraph` reply mode. Note: HNSW indices **do**
+> persist to disk (`.vhi` files) and reload on startup — any "not yet
+> implemented" note about HNSW persistence below is outdated.
+
+---
+
 ## Overview
 
 GraphRAG combines vector similarity search with knowledge graph traversal to produce richer context for LLMs than pure vector RAG. Instead of returning a flat list of similar chunks, GraphRAG returns a **connected subgraph** -- the chunks plus their relationships, entity co-occurrences, and causal chains.

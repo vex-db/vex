@@ -21,28 +21,52 @@ zig build test -Doptimize=ReleaseFast
 
 ---
 
+## Line Coverage
+
+```bash
+zig build coverage          # runs the test binary under kcov → coverage/index.html
+```
+
+Requires `kcov` on PATH (`brew install kcov` on macOS, `apt-get install kcov`
+on Linux). The report covers `src/` only (std/libc and `vendor/`, `tests/`
+are excluded). The output directory `coverage/` is git-ignored.
+
+**Current line coverage: ~66% (5,234 / 7,897 lines in `src/`).**
+
+The uncovered remainder is dominated by I/O and platform paths that unit
+tests don't exercise directly — the io_uring/kqueue event loop, TLS
+handshake, cluster replication wire I/O, and CLI/arg parsing. Those are
+covered instead by the chaos suite (`make stress-quick`) and integration
+runs, not by `zig build test`.
+
+---
+
 ## Test Coverage
 
-**168 tests total (167 passed, 1 skipped in debug mode)**
+**233 tests total (232 passed, 1 skipped in debug mode)**
+
+> The per-module counts below cover the engine + command + RESP core. The
+> grand total also includes cluster, observability, storage, and server
+> infrastructure tests not broken out here.
 
 | Module | Tests | What's Covered |
 |--------|-------|----------------|
 | **kv.zig** | 15 | SET/GET, tombstone DEL, tombstone reuse, overwrite, exists, dbsize, compact, TTL tracking, keys skip tombstones, flushdb, glob matcher, memoryUsage, LRU eviction, noeviction error, last_access tracking |
-| **concurrent_kv.zig** | 6 | Basic set/get, delete, overwrite, exists, flushdb+dbsize, multi-thread stress (8 threads x 1000 ops) |
-| **list.zig** | 6 | LPUSH/RPUSH, LPOP/RPOP, LLEN, LRANGE, LINDEX, LSET/LREM |
-| **hash.zig** | 8 | HSET/HGET, HDEL, HMSET/HMGET, HGETALL, HLEN, HKEYS/HVALS, HEXISTS, HINCRBY |
+| **concurrent_kv.zig** | 9 | Basic set/get, delete, overwrite, exists, flushdb+dbsize, multi-thread stress (8 threads x 1000 ops) |
+| **list.zig** | 7 | LPUSH/RPUSH, LPOP/RPOP, LLEN, LRANGE, LINDEX, LSET/LREM, popTail→pushTail block-boundary cursor regression |
+| **hash.zig** | 13 | HSET/HGET, HDEL, HMSET/HMGET, HGETALL (RESP2/RESP3, empty, large-value no-truncation, wire-cache invalidation), HLEN, HKEYS/HVALS, HEXISTS, HINCRBY |
 | **set.zig** | 7 | SADD/SREM, SMEMBERS, SISMEMBER, SCARD, SUNION, SINTER, SDIFF |
 | **sorted_set.zig** | 8 | ZADD/ZREM, ZCARD, ZRANK, ZSCORE, ZINCRBY, ZCOUNT, ZRANGE |
 | **vector_store.zig** | 10 | Dual-tier store, f16 quantization, mmap save/load, lazy init, multi-field isolation |
-| **hnsw.zig** | 6 | HNSW insert/search, recall accuracy, distance calculations, layer management |
+| **hnsw.zig** | 7 | HNSW insert/search, recall accuracy, distance calculations, layer management |
 | **rag.zig** | 2 | RAG search with graph expansion, vector+BFS integration |
 | **graph.zig** | 14 | Add nodes/edges, duplicate node error, node properties, remove node, remove edge, compact (+ CH auto-build), type interning, type mask filtering, uniform weights flag, edge properties, all_base_edges_alive flag, vector field integration |
-| **ch.zig** | 2 | CH basic correctness (5-node weighted graph vs Dijkstra), CH larger graph validation (100-node, 50 random queries vs Dijkstra) |
+| **ch.zig** | 3 | CH basic correctness (5-node weighted graph vs Dijkstra), CH larger-graph validation (100-node, 50 random queries vs Dijkstra), dense-graph abort (bounded memory, no OOM) |
 | **query.zig** | 12 | BFS traverse outgoing, shortest path, weighted shortest path (flat-array Dijkstra), neighbors, edge type filter, traverse after compact, traverse with delta only, shortest path via delta, parallel BFS, LIMIT, impact analysis, list_by_type |
-| **handler.zig** | 19 | PING, SET/GET, GRAPH.ADDNODE, SELECT namespace isolation, MGET/MSET, INCR/DECR/INCRBY/DECRBY, EXPIRE/PERSIST/TTL, APPEND, BGSAVE without persistence, bgsave_in_progress flag, lists, hashes, sets, sorted sets, vector commands, UPSERT, RENAME, TYPE, GETEX/GETDEL |
-| **resp.zig** | 4 | Parse RESP array, null bulk string, serialize round-trip, inline command parse |
+| **handler.zig** | 27 | PING, SET/GET, GRAPH.ADDNODE, SELECT namespace isolation, MGET/MSET, INCR/DECR/INCRBY/DECRBY, EXPIRE/PERSIST/TTL, APPEND, BGSAVE, lists/hashes/sets/sorted sets, vector commands, UPSERT, RENAME, TYPE, GETEX/GETDEL, typed GRAPH.TRAVERSE/NEIGHBORS hits, multi-type EDGETYPE filter |
+| **resp.zig** | 16 | Parse RESP array, null bulk string, serialize round-trip, inline command parse + Redis-compatible quoting (escapes, single quotes, unbalanced detection) |
 | **aof.zig** | 4 | Write and replay, truncate, replay missing file, group commit buffer |
-| **snapshot.zig** | 4 | Round-trip (KV + graph with properties), missing file, CRC corruption detection, CRC-32 known value |
+| **snapshot.zig** | 5 | Round-trip (KV + graph with properties), missing file, CRC corruption detection, CRC-32 known value |
 | **worker.zig** | 4 | PubSubRegistry subscribe+getSubscribers, unsubscribe, unsubscribeAll, duplicate subscribe prevention |
 | **log.zig** | 3 | Level parse (debug/info/warn/error/unknown), level filtering, timestamp format validation |
 | **config.zig** | 3 | Config file parse (key-value, comments, boolean flags), empty config, comments-only config |

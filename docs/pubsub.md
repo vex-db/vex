@@ -16,6 +16,8 @@ Vex supports Redis-compatible publish/subscribe messaging. Clients can subscribe
 |---------|-------------|
 | `SUBSCRIBE channel [channel ...]` | Subscribe to one or more channels |
 | `UNSUBSCRIBE [channel ...]` | Unsubscribe from specific channels, or all if no args |
+| `PSUBSCRIBE pattern [pattern ...]` | Subscribe to channels matching glob-style patterns |
+| `PUNSUBSCRIBE [pattern ...]` | Unsubscribe from specific patterns, or all if no args |
 | `PUBLISH channel message` | Publish a message to a channel. Returns subscriber count |
 
 ---
@@ -136,7 +138,6 @@ $<message_len>\r\n<message>\r\n
 
 ## Limitations
 
-- No pattern subscriptions (`PSUBSCRIBE`) yet
 - No `PUBSUB` introspection command yet
 - Messages are fire-and-forget (no persistence, no replay)
 - Cross-worker delivery uses direct fd writes (may interleave with other responses under extreme load)

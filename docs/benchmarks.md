@@ -349,7 +349,7 @@ MGET was broken in reactor mode on main (returned nil — read from empty plain 
 | Optimization | Impact |
 |---|---|
 | io_uring recv/send | Replace poll+syscall with async completions for TCP I/O |
-| IORING_SETUP_SQPOLL | Kernel poll thread eliminates submit syscalls |
+| Batched submit_and_wait | One `io_uring_enter` per wakeup submits queued SQEs and blocks for completions (SQPOLL was trialled here but later removed — its kernel poll thread oversubscribed cores at workers > 1) |
 | Async AOF write+fsync | io_uring linked SQE chain, worker stays unblocked |
 | O_DIRECT for AOF | Bypass page cache, page-aligned staging buffer |
 | Per-worker AOF shards | Eliminate cross-worker mutex contention |
@@ -411,7 +411,7 @@ See [Architecture](architecture.md) for detailed explanation. Summary:
 
 | Optimization | Impact |
 |---|---|
-| 256-stripe atomic spinlock | ~10ns CAS vs ~100-200ns pthread_rwlock |
+| 256-stripe per-stripe rwlock | Parallel reads, exclusive writes; different keys hit different stripes |
 | Prealloc outside lock | Lock held ~20ns (pointer swap only) |
 | Cache-line aligned stripes | No false sharing between cores |
 | Cached clock | Skip clock_gettime per GET |

@@ -214,12 +214,20 @@ id=3 addr=127.0.0.1:54355 fd=12 name=gamma age=5 idle=5 flags=N db=0 qbuf=0 obl=
 ## DEBUG
 
 ```
-DEBUG OBJECT <key>   -> Value at:0x0 refcount:N encoding:embstr|raw serializedlength:N lru:0 lru_seconds_idle:0
-DEBUG SLEEP <secs>   -> +OK after sleeping (capped at 60s)
+DEBUG OBJECT <key>           -> Value at:0x0 refcount:N encoding:embstr|raw serializedlength:N lru:0 lru_seconds_idle:0
+DEBUG SLEEP <secs>           -> +OK after sleeping (capped at 60s)
+DEBUG PROBES [ON|OFF|RESET]  -> control/dump per-worker hot-path timing probes
 DEBUG HELP
 ```
 
 `DEBUG SLEEP` is useful for testing `SLOWLOG` + `LATENCY` end-to-end.
+
+`DEBUG PROBES` toggles low-overhead per-worker timing instrumentation on the
+command hot path (recv batch, dispatch, stripe lock, storage op, io_submit,
+and per-op substeps). `ON` enables collection, `RESET` zeroes counters, `OFF`
+disables it (default builds pay ~one atomic load when off), and a bare
+`DEBUG PROBES` dumps the aggregated per-worker breakdown (`n`, `avg_ns`,
+`max_ns` per section).
 
 ---
 

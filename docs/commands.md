@@ -217,6 +217,7 @@ See [Pub/Sub](pubsub.md) for full details.
 | `GRAPH.LIST_BY_TYPE type [LIMIT n]` | List node keys by type |
 | `GRAPH.IMPACT key [DEPTH n] [DIR d]` | Impact analysis — find all affected nodes |
 | `GRAPH.PATHS from type [MAXDEPTH n]` | Find all paths to nodes of a given type |
+| `GRAPH.COOCCUR prop [TYPE t] [WINDOW n] [WEIGHT w] [INCR]` | Auto-link nodes sharing a value for `prop`; returns edge count |
 | `GRAPH.STATS` | Node and edge counts for current DB |
 
 ### Graph Examples
@@ -265,7 +266,7 @@ OK
    2) "database"
 ```
 
-**TRAVERSE / NEIGHBORS reply format (since 0.7.5):** each hit is a
+**TRAVERSE / NEIGHBORS reply format:** each hit is a
 structured array instead of a bare key, so callers can classify results
 without a GETNODE round-trip per hit. TRAVERSE hits are
 `[key, node_type, via_edge, depth]` — `via_edge` is reserved (currently

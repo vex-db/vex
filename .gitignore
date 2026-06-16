@@ -11,3 +11,4 @@ tools/compare-client/compare-client
 zig-x86_64-linux-*/
 zig-aarch64-linux-*/
 bench-logs/
+coverage/

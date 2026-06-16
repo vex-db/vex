@@ -138,6 +138,23 @@ pub fn build(b: *std.Build) void {
     });
     b.step("test", "Run all unit tests").dependOn(&b.addRunArtifact(unit_tests).step);
 
+    // ── Coverage ──────────────────────────────────────────────────────
+    // `zig build coverage` runs the unit-test binary under kcov, emitting
+    // an HTML + Cobertura report under coverage/. Requires kcov on PATH
+    // (`brew install kcov` / `apt-get install kcov`). --include-pattern
+    // keeps the report to our own src/ (drops std + libc). --clean wipes
+    // stale data so the percentage reflects only this run.
+    const cov = b.addSystemCommand(&.{
+        "kcov",
+        "--clean",
+        "--include-pattern=/src/",
+        "--exclude-pattern=/vendor/,/tests/",
+    });
+    cov.addArg(b.pathFromRoot("coverage"));
+    cov.addArtifactArg(unit_tests); // appends the compiled test binary path
+    cov.has_side_effects = true; // always re-run, never cached
+    b.step("coverage", "Run unit tests under kcov → coverage/index.html").dependOn(&cov.step);
+
     // ── Benchmarks ────────────────────────────────────────────────────
     const verztable_mod = b.createModule(.{
         .root_source_file = b.path("vendor/verztable/src/root.zig"),

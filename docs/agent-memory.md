@@ -4,6 +4,15 @@
 
 ---
 
+> **Status: design proposal — NOT yet implemented.** The `MEMORY.*` agent
+> commands (`MEMORY.STORE` / `RECALL` / `RELATE` / `CONTEXT` / `DECAY` /
+> `LIST` / `GET` / `DEL`) described below do not exist. (Vex does implement
+> Redis `MEMORY USAGE|STATS|HELP` — a different, unrelated command.) The
+> pattern can be built today on the real `GRAPH.*` + vector primitives. Track
+> status in [LLM Ecosystem](llm-ecosystem.md).
+
+---
+
 ## Overview
 
 LLM agents need persistent memory that survives across sessions. Today, most agent frameworks dump text into a vector database and do similarity search. This loses all **relational structure** -- contradictions, temporal ordering, causal links, and importance weighting are gone.

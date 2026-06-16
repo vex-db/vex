@@ -4,6 +4,15 @@
 
 ---
 
+> **Status: design proposal — NOT yet implemented.** The `CACHE.SEM*` commands
+> (`CACHE.SEMSET` / `SEMGET` / `SEMINVAL` / `SEMCLEAR` / `SEMSTATS`) described
+> below do not exist in the codebase. This page describes the intended design;
+> the pattern can be approximated today with the real `GRAPH.SETVEC` /
+> `GRAPH.VECSEARCH` primitives (see [Vector Search](vector-search.md)). Track
+> status in [LLM Ecosystem](llm-ecosystem.md).
+
+---
+
 ## Overview
 
 Semantic caching stores LLM responses keyed by query **meaning**, not exact string match. When a new query arrives, Vex checks if a semantically similar query has already been answered. If the similarity exceeds a threshold, the cached response is returned -- skipping the LLM API call entirely.

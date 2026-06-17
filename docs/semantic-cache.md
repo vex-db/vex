@@ -4,12 +4,16 @@
 
 ---
 
-> **Status: design proposal — NOT yet implemented.** The `CACHE.SEM*` commands
-> (`CACHE.SEMSET` / `SEMGET` / `SEMINVAL` / `SEMCLEAR` / `SEMSTATS`) described
-> below do not exist in the codebase. This page describes the intended design;
-> the pattern can be approximated today with the real `GRAPH.SETVEC` /
-> `GRAPH.VECSEARCH` primitives (see [Vector Search](vector-search.md)). Track
-> status in [LLM Ecosystem](llm-ecosystem.md).
+> **Status: IMPLEMENTED — with two API differences from the text below.**
+> The `CACHE.SEM*` commands now exist and are graph-node-backed. But: (1) the
+> query vector is passed as **raw little-endian f32 bytes**, NOT `<dim>` +
+> space-separated floats — e.g. `CACHE.SEMSET <key> <response> <f32_bytes>
+> [EX s] [PX ms] [THRESHOLD t] [TAG tag]` and `CACHE.SEMGET <f32_bytes>
+> [THRESHOLD t] [COUNT n]`; (2) each entry is a graph node (response + TTL +
+> tag stored as node props), not a separate KV entry. Everything else (set →
+> similar-query hit, TTL expiry, tag invalidation, SEMSTATS) works as
+> described. The DIM/float examples below are illustrative of the original
+> proposal's shape only.
 
 ---
 

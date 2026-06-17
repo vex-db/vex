@@ -4,12 +4,17 @@
 
 ---
 
-> **Status: design proposal — NOT yet implemented.** The `MEMORY.*` agent
-> commands (`MEMORY.STORE` / `RECALL` / `RELATE` / `CONTEXT` / `DECAY` /
-> `LIST` / `GET` / `DEL`) described below do not exist. (Vex does implement
-> Redis `MEMORY USAGE|STATS|HELP` — a different, unrelated command.) The
-> pattern can be built today on the real `GRAPH.*` + vector primitives. Track
-> status in [LLM Ecosystem](llm-ecosystem.md).
+> **Status: IMPLEMENTED — with API differences from the text below.** The
+> `MEMORY.*` commands now exist (distinct from Redis `MEMORY USAGE|STATS|HELP`).
+> Differences from the prose below: (1) embeddings are passed as **raw
+> little-endian f32 bytes** via `VEC <f32_bytes>`, NOT `DIM <n> VEC <float>…`;
+> (2) all agents share one HNSW field (`__memory__`) with results filtered by
+> an `agent` node property — there is no per-agent index (the vector store
+> caps at 64 fields). (3) The recall `frequency` factor has a 0.5 floor
+> (`0.5 + 0.5·min(1, log2(access+1)/10)`) so never-accessed memories don't
+> score zero — the bare formula below would zero every fresh memory. Commands,
+> composite ranking, relations, context, and decay/prune all work as
+> described. See [Commands](commands.md) for canonical signatures.
 
 ---
 

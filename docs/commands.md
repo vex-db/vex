@@ -305,6 +305,39 @@ OK
 
 ---
 
+## Semantic Cache (`CACHE.SEM*`)
+
+Graph-node-backed LLM-response cache keyed by query similarity. Query/embedding
+vectors are **raw little-endian f32 bytes**. See [Semantic Cache](semantic-cache.md).
+
+| Command | Description |
+|---------|-------------|
+| `CACHE.SEMSET key response <f32_bytes> [EX s] [PX ms] [THRESHOLD t] [TAG tag]` | Cache a response with its query embedding |
+| `CACHE.SEMGET <f32_bytes> [THRESHOLD t] [COUNT n]` | Return `[key, response, score]` if a similar query is cached, else nil |
+| `CACHE.SEMINVAL key` / `CACHE.SEMINVAL TAG tag` | Invalidate by key or tag; returns count removed |
+| `CACHE.SEMCLEAR` | Flush the whole semantic cache |
+| `CACHE.SEMSTATS` | `[hits, misses, entries]` |
+
+## Agent Memory (`MEMORY.*`)
+
+Persistent, ranked agent memory over graph + vector + scoring. Embeddings are
+**raw f32 bytes** (`VEC <f32_bytes>`); all agents share one HNSW field,
+filtered by an `agent` property. See [Agent Memory](agent-memory.md).
+
+| Command | Description |
+|---------|-------------|
+| `MEMORY.STORE agent text [ID id] [TYPE t] [IMPORTANCE i] [VEC <f32_bytes>] [SOURCE s] [TTL secs] [HALFLIFE secs] [TAG tag]` | Store a memory; returns its id |
+| `MEMORY.RECALL agent <f32_bytes> [LIMIT n] [THRESHOLD t] [TYPE t] [AFTER ts] [BEFORE ts] [TAG tag] [BOOST recency\|importance\|frequency]` | Recall ranked by `similarity·recency·importance·frequency` |
+| `MEMORY.RELATE agent a b reltype [WEIGHT w]` | Typed weighted relationship between memories |
+| `MEMORY.CONTEXT agent id [DEPTH n] [TYPES t…]` | A memory plus its related subgraph |
+| `MEMORY.DECAY agent [PRUNE thr] [DRY_RUN]` | Prune low-score memories (or preview) |
+| `MEMORY.LIST agent [TYPE t] [TAG tag] [LIMIT n] [SORT x]` / `MEMORY.GET agent id` / `MEMORY.DEL agent id` | List / fetch (bumps access) / delete |
+
+> Text-in convenience (pass text instead of vectors) is provided by the
+> optional `vex-embed` proxy — see [Embedding](embedding.md).
+
+---
+
 ## Persistence Commands
 
 See [Persistence](persistence.md) for full details.

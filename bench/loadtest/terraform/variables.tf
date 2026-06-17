@@ -68,18 +68,6 @@ variable "client_count" {
   }
 }
 
-variable "results_bucket" {
-  description = "S3 bucket the server uploads results.csv into."
-  type        = string
-  default     = "aws-athena-query-results-208168340597-ap-south-1"
-}
-
-variable "results_prefix" {
-  description = "Key prefix inside results_bucket for this harness's output."
-  type        = string
-  default     = "vex-loadtest/"
-}
-
 variable "owner" {
   description = "owner tag value (who launched this ephemeral fleet)."
   type        = string

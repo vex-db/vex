@@ -1,0 +1,6 @@
+# Local Terraform state, provider cache, and run outputs — never committed.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+bench-results/

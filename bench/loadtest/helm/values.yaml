@@ -1,0 +1,72 @@
+# =============================================================================
+# vex-bench values
+# =============================================================================
+# In-cluster throughput benchmark: vex vs Redis vs Dragonfly, 4-8 core regime.
+# Nodes on this cluster cap at 8 vCPU, so keep serverCores <= ~6 (leave headroom).
+
+# CPU requests == limits for every server pod. This is "N cores of CPU quota",
+# NOT N pinned/exclusive cores (see README "Honest constraints").
+serverCores: 4
+
+# memtier load generator tunings. These are validated/hard-won:
+#  - 16 threads x 64 conns = 1024 conns. Do NOT raise (e.g. -t 32 -c 200
+#    exhausts client ephemeral ports -> 0.00 ops results).
+loadgen:
+  threads: 16
+  connections: 64
+  # Keyspace size. Preload writes this many keys; sweep uses the same
+  # --key-maximum so GETs hit real data instead of misses.
+  keyMaximum: 1000000
+  # Seconds per sweep cell (per cmd x pipeline). 4 cells total per server.
+  testTime: 30
+  # memtier image used by the orchestrator Job.
+  image: redislabs/memtier_benchmark:latest
+
+# Per-server CPU is taken from serverCores. Memory request/limit per server pod.
+serverMemory: 2Gi
+
+# Which servers to benchmark, their images, ports and args.
+# Disable any by setting enabled: false.
+servers:
+  vex:
+    enabled: true
+    image: ghcr.io/pratyush-sngh/vex:latest
+    port: 6380
+    # {{ serverCores }} is templated in at render time.
+    args:
+      - "--reactor"
+      - "--workers"
+      - "%CORES%"
+      - "--no-persistence"
+      - "--port"
+      - "6380"
+  redis:
+    enabled: true
+    image: redis:8.0.3
+    port: 6379
+    args:
+      - "redis-server"
+      - "--port"
+      - "6379"
+      - "--save"
+      - ""
+      - "--appendonly"
+      - "no"
+  dragonfly:
+    enabled: true
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    port: 6379
+    args:
+      - "--proactor_threads=%CORES%"
+      - "--port"
+      - "6379"
+
+# Write the final CSV into a ConfigMap (requires the Job to have RBAC to patch
+# a ConfigMap). When false (default) results are only emitted to stdout, read
+# via `kubectl logs -f job/<name>`.
+writeConfigMap: false
+
+# Namespace note: install into whatever namespace you choose with
+# `helm install ... -n scrum6`. Default is scrum6 (see README).
+
+imagePullPolicy: IfNotPresent

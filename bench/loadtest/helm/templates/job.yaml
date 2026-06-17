@@ -1,0 +1,120 @@
+{{- $root := . -}}
+{{- $fullname := include "vex-bench.fullname" $root -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-runner
+  labels:
+    {{- include "vex-bench.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: runner
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "vex-bench.labels" $root | nindent 8 }}
+        app.kubernetes.io/component: runner
+    spec:
+      restartPolicy: Never
+      {{- if .Values.writeConfigMap }}
+      serviceAccountName: {{ include "vex-bench.serviceAccountName" $root }}
+      {{- end }}
+      containers:
+        - name: runner
+          image: {{ .Values.loadgen.image | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              # ----------------------------------------------------------------
+              # vex-bench orchestrator
+              # Sequence: for each enabled server (in fixed order) -> wait for
+              # TCP readiness -> preload keyspace -> sweep SET/GET x pipeline
+              # 1/30 -> collect Totals col2 (ops/sec) -> emit CSV.
+              # ----------------------------------------------------------------
+              THREADS={{ .Values.loadgen.threads }}
+              CONNS={{ .Values.loadgen.connections }}
+              KMAX={{ .Values.loadgen.keyMaximum }}
+              TTIME={{ .Values.loadgen.testTime }}
+              MT=memtier_benchmark
+
+              # Accumulate result rows into a file (POSIX sh portable; no
+              # bash-only $'\n'). Header first.
+              CSVFILE=/tmp/results.csv
+              echo "server,cmd,pipeline,ops" > "$CSVFILE"
+
+              # ops_from <logfile> : parse Totals line, column 2 (Ops/sec).
+              ops_from() {
+                awk '/^Totals/ {print $2; exit}' "$1"
+              }
+
+              wait_ready() {
+                svc="$1"; port="$2"
+                echo ">>> waiting for ${svc}:${port}"
+                i=0
+                while [ "$i" -lt 60 ]; do
+                  if "$MT" -s "$svc" -p "$port" -t 1 -c 1 -n 1 \
+                       --ratio 1:0 --hide-histogram >/dev/null 2>&1; then
+                    echo ">>> ${svc}:${port} ready"
+                    return 0
+                  fi
+                  i=$((i+1)); sleep 2
+                done
+                echo ">>> ERROR: ${svc}:${port} never became ready" >&2
+                return 1
+              }
+
+              bench_server() {
+                name="$1"; svc="$2"; port="$3"
+
+                wait_ready "$svc" "$port" || return 1
+
+                echo ">>> [$name] preloading keyspace (KMAX=$KMAX)"
+                "$MT" -s "$svc" -p "$port" -t "$THREADS" -c "$CONNS" \
+                  --ratio 1:0 -n {{ div .Values.loadgen.keyMaximum (mul .Values.loadgen.threads .Values.loadgen.connections) | int }} \
+                  --key-maximum "$KMAX" --key-pattern P:P --hide-histogram \
+                  >/tmp/preload.log 2>&1 || true
+
+                # cmd -> ratio mapping: SET=1:0 (write), GET=0:1 (read).
+                for spec in "SET 1:0" "GET 0:1"; do
+                  cmd=$(echo "$spec" | cut -d' ' -f1)
+                  ratio=$(echo "$spec" | cut -d' ' -f2)
+                  for p in 1 30; do
+                    echo ">>> [$name] $cmd pipeline=$p"
+                    log="/tmp/${name}_${cmd}_${p}.log"
+                    "$MT" -s "$svc" -p "$port" -t "$THREADS" -c "$CONNS" \
+                      --pipeline "$p" --ratio "$ratio" --key-maximum "$KMAX" \
+                      --test-time "$TTIME" --hide-histogram >"$log" 2>&1 || true
+                    ops=$(ops_from "$log")
+                    [ -z "$ops" ] && ops="0.00"
+                    echo "${name},${cmd},${p},${ops}" >> "$CSVFILE"
+                  done
+                done
+              }
+
+              {{- range $name, $srv := .Values.servers }}
+              {{- if $srv.enabled }}
+              bench_server "{{ $name }}" "{{ $fullname }}-{{ $name }}" "{{ $srv.port }}"
+              {{- end }}
+              {{- end }}
+
+              echo "===RESULTS-START==="
+              cat "$CSVFILE"
+              echo "===RESULTS-END==="
+
+              {{- if .Values.writeConfigMap }}
+              # Persist CSV into a ConfigMap so it survives the pod.
+              CM="{{ include "vex-bench.resultsConfigMapName" $root }}"
+              if command -v kubectl >/dev/null 2>&1; then
+                kubectl create configmap "$CM" \
+                  --from-file=results.csv="$CSVFILE" \
+                  --dry-run=client -o yaml | kubectl apply -f - \
+                  && echo ">>> wrote results to configmap/$CM" \
+                  || echo ">>> WARN: failed to write configmap/$CM" >&2
+              else
+                echo ">>> WARN: kubectl not present in image; cannot write ConfigMap" >&2
+              fi
+              {{- end }}
+
+              echo ">>> done"

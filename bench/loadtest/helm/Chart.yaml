@@ -1,0 +1,15 @@
+apiVersion: v2
+name: vex-bench
+description: In-cluster throughput benchmark comparing vex / Redis / Dragonfly in the 4-8 core regime (memtier_benchmark driven)
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - benchmark
+  - vex
+  - redis
+  - dragonfly
+  - memtier
+home: https://github.com/pratyush-sngh/vex
+maintainers:
+  - name: vex

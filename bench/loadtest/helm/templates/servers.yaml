@@ -1,0 +1,68 @@
+{{- $root := . -}}
+{{- $cores := .Values.serverCores | toString -}}
+{{- range $name, $srv := .Values.servers }}
+{{- if $srv.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vex-bench.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "vex-bench.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vex-bench.serverSelectorLabels" (dict "root" $root "serverName" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vex-bench.serverSelectorLabels" (dict "root" $root "serverName" $name) | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ $srv.image | quote }}
+          imagePullPolicy: {{ $root.Values.imagePullPolicy }}
+          args:
+            {{- range $srv.args }}
+            - {{ . | replace "%CORES%" $cores | quote }}
+            {{- end }}
+          ports:
+            - name: server
+              containerPort: {{ $srv.port }}
+          resources:
+            requests:
+              cpu: {{ $root.Values.serverCores | quote }}
+              memory: {{ $root.Values.serverMemory | quote }}
+            limits:
+              cpu: {{ $root.Values.serverCores | quote }}
+              memory: {{ $root.Values.serverMemory | quote }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ $srv.port }}
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: {{ $srv.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vex-bench.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "vex-bench.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "vex-bench.serverSelectorLabels" (dict "root" $root "serverName" $name) | nindent 4 }}
+  ports:
+    - name: server
+      port: {{ $srv.port }}
+      targetPort: {{ $srv.port }}
+{{- end }}
+{{- end }}

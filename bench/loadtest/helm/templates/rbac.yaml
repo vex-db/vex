@@ -1,0 +1,39 @@
+{{- if .Values.writeConfigMap }}
+{{- $root := . -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vex-bench.serviceAccountName" $root }}
+  labels:
+    {{- include "vex-bench.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: runner
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vex-bench.serviceAccountName" $root }}
+  labels:
+    {{- include "vex-bench.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: runner
+rules:
+  # Job writes its results CSV into a ConfigMap (create on first run, patch on reruns).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vex-bench.serviceAccountName" $root }}
+  labels:
+    {{- include "vex-bench.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vex-bench.serviceAccountName" $root }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vex-bench.serviceAccountName" $root }}
+    namespace: {{ $root.Release.Namespace }}
+{{- end }}

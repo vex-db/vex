@@ -1,0 +1,24 @@
+vex-bench deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Servers under benchmark (CPU quota = {{ .Values.serverCores }} cores each):
+{{- range $name, $srv := .Values.servers }}
+{{- if $srv.enabled }}
+  - {{ $name }}  ({{ $srv.image }}, port {{ $srv.port }})
+{{- end }}
+{{- end }}
+
+Load generator: memtier -t {{ .Values.loadgen.threads }} -c {{ .Values.loadgen.connections }}
+  (= {{ mul .Values.loadgen.threads .Values.loadgen.connections }} connections), test-time {{ .Values.loadgen.testTime }}s per cell.
+
+Follow the run and read results:
+
+  kubectl logs -f job/{{ include "vex-bench.fullname" . }}-runner -n {{ .Release.Namespace }}
+
+The CSV (server,cmd,pipeline,ops) is printed between
+===RESULTS-START=== and ===RESULTS-END===.
+{{ if .Values.writeConfigMap }}
+Results are also stored in ConfigMap:
+  kubectl get configmap {{ include "vex-bench.resultsConfigMapName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.results\.csv}'
+{{- else }}
+(ConfigMap output disabled. Set --set writeConfigMap=true to persist the CSV.)
+{{- end }}

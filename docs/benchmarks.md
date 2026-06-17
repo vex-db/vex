@@ -194,6 +194,65 @@ Median of 15 runs, P=50, c=16, n=500,000 per run.
 
 ---
 
+## Vex vs Dragonfly — core scaling
+
+Dragonfly is built for the opposite regime from vex: shared-nothing threads
+designed to scale *vertically* across many cores on one big box. vex targets
+4–8 cores in small pods. So the honest question isn't "who wins" at one size —
+it's the **scaling curve**. This is a real, measured run (not the fabricated
+"+201%" that previously sat in the README, which had no data behind it).
+
+**Method:** AWS, **two** dedicated `c5a.16xlarge` boxes — one runs the server
+(vex / Dragonfly / Redis) pinned to N cores with the rest of the box idle; the
+other runs the load generator (`memtier_benchmark`, 16 threads × 64 conns) over
+the network. Servers and client are **never co-located** (the load generator
+must not be the thing you measure). Each server tested one at a time; Redis
+(single-thread) is the reference. June 2026.
+
+### Unpipelined (one command per round-trip — most clients' default)
+
+| server cores | vex SET | Dragonfly SET | vex Δ | vex GET | Dragonfly GET |
+|---|---|---|---|---|---|
+| 4 | 482k | 314k | **+54%** | 412k | 260k |
+| 8 | 764k | 623k | +23% | 651k | 584k |
+| 16 | 770k | **992k** | **−22%** | 769k | 986k |
+| 32 | 1.21M | 1.07M | +13% | 1.11M | 1.02M |
+| 48 | 1.08M | 843k | +28% | 1.03M | 790k |
+
+Redis 1-thread baseline: ~132k SET / ~122k GET.
+
+It's a genuine contest. vex leads at 4–8 cores, **Dragonfly wins at 16 cores
+(+22%)**, then vex edges back ahead at 32–48. Both peak around 1.1M near 32
+cores and dip at 48. Unpipelined, vex's real lead is **+9% to +59%** — and it
+loses at one point. (This is why the old "+201%" was deleted.)
+
+### Pipelined (`--pipeline 30`)
+
+| server cores | vex SET | Dragonfly SET | vex Δ |
+|---|---|---|---|
+| 4 | 7.0M | 1.7M | +314% |
+| 16 | 9.6M | 3.8M | +152% |
+| 48 | 9.8M | 5.7M | **+72%** |
+
+vex leads pipelined at every core count, but the gap **narrows** as cores climb
+(4× → 1.7×): Dragonfly's many-core design scales pipelined throughput
+(1.7M → 5.7M) while vex plateaus at ~10M.
+
+### Honest caveats
+
+- vex's pipelined plateau (~10–11M) and both servers' 48-core dip indicate the
+  **single load-generator box becomes the limiter at the extremes** — so
+  high-core *absolute* numbers read as "≥ this," not exact, and vex pipelined is
+  likely *understated*. The relative shape is sound.
+- One clean run; treat ±a few % as noise.
+- **Takeaway:** at vex's 4–8 core target, vex leads Dragonfly unpipelined by
+  +23–59%. Across the full 4–48 core range it's competitive both ways
+  (Dragonfly wins at 16); pipelined vex stays ahead but Dragonfly's vertical
+  scaling is real and closing. Different tools for different deployment shapes —
+  with data, not marketing.
+
+---
+
 ## Internal Engine Benchmarks (no network)
 
 Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operations per benchmark, `ReleaseFast` optimization. Numbers are median of 5 runs.

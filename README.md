@@ -26,18 +26,20 @@ It's built on a substrate that's fast on its own terms: 20-40% faster than Redis
 ### The substrate (why it's credible)
 - **20-40% faster than Redis** pipelined; **up to 2.7× unpipelined** (4 cores, `redis-benchmark`) — see [Benchmarks](docs/benchmarks.md)
 - **22× faster shortest path than Memgraph** (bidirectional BFS + CSR adjacency + Contraction Hierarchies)
-- **Beats Dragonfly** at 4 cores (+16% to +201%)
 - **Redis-compatible** — `redis-cli`, redis-py, Jedis, go-redis, ioredis, any RESP client
 - **Zero dependencies** — pure Zig standard library, single binary; multi-reactor, lock-free reads
 - **Production features** — TLS, MULTI/EXEC, pub/sub, WATCH, LRU eviction, BGSAVE, clustering with automatic failover
 
 **Operationally it's still Redis-shaped:** single-threaded-per-instance mental model, same horizontal scaling, small pods. You just need fewer instances — and fewer *other* datastores.
 
+> **Where this is going:** see the **[Vision & Roadmap](docs/roadmap.md)** — the LLM-native goal, the primitives-only scope line, and what's shipped vs. experimental vs. roadmap.
+
 ## Documentation
 
 | Page | Description |
 |------|-------------|
-| **[Commands](docs/commands.md)** | Full command reference: KV, graph, transactions, pub/sub, persistence |
+| **[Vision & Roadmap](docs/roadmap.md)** | Where this is going: the LLM-native goal, design principles, what's shipped vs. roadmap |
+| **[Commands](docs/commands.md)** | Full command reference: KV, graph, vector, semantic cache, agent memory, pub/sub |
 | **[Configuration](docs/configuration.md)** | CLI flags, config file format, environment variables, precedence |
 | **[Architecture](docs/architecture.md)** | System design, why it's fast, source layout, event loop, connection lifecycle |
 | **[Persistence](docs/persistence.md)** | Snapshot format, AOF, BGSAVE, group commit, durability guarantees |

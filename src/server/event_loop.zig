@@ -35,6 +35,33 @@ fn decodeFd(user_data: u64) i32 {
     return @bitCast(@as(u32, @truncate(user_data)));
 }
 
+/// Monotonic clock in ns (VDSO clock_gettime; same source as probes.zig).
+/// Used by the spin-before-park budget — cheap enough to read between batches
+/// of userspace CQ peeks.
+inline fn monoNs() u64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+}
+
+/// Spin-before-park budget, in ns, read once from VEX_POLL_SPIN_US (microseconds).
+/// 0 (the default / unset / unparseable) preserves the original park-immediately
+/// behavior exactly — no extra syscalls, no spin, no clock reads.
+fn readSpinNs() u64 {
+    const raw = std.c.getenv("VEX_POLL_SPIN_US") orelse return 0;
+    const s = std.mem.span(raw);
+    const us = std.fmt.parseInt(u64, std.mem.trim(u8, s, " \t\r\n"), 10) catch return 0;
+    return us *| 1_000;
+}
+
+/// VEX_POLL_SPIN_ADAPTIVE: default true (polite). Set to "0"/"false"/"no" to
+/// pin the warm gate on — always spin the budget (Dragonfly-style busy poll).
+fn readSpinAdaptive() bool {
+    const raw = std.c.getenv("VEX_POLL_SPIN_ADAPTIVE") orelse return true;
+    const s = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
+    return !(std.mem.eql(u8, s, "0") or std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "no"));
+}
+
 pub const EventLoop = struct {
     pub const Event = struct {
         fd: i32,
@@ -78,6 +105,24 @@ pub const EventLoop = struct {
     /// retried at the top of every pollIoUring tick.
     notify_rearm_pending: if (is_linux) bool else void,
     epoll_events_buf: if (is_linux) [MAX_EVENTS]linux.epoll_event else void,
+
+    /// Spin-before-park budget in ns (0 = park immediately, original behavior).
+    /// Set from VEX_POLL_SPIN_US at init. Keeps the worker thread warm under
+    /// load: peek the already-mmap'd completion queue for up to this long before
+    /// sleeping in the kernel, so a request that lands a few µs from now is
+    /// served on an already-running core instead of paying a ~2–5µs scheduler
+    /// wakeup. io_uring path only.
+    spin_ns: u64,
+    /// Adaptive gate: only spin when the previous tick woke quickly (load is
+    /// arriving). A worker that just slept a long time parks immediately, so an
+    /// idle server stays near 0% CPU and we don't oversubscribe shared hosts.
+    spin_hot: bool,
+    /// When false (VEX_POLL_SPIN_ADAPTIVE=0), the gate above is ignored and the
+    /// worker spins the full budget every tick — "always warm", Dragonfly-style:
+    /// zero wakeups whenever load flows, at the cost of burning CPU under light
+    /// load. Pair with a large VEX_POLL_SPIN_US for a near-never-park busy poll.
+    /// Default true (polite: spin only when recently busy).
+    spin_adaptive: bool,
 
     pub fn init() !EventLoop {
         if (is_linux) {
@@ -125,6 +170,9 @@ pub const EventLoop = struct {
             .fd_active = @splat(false),
             .fd_want_write = @splat(false),
             .fd_poll_rearm = @splat(false),
+            .spin_ns = readSpinNs(),
+            .spin_hot = false,
+            .spin_adaptive = readSpinAdaptive(),
         };
 
         self.submitPollAdd(efd, @as(u32, linux.POLL.IN)) catch {
@@ -176,6 +224,9 @@ pub const EventLoop = struct {
             .fd_active = @splat(false),
             .fd_want_write = @splat(false),
             .fd_poll_rearm = @splat(false),
+            .spin_ns = 0, // epoll path parks via epoll_wait timeout, no CQ to peek
+            .spin_hot = false,
+            .spin_adaptive = true,
         };
     }
 
@@ -222,6 +273,9 @@ pub const EventLoop = struct {
             .notify_rearm_pending = {},
             .use_uring = {},
             .epoll_events_buf = {},
+            .spin_ns = 0, // kqueue path parks via kevent timeout, no CQ to peek
+            .spin_hot = false,
+            .spin_adaptive = true,
         };
     }
 
@@ -387,17 +441,49 @@ pub const EventLoop = struct {
         const probe_on = probes_mod.isEnabled();
         const wait_t0: u64 = if (probe_on) probes_mod.start() else 0;
 
-        // Submit any pending SQEs and wait for at least 1 completion
-        _ = self.ring.submit_and_wait(1) catch return error.IoUringSubmitFailed;
-
-        // Harvest completions. The copy MUST be capped at out.len: anything
-        // copied out of the ring beyond what fits in `out` would be silently
-        // dropped (a lost send CQE wedges send_pending; a lost recv CQE kills
-        // the connection's recv loop). Capping leaves the excess in the CQ
-        // for the next tick instead.
+        // Harvest buffer. The copy MUST be capped at out.len: anything copied
+        // out of the ring beyond what fits in `out` would be silently dropped
+        // (a lost send CQE wedges send_pending; a lost recv CQE kills the
+        // connection's recv loop). Capping leaves the excess in the CQ for the
+        // next tick instead.
         var cqes: [MAX_EVENTS]linux.io_uring_cqe = undefined;
         const max_cqes: u32 = @intCast(@min(out.len, MAX_EVENTS));
-        const n = self.ring.copy_cqes(cqes[0..max_cqes], 0) catch return error.IoUringCqeFailed;
+        var n: u32 = 0;
+
+        // Keep-warm path: when the previous tick woke quickly (load is arriving)
+        // and a spin budget is configured, submit the pending SQEs WITHOUT
+        // blocking, then spin-peek the (userspace, mmap'd) completion queue for
+        // up to spin_ns. A request landing a few µs from now is then served on
+        // this still-running core, with no kernel sleep/wake. When spin_ns == 0
+        // this whole branch is skipped and the code below is byte-for-byte the
+        // original park-immediately behavior.
+        if (self.spin_ns != 0 and (self.spin_hot or !self.spin_adaptive)) {
+            _ = self.ring.submit() catch return error.IoUringSubmitFailed;
+            const deadline = monoNs() +% self.spin_ns;
+            var spins: u32 = 0;
+            while (true) {
+                n = self.ring.copy_cqes(cqes[0..max_cqes], 0) catch return error.IoUringCqeFailed;
+                if (n != 0) break;
+                spins +%= 1;
+                std.atomic.spinLoopHint();
+                // Amortize the clock read across a batch of cheap CQ peeks.
+                if ((spins & 0x3F) == 0 and monoNs() >= deadline) break;
+            }
+        }
+
+        // Park path: nothing was ready (idle, cold, or the spin window expired).
+        // submit_and_wait(1) submits any still-pending SQEs and sleeps until at
+        // least one completion. Re-derive spin_hot from how long we actually
+        // slept: a quick wake means traffic is flowing, so stay warm next tick;
+        // a long sleep means we are idle, so park immediately next time.
+        if (n == 0) {
+            const sleep_t0: u64 = if (self.spin_ns != 0) monoNs() else 0;
+            _ = self.ring.submit_and_wait(1) catch return error.IoUringSubmitFailed;
+            n = self.ring.copy_cqes(cqes[0..max_cqes], 0) catch return error.IoUringCqeFailed;
+            if (self.spin_ns != 0) self.spin_hot = (monoNs() -% sleep_t0) < self.spin_ns;
+        } else {
+            self.spin_hot = true;
+        }
 
         if (probe_on) {
             if (probes_mod.current) |p| {

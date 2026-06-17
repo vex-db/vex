@@ -149,6 +149,23 @@ pub const command_names = [_][]const u8{
     "GRAPH.CHSTATS",
     "GRAPH.COOCCUR",
 
+    // Semantic cache (CACHE.SEM*) family.
+    "CACHE.SEMSET",
+    "CACHE.SEMGET",
+    "CACHE.SEMINVAL",
+    "CACHE.SEMCLEAR",
+    "CACHE.SEMSTATS",
+
+    // ── Agent memory ──────────────────────────────────────────────────
+    "MEMORY.STORE",
+    "MEMORY.RECALL",
+    "MEMORY.RELATE",
+    "MEMORY.CONTEXT",
+    "MEMORY.DECAY",
+    "MEMORY.LIST",
+    "MEMORY.GET",
+    "MEMORY.DEL",
+
     // Catch-all for unknown / unlisted commands.
     "OTHER",
 };
@@ -187,6 +204,12 @@ const GRAPH_READS = [_][]const u8{
     "GRAPH.CHSTATS",
 };
 
+/// MEMORY.* command names that mutate state. Everything else under the
+/// MEMORY. prefix (RECALL, CONTEXT, LIST, GET) is read-only.
+const MEMORY_WRITES = [_][]const u8{
+    "MEMORY.STORE", "MEMORY.RELATE", "MEMORY.DECAY", "MEMORY.DEL",
+};
+
 /// Returns true if the named command mutates state. Case-insensitive.
 /// Used by the STOP-WRITE gate. Conservative: anything not recognized
 /// returns false (safer to let an unknown command through than to wrongly
@@ -201,6 +224,20 @@ pub fn isWriteCommand(name: []const u8) bool {
     if (up.len >= 6 and std.mem.eql(u8, up[0..6], "GRAPH.")) {
         for (GRAPH_READS) |r| if (std.mem.eql(u8, up, r)) return false;
         return true;
+    }
+
+    // CACHE.SEM* is graph-backed: writes by default, SEMGET/SEMSTATS are reads.
+    if (up.len >= 6 and std.mem.eql(u8, up[0..6], "CACHE.")) {
+        if (std.mem.eql(u8, up, "CACHE.SEMGET")) return false;
+        if (std.mem.eql(u8, up, "CACHE.SEMSTATS")) return false;
+        return true;
+    }
+
+    // MEMORY.* (with a dot) — STORE/RELATE/DECAY/DEL mutate; the rest read.
+    // (The bare "MEMORY" token is the Redis MEMORY USAGE/STATS family, a read.)
+    if (up.len >= 7 and std.mem.eql(u8, up[0..7], "MEMORY.")) {
+        for (MEMORY_WRITES) |mw| if (std.mem.eql(u8, up, mw)) return true;
+        return false;
     }
 
     for (WRITE_PREFIXES) |w| {

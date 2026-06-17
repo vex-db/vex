@@ -345,6 +345,40 @@ pub const CommandHandler = struct {
             }
         }
 
+        // ── Semantic cache commands (CACHE.SEM*) — dispatch on suffix ──
+        if (cmd.len >= 6 and std.mem.eql(u8, cmd[0..6], "CACHE.")) {
+            const sub = cmd[6..];
+            if (std.mem.eql(u8, sub, "SEMSET")) return self.cmdCacheSemSet(args, w);
+            if (std.mem.eql(u8, sub, "SEMGET")) return self.cmdCacheSemGet(args, w);
+            if (std.mem.eql(u8, sub, "SEMINVAL")) return self.cmdCacheSemInval(args, w);
+            if (std.mem.eql(u8, sub, "SEMCLEAR")) return self.cmdCacheSemClear(args, w);
+            if (std.mem.eql(u8, sub, "SEMSTATS")) return self.cmdCacheSemStats(w);
+        }
+
+        // ── Agent-memory commands (MEMORY.*) — dispatch on suffix ─────
+        // NOTE: the token "MEMORY" (no dot) is the Redis MEMORY USAGE/STATS
+        // family handled above by cmdMemory. "MEMORY." (with a dot) is a
+        // different command token — this block handles that family only.
+        if (cmd.len >= 7 and std.mem.eql(u8, cmd[0..7], "MEMORY.")) {
+            const sub = cmd[7..];
+            const sub_first = if (sub.len > 0) std.ascii.toUpper(sub[0]) else 0;
+            switch (sub_first) {
+                'S' => if (std.mem.eql(u8, sub, "STORE")) return self.cmdMemoryStore(args, w),
+                'R' => {
+                    if (std.mem.eql(u8, sub, "RECALL")) return self.cmdMemoryRecall(args, w);
+                    if (std.mem.eql(u8, sub, "RELATE")) return self.cmdMemoryRelate(args, w);
+                },
+                'C' => if (std.mem.eql(u8, sub, "CONTEXT")) return self.cmdMemoryContext(args, w),
+                'D' => {
+                    if (std.mem.eql(u8, sub, "DECAY")) return self.cmdMemoryDecay(args, w);
+                    if (std.mem.eql(u8, sub, "DEL")) return self.cmdMemoryDel(args, w);
+                },
+                'L' => if (std.mem.eql(u8, sub, "LIST")) return self.cmdMemoryList(args, w),
+                'G' => if (std.mem.eql(u8, sub, "GET")) return self.cmdMemoryGet(args, w),
+                else => {},
+            }
+        }
+
         try resp.serializeErrorTyped(w, "ERR", "unknown command");
     }
 
@@ -3089,6 +3123,903 @@ pub const CommandHandler = struct {
             try resp.serializeArrayHeader(w, r.neighbor_keys.len);
             for (r.neighbor_keys) |nk| { try resp.serializeBulkString(w, stripGraphDbPrefix(self, nk) orelse nk); }
         }
+    }
+
+    // ── Semantic Cache Commands (CACHE.SEM*) ──────────────────────────
+    //
+    // Each cache entry IS a graph node of reserved type SEMCACHE_TYPE. The
+    // query embedding lives in the shared HNSW field SEMCACHE_FIELD; the
+    // cached response, per-entry threshold, optional tag and expiry are node
+    // properties. Invalidation = deleting the node (clears node_alive; the
+    // HNSW search skips dead nodes via the alive bitset). Similarity is
+    // cosine in [0,1] (== 1.0 - hnsw_distance), so THRESHOLD is a >= compare.
+
+    const SEMCACHE_TYPE = "__semcache__";
+    const SEMCACHE_FIELD = "__semcache__";
+    const SEMCACHE_DEFAULT_THRESHOLD: f32 = 0.95;
+
+    /// Wall-clock milliseconds since epoch — same source as KV TTL handling.
+    fn nowMillis(self: *CommandHandler) i64 {
+        return std.Io.Timestamp.now(self.io, .real).toMilliseconds();
+    }
+
+    /// CACHE.SEMSET <key> <response> <query_bytes> [EX s] [PX ms] [THRESHOLD t] [TAG tag]
+    fn cmdCacheSemSet(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 4) {
+            try resp.serializeError(w, "usage: CACHE.SEMSET <key> <response> <query_bytes> [EX s] [PX ms] [THRESHOLD t] [TAG tag]");
+            return;
+        }
+        const response = args[2];
+        const raw = args[3];
+        if (raw.len == 0 or raw.len % 4 != 0) {
+            try resp.serializeError(w, "query bytes must be non-empty and multiple of 4");
+            return;
+        }
+
+        var ttl_ms: i64 = 0; // 0 = no expiry
+        var threshold: f32 = SEMCACHE_DEFAULT_THRESHOLD;
+        var tag: ?[]const u8 = null;
+        var i: usize = 4;
+        while (i < args.len) {
+            var flag_buf: [64]u8 = undefined;
+            const flag = toUpper(args[i], &flag_buf);
+            if (std.mem.eql(u8, flag, "EX") and i + 1 < args.len) {
+                const secs = std.fmt.parseInt(i64, args[i + 1], 10) catch {
+                    try resp.serializeError(w, "EX must be integer");
+                    return;
+                };
+                ttl_ms = secs * 1000;
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "PX") and i + 1 < args.len) {
+                ttl_ms = std.fmt.parseInt(i64, args[i + 1], 10) catch {
+                    try resp.serializeError(w, "PX must be integer");
+                    return;
+                };
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "THRESHOLD") and i + 1 < args.len) {
+                threshold = std.fmt.parseFloat(f32, args[i + 1]) catch SEMCACHE_DEFAULT_THRESHOLD;
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "TAG") and i + 1 < args.len) {
+                tag = args[i + 1];
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+
+        const nk = graphNamespacedKey(self, args[1]) catch {
+            try resp.serializeError(w, "internal error");
+            return;
+        };
+        defer self.allocator.free(nk);
+
+        // Re-set semantics: if the key already exists, drop the old entry
+        // (and its vector) so the new response/vector fully replace it.
+        if (self.graph.resolveKey(nk) != null) {
+            self.graph.removeNode(nk) catch {};
+        }
+
+        _ = self.graph.addNode(nk, SEMCACHE_TYPE) catch |err| {
+            try resp.serializeError(w, @errorName(err));
+            return;
+        };
+
+        self.graph.setNodeProperty(nk, "response", response) catch |err| {
+            try resp.serializeError(w, @errorName(err));
+            return;
+        };
+        var tbuf: [32]u8 = undefined;
+        const tstr = std.fmt.bufPrint(&tbuf, "{d}", .{threshold}) catch "0.95";
+        self.graph.setNodeProperty(nk, "threshold", tstr) catch {};
+        if (tag) |t| self.graph.setNodeProperty(nk, "tag", t) catch {};
+        const expires_at: i64 = if (ttl_ms != 0) self.nowMillis() + ttl_ms else 0;
+        var ebuf: [32]u8 = undefined;
+        const estr = std.fmt.bufPrint(&ebuf, "{d}", .{expires_at}) catch "0";
+        self.graph.setNodeProperty(nk, "expires_at_ms", estr) catch {};
+
+        const dim = raw.len / 4;
+        const aligned = self.allocator.alloc(f32, dim) catch {
+            try resp.serializeError(w, "out of memory");
+            return;
+        };
+        defer self.allocator.free(aligned);
+        @memcpy(std.mem.sliceAsBytes(aligned), raw);
+        self.graph.setVector(nk, SEMCACHE_FIELD, aligned) catch |err| {
+            try resp.serializeError(w, @errorName(err));
+            return;
+        };
+
+        self.logToAOF(args);
+        try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// CACHE.SEMGET <query_bytes> [THRESHOLD t] [COUNT n]
+    /// Returns [key, response, score] for the best matching live, unexpired
+    /// entry at/above threshold, else nil. Bumps hit/miss counters.
+    fn cmdCacheSemGet(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2) {
+            try resp.serializeError(w, "usage: CACHE.SEMGET <query_bytes> [THRESHOLD t] [COUNT n]");
+            return;
+        }
+        const raw = args[1];
+        if (raw.len == 0 or raw.len % 4 != 0) {
+            try resp.serializeError(w, "query bytes must be non-empty and multiple of 4");
+            return;
+        }
+
+        var query_threshold: ?f32 = null;
+        var count: u32 = 1;
+        var i: usize = 2;
+        while (i < args.len) {
+            var flag_buf: [64]u8 = undefined;
+            const flag = toUpper(args[i], &flag_buf);
+            if (std.mem.eql(u8, flag, "THRESHOLD") and i + 1 < args.len) {
+                query_threshold = std.fmt.parseFloat(f32, args[i + 1]) catch null;
+                i += 2;
+            } else if (std.mem.eql(u8, flag, "COUNT") and i + 1 < args.len) {
+                count = std.fmt.parseInt(u32, args[i + 1], 10) catch 1;
+                if (count == 0) count = 1;
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+
+        const dim = raw.len / 4;
+        const qa = self.allocator.alloc(f32, dim) catch {
+            try resp.serializeError(w, "out of memory");
+            return;
+        };
+        defer self.allocator.free(qa);
+        @memcpy(std.mem.sliceAsBytes(qa), raw);
+
+        const vi = self.graph.vec_indices orelse {
+            self.graph.semcache_misses += 1;
+            try resp.serializeNullValue(w, self.protocol_version);
+            return;
+        };
+        const idx = vi.get(SEMCACHE_FIELD) orelse {
+            self.graph.semcache_misses += 1;
+            try resp.serializeNullValue(w, self.protocol_version);
+            return;
+        };
+
+        @import("../engine/vector_store.zig").VectorStore.normalize(qa);
+        const results = idx.search(qa, count, &self.graph.node_alive) catch {
+            try resp.serializeError(w, "search failed");
+            return;
+        };
+        defer self.allocator.free(results);
+
+        const now = self.nowMillis();
+        for (results) |r| {
+            const node = self.graph.getNodeById(r.node_id) orelse continue;
+            const id = r.node_id;
+
+            // Lazy expiry: skip and delete expired entries.
+            if (self.graph.node_props.get(id, "expires_at_ms")) |e| {
+                const exp = std.fmt.parseInt(i64, e, 10) catch 0;
+                if (exp != 0 and now >= exp) {
+                    self.graph.removeNode(node.key) catch {};
+                    continue;
+                }
+            }
+
+            const score: f32 = 1.0 - r.distance;
+            const entry_threshold: f32 = blk: {
+                if (self.graph.node_props.get(id, "threshold")) |ts| {
+                    break :blk std.fmt.parseFloat(f32, ts) catch SEMCACHE_DEFAULT_THRESHOLD;
+                }
+                break :blk SEMCACHE_DEFAULT_THRESHOLD;
+            };
+            const threshold = query_threshold orelse entry_threshold;
+
+            if (score >= threshold) {
+                const response = self.graph.node_props.get(id, "response") orelse "";
+                self.graph.semcache_hits += 1;
+                try resp.serializeArrayHeader(w, 3);
+                try resp.serializeBulkString(w, stripGraphDbPrefix(self, node.key) orelse node.key);
+                try resp.serializeBulkString(w, response);
+                var sb: [32]u8 = undefined;
+                try resp.serializeBulkString(w, std.fmt.bufPrint(&sb, "{d:.4}", .{score}) catch "0");
+                return;
+            }
+        }
+
+        self.graph.semcache_misses += 1;
+        try resp.serializeNullValue(w, self.protocol_version);
+    }
+
+    /// CACHE.SEMINVAL <key>  |  CACHE.SEMINVAL TAG <tag>
+    /// Deletes matching cache node(s); replies integer count removed.
+    fn cmdCacheSemInval(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2) {
+            try resp.serializeError(w, "usage: CACHE.SEMINVAL <key> | CACHE.SEMINVAL TAG <tag>");
+            return;
+        }
+
+        var flag_buf: [64]u8 = undefined;
+        const first = toUpper(args[1], &flag_buf);
+        if (std.mem.eql(u8, first, "TAG")) {
+            if (args.len < 3) {
+                try resp.serializeError(w, "usage: CACHE.SEMINVAL TAG <tag>");
+                return;
+            }
+            const tag = args[2];
+            const ids = self.graph.listByType(SEMCACHE_TYPE, 0) catch {
+                try resp.serializeError(w, "internal error");
+                return;
+            };
+            defer self.allocator.free(ids);
+            var removed: i64 = 0;
+            // Collect keys first (removeNode mutates node_alive / key_to_id).
+            for (ids) |id| {
+                const t = self.graph.node_props.get(id, "tag") orelse continue;
+                if (!std.mem.eql(u8, t, tag)) continue;
+                const node = self.graph.getNodeById(id) orelse continue;
+                self.graph.removeNode(node.key) catch continue;
+                removed += 1;
+            }
+            self.logToAOF(args);
+            try resp.serializeInteger(w, removed);
+            return;
+        }
+
+        // Invalidate by key.
+        const nk = graphNamespacedKey(self, args[1]) catch {
+            try resp.serializeError(w, "internal error");
+            return;
+        };
+        defer self.allocator.free(nk);
+        var removed: i64 = 0;
+        if (self.graph.resolveKey(nk) != null) {
+            self.graph.removeNode(nk) catch {};
+            removed = 1;
+        }
+        self.logToAOF(args);
+        try resp.serializeInteger(w, removed);
+    }
+
+    /// CACHE.SEMCLEAR — delete all semantic-cache nodes. Replies +OK.
+    fn cmdCacheSemClear(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        const ids = self.graph.listByType(SEMCACHE_TYPE, 0) catch {
+            try resp.serializeError(w, "internal error");
+            return;
+        };
+        defer self.allocator.free(ids);
+        for (ids) |id| {
+            const node = self.graph.getNodeById(id) orelse continue;
+            self.graph.removeNode(node.key) catch continue;
+        }
+        self.logToAOF(args);
+        try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// CACHE.SEMSTATS — reply array [hits, misses, entries].
+    fn cmdCacheSemStats(self: *CommandHandler, w: *std.Io.Writer) !void {
+        const ids = self.graph.listByType(SEMCACHE_TYPE, 0) catch {
+            try resp.serializeError(w, "internal error");
+            return;
+        };
+        defer self.allocator.free(ids);
+        try resp.serializeMapOrArrayHeader(w, 3, self.protocol_version);
+        try resp.serializeBulkString(w, "hits");
+        try resp.serializeInteger(w, @intCast(self.graph.semcache_hits));
+        try resp.serializeBulkString(w, "misses");
+        try resp.serializeInteger(w, @intCast(self.graph.semcache_misses));
+        try resp.serializeBulkString(w, "entries");
+        try resp.serializeInteger(w, @intCast(ids.len));
+    }
+
+    // ── Agent-memory commands (MEMORY.*) ──────────────────────────────
+    //
+    // All agents share ONE HNSW field, MEMORY_FIELD ("__memory__"); the
+    // owning agent is stored as a node property and recall results are
+    // filtered by it. (Per-agent fields don't scale — the vector store caps
+    // at 64 fields.) Time is taken from the same wall clock the KV TTL path
+    // uses (std.Io.Timestamp.now(.real)), in unix seconds.
+
+    const MEMORY_FIELD = "__memory__";
+    const MEMORY_DEFAULT_HALFLIFE: i64 = 604800; // 7 days
+
+    /// Components of the composite recall score, kept separate so callers can
+    /// emit them individually and so DECAY can drop the similarity term.
+    const MemScore = struct {
+        recency: f64,
+        importance: f64,
+        frequency: f64,
+
+        /// score = similarity * recency * importance * frequency, with the
+        /// boosted factor's contribution squared (weight doubled).
+        fn composite(self: MemScore, similarity: f64, boost: Boost) f64 {
+            const sim = similarity;
+            var rec = self.recency;
+            var imp = self.importance;
+            var fre = self.frequency;
+            switch (boost) {
+                .none => {},
+                .recency => rec = rec * rec,
+                .importance => imp = imp * imp,
+                .frequency => fre = fre * fre,
+            }
+            return sim * rec * imp * fre;
+        }
+    };
+
+    const Boost = enum { none, recency, importance, frequency };
+
+    /// Unix seconds from the same wall clock the KV layer caches for TTL.
+    fn memNow(self: *CommandHandler) i64 {
+        return @divTrunc(std.Io.Timestamp.now(self.io, .real).toMilliseconds(), 1000);
+    }
+
+    /// Read a u32 node property as f64; returns `dflt` if missing/unparseable.
+    fn memPropF64(self: *CommandHandler, node_id: u32, key: []const u8, dflt: f64) f64 {
+        const v = self.graph.node_props.get(node_id, key) orelse return dflt;
+        return std.fmt.parseFloat(f64, v) catch dflt;
+    }
+
+    /// Read a node property as i64; returns `dflt` if missing/unparseable.
+    fn memPropI64(self: *CommandHandler, node_id: u32, key: []const u8, dflt: i64) i64 {
+        const v = self.graph.node_props.get(node_id, key) orelse return dflt;
+        return std.fmt.parseInt(i64, v, 10) catch dflt;
+    }
+
+    /// Compute the non-similarity score components for one memory node.
+    ///   recency   = 0.5 ^ (age_seconds / halflife)
+    ///   frequency = 0.5 + 0.5 * min(1.0, log2(access_count + 1) / 10)
+    ///
+    /// frequency is a *boost* in [0.5, 1.0], never 0: the naive
+    /// `log2(access+1)/10` is 0 at access_count=0, which would zero the
+    /// entire composite score for every never-accessed memory (i.e. almost
+    /// all of them at store time), making importance/recency irrelevant.
+    /// The 0.5 floor keeps frequency a multiplier that rewards frequent
+    /// access without erasing fresh memories.
+    fn memScoreOf(self: *CommandHandler, node_id: u32, now: i64) MemScore {
+        const created = self.memPropI64(node_id, "created_at", now);
+        const halflife_raw = self.memPropI64(node_id, "halflife", MEMORY_DEFAULT_HALFLIFE);
+        const halflife: f64 = if (halflife_raw <= 0) @floatFromInt(MEMORY_DEFAULT_HALFLIFE) else @floatFromInt(halflife_raw);
+        const age: f64 = @floatFromInt(@max(@as(i64, 0), now - created));
+        const recency = std.math.pow(f64, 0.5, age / halflife);
+        const importance = self.memPropF64(node_id, "importance", 0.5);
+        const access: f64 = @floatFromInt(@max(@as(i64, 0), self.memPropI64(node_id, "access_count", 0)));
+        const frequency = 0.5 + 0.5 * @min(1.0, std.math.log2(access + 1.0) / 10.0);
+        return .{ .recency = recency, .importance = importance, .frequency = frequency };
+    }
+
+    /// True if the live node `id` is a memory owned by `agent`.
+    fn memOwnedBy(self: *CommandHandler, id: u32, agent: []const u8) bool {
+        const node = self.graph.getNodeById(id) orelse return false;
+        if (!std.mem.eql(u8, node.node_type, "memory")) return false;
+        const owner = self.graph.node_props.get(id, "agent") orelse return false;
+        return std.mem.eql(u8, owner, agent);
+    }
+
+    /// Decode raw little-endian f32 bytes into an owned, caller-freed slice.
+    /// Returns null on bad length (empty or not a multiple of 4).
+    fn memDecodeVec(self: *CommandHandler, raw: []const u8) ?[]f32 {
+        if (raw.len == 0 or raw.len % 4 != 0) return null;
+        const dim = raw.len / 4;
+        const out = self.allocator.alloc(f32, dim) catch return null;
+        @memcpy(std.mem.sliceAsBytes(out), raw);
+        return out;
+    }
+
+    /// Collect every live memory node id owned by `agent`. Caller frees.
+    fn memCollectAgent(self: *CommandHandler, agent: []const u8) ![]u32 {
+        var ids: std.ArrayList(u32) = .empty;
+        errdefer ids.deinit(self.allocator);
+        var it = self.graph.node_alive.iterator(.{});
+        while (it.next()) |id_usize| {
+            const id: u32 = @intCast(id_usize);
+            if (self.memOwnedBy(id, agent)) try ids.append(self.allocator, id);
+        }
+        return ids.toOwnedSlice(self.allocator);
+    }
+
+    /// Per-agent auto-increment counter for ID generation. Stored on a hidden
+    /// counter node so it survives within a process run.
+    fn memNextId(self: *CommandHandler, agent: []const u8) !u64 {
+        const counter_key = try std.fmt.allocPrint(self.allocator, "__memctr__:{s}", .{agent});
+        defer self.allocator.free(counter_key);
+        const nk = try graphNamespacedKey(self, counter_key);
+        defer self.allocator.free(nk);
+        var next: u64 = 1;
+        if (self.graph.resolveKey(nk)) |id| {
+            const cur = self.graph.node_props.get(id, "n") orelse "0";
+            next = (std.fmt.parseInt(u64, cur, 10) catch 0) + 1;
+        } else {
+            _ = try self.graph.addNode(nk, "__memctr__");
+        }
+        var buf: [24]u8 = undefined;
+        try self.graph.setNodeProperty(nk, "n", std.fmt.bufPrint(&buf, "{d}", .{next}) catch "1");
+        return next;
+    }
+
+    /// MEMORY.STORE <agent> <text> [ID id] [TYPE t] [IMPORTANCE i] [VEC bytes]
+    ///   [SOURCE id] [TTL secs] [HALFLIFE secs] [TAG tag]
+    fn cmdMemoryStore(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 3) { try resp.serializeError(w, "usage: MEMORY.STORE <agent> <text> [opts]"); return; }
+        const agent = args[1];
+        const text = args[2];
+
+        var id_arg: ?[]const u8 = null;
+        var mtype: []const u8 = "episodic";
+        var importance: []const u8 = "0.5";
+        var vec_raw: ?[]const u8 = null;
+        var source: ?[]const u8 = null;
+        var ttl: ?i64 = null;
+        var halflife: []const u8 = "604800";
+        var tag: ?[]const u8 = null;
+
+        var i: usize = 3;
+        while (i < args.len) {
+            var fb: [64]u8 = undefined;
+            const flag = toUpper(args[i], &fb);
+            if (std.mem.eql(u8, flag, "ID") and i + 1 < args.len) { id_arg = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "TYPE") and i + 1 < args.len) { mtype = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "IMPORTANCE") and i + 1 < args.len) { importance = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "VEC") and i + 1 < args.len) { vec_raw = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "SOURCE") and i + 1 < args.len) { source = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "TTL") and i + 1 < args.len) { ttl = std.fmt.parseInt(i64, args[i + 1], 10) catch null; i += 2; }
+            else if (std.mem.eql(u8, flag, "HALFLIFE") and i + 1 < args.len) { halflife = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "TAG") and i + 1 < args.len) { tag = args[i + 1]; i += 2; }
+            else { i += 1; }
+        }
+
+        // Resolve memory id (auto-generate as mem:<agent>:<counter> if absent).
+        var id_owned: ?[]u8 = null;
+        defer if (id_owned) |o| self.allocator.free(o);
+        const mem_id: []const u8 = if (id_arg) |x| x else blk: {
+            const n = self.memNextId(agent) catch { try resp.serializeError(w, "internal error"); return; };
+            id_owned = std.fmt.allocPrint(self.allocator, "mem:{s}:{d}", .{ agent, n }) catch {
+                try resp.serializeError(w, "out of memory"); return;
+            };
+            break :blk id_owned.?;
+        };
+
+        const nk = graphNamespacedKey(self, mem_id) catch { try resp.serializeError(w, "internal error"); return; };
+        defer self.allocator.free(nk);
+
+        // Create the node (or reuse if the id already exists — STORE overwrites).
+        if (self.graph.resolveKey(nk) == null) {
+            _ = self.graph.addNode(nk, "memory") catch |err| { try resp.serializeError(w, @errorName(err)); return; };
+        }
+
+        const now = self.memNow();
+        var nbuf: [24]u8 = undefined;
+        const now_s = std.fmt.bufPrint(&nbuf, "{d}", .{now}) catch "0";
+
+        self.graph.setNodeProperty(nk, "agent", agent) catch {};
+        self.graph.setNodeProperty(nk, "text", text) catch {};
+        self.graph.setNodeProperty(nk, "type", mtype) catch {};
+        self.graph.setNodeProperty(nk, "importance", importance) catch {};
+        self.graph.setNodeProperty(nk, "created_at", now_s) catch {};
+        self.graph.setNodeProperty(nk, "last_accessed", now_s) catch {};
+        self.graph.setNodeProperty(nk, "access_count", "0") catch {};
+        self.graph.setNodeProperty(nk, "halflife", halflife) catch {};
+        if (tag) |t| self.graph.setNodeProperty(nk, "tag", t) catch {};
+        if (ttl) |secs| {
+            var eb: [24]u8 = undefined;
+            const exp = std.fmt.bufPrint(&eb, "{d}", .{now + secs}) catch "0";
+            self.graph.setNodeProperty(nk, "expires_at", exp) catch {};
+        }
+
+        if (vec_raw) |raw| {
+            const vec = self.memDecodeVec(raw) orelse { try resp.serializeError(w, "VEC bytes must be non-empty multiple of 4"); return; };
+            defer self.allocator.free(vec);
+            self.graph.setVector(nk, MEMORY_FIELD, vec) catch |err| { try resp.serializeError(w, @errorName(err)); return; };
+        }
+
+        if (source) |src| {
+            const src_nk = graphNamespacedKey(self, src) catch { try resp.serializeError(w, "internal error"); return; };
+            defer self.allocator.free(src_nk);
+            // addEdge requires both endpoints to exist; create a stub source node if needed.
+            if (self.graph.resolveKey(src_nk) == null) {
+                _ = self.graph.addNode(src_nk, "source") catch {};
+            }
+            _ = self.graph.addEdge(nk, src_nk, "SOURCED_FROM", 1.0) catch {};
+        }
+
+        self.logToAOF(args);
+        try resp.serializeBulkString(w, mem_id);
+    }
+
+    const MemRecallHit = struct {
+        node_id: u32,
+        similarity: f64,
+        score: f64,
+        components: MemScore,
+        created_at: i64,
+    };
+
+    /// MEMORY.RECALL <agent> <query_bytes> [LIMIT n] [THRESHOLD t] [TYPE t]
+    ///   [AFTER ts] [BEFORE ts] [TAG tag] [BOOST recency|importance|frequency]
+    fn cmdMemoryRecall(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 3) { try resp.serializeError(w, "usage: MEMORY.RECALL <agent> <query_bytes> [opts]"); return; }
+        const agent = args[1];
+
+        var limit: usize = 10;
+        var threshold: f64 = 0.5;
+        var type_filter: ?[]const u8 = null;
+        var after: ?i64 = null;
+        var before: ?i64 = null;
+        var tag_filter: ?[]const u8 = null;
+        var boost: Boost = .none;
+
+        var i: usize = 3;
+        while (i < args.len) {
+            var fb: [64]u8 = undefined;
+            const flag = toUpper(args[i], &fb);
+            if (std.mem.eql(u8, flag, "LIMIT") and i + 1 < args.len) { limit = std.fmt.parseInt(usize, args[i + 1], 10) catch 10; i += 2; }
+            else if (std.mem.eql(u8, flag, "THRESHOLD") and i + 1 < args.len) { threshold = std.fmt.parseFloat(f64, args[i + 1]) catch 0.5; i += 2; }
+            else if (std.mem.eql(u8, flag, "TYPE") and i + 1 < args.len) { type_filter = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "AFTER") and i + 1 < args.len) { after = std.fmt.parseInt(i64, args[i + 1], 10) catch null; i += 2; }
+            else if (std.mem.eql(u8, flag, "BEFORE") and i + 1 < args.len) { before = std.fmt.parseInt(i64, args[i + 1], 10) catch null; i += 2; }
+            else if (std.mem.eql(u8, flag, "TAG") and i + 1 < args.len) { tag_filter = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "BOOST") and i + 1 < args.len) {
+                var bb: [64]u8 = undefined;
+                const bv = toUpper(args[i + 1], &bb);
+                if (std.mem.eql(u8, bv, "RECENCY")) boost = .recency
+                else if (std.mem.eql(u8, bv, "IMPORTANCE")) boost = .importance
+                else if (std.mem.eql(u8, bv, "FREQUENCY")) boost = .frequency;
+                i += 2;
+            }
+            else { i += 1; }
+        }
+
+        const query_vec = self.memDecodeVec(args[2]) orelse { try resp.serializeError(w, "query bytes must be non-empty multiple of 4"); return; };
+        defer self.allocator.free(query_vec);
+
+        // Vector search over the shared field. Over-fetch (the index is shared
+        // by all agents, and filters drop many candidates).
+        const vi = self.graph.vec_indices orelse { try resp.serializeArrayHeader(w, 0); return; };
+        const idx = vi.get(MEMORY_FIELD) orelse { try resp.serializeArrayHeader(w, 0); return; };
+        @import("../engine/vector_store.zig").VectorStore.normalize(query_vec);
+        const big_k: u32 = @intCast(@min(@as(usize, 4096), @max(limit * 8 + 64, 128)));
+        const results = idx.search(query_vec, big_k, &self.graph.node_alive) catch { try resp.serializeError(w, "search failed"); return; };
+        defer self.allocator.free(results);
+
+        const now = self.memNow();
+        var hits: std.ArrayList(MemRecallHit) = .empty;
+        defer hits.deinit(self.allocator);
+
+        for (results) |r| {
+            const id = r.node_id;
+            if (!self.memOwnedBy(id, agent)) continue;
+            const similarity: f64 = 1.0 - @as(f64, r.distance);
+            if (similarity < threshold) continue;
+            if (type_filter) |tf| {
+                const mt = self.graph.node_props.get(id, "type") orelse "episodic";
+                if (!std.mem.eql(u8, mt, tf)) continue;
+            }
+            const created = self.memPropI64(id, "created_at", now);
+            if (after) |a| if (created < a) continue;
+            if (before) |b| if (created > b) continue;
+            if (tag_filter) |tg| {
+                const mtag = self.graph.node_props.get(id, "tag") orelse "";
+                if (!std.mem.eql(u8, mtag, tg)) continue;
+            }
+            const comp = self.memScoreOf(id, now);
+            const score = comp.composite(similarity, boost);
+            hits.append(self.allocator, .{
+                .node_id = id,
+                .similarity = similarity,
+                .score = score,
+                .components = comp,
+                .created_at = created,
+            }) catch { try resp.serializeError(w, "out of memory"); return; };
+        }
+
+        std.mem.sort(MemRecallHit, hits.items, {}, struct {
+            fn lt(_: void, a: MemRecallHit, b: MemRecallHit) bool { return a.score > b.score; }
+        }.lt);
+
+        const n = @min(limit, hits.items.len);
+        try resp.serializeArrayHeader(w, n);
+        for (hits.items[0..n]) |h| {
+            const node = self.graph.getNodeById(h.node_id).?;
+            const user_key = stripGraphDbPrefix(self, node.key) orelse node.key;
+            const text = self.graph.node_props.get(h.node_id, "text") orelse "";
+            const mtype = self.graph.node_props.get(h.node_id, "type") orelse "episodic";
+            try resp.serializeArrayHeader(w, 8);
+            try resp.serializeBulkString(w, user_key);
+            var b1: [32]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&b1, "{d:.4}", .{h.score}) catch "0");
+            try resp.serializeBulkString(w, text);
+            try resp.serializeBulkString(w, mtype);
+            var b2: [32]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&b2, "{d:.4}", .{h.similarity}) catch "0");
+            var b3: [32]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&b3, "{d:.4}", .{h.components.recency}) catch "0");
+            var b4: [32]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&b4, "{d:.4}", .{h.components.importance}) catch "0");
+            var b5: [24]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&b5, "{d}", .{h.created_at}) catch "0");
+        }
+    }
+
+    /// MEMORY.RELATE <agent> <a> <b> <reltype> [WEIGHT w]
+    fn cmdMemoryRelate(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 5) { try resp.serializeError(w, "usage: MEMORY.RELATE <agent> <a> <b> <reltype> [WEIGHT w]"); return; }
+        var weight: f64 = 1.0;
+        if (args.len >= 7) {
+            var fb: [64]u8 = undefined;
+            if (std.mem.eql(u8, toUpper(args[5], &fb), "WEIGHT")) weight = std.fmt.parseFloat(f64, args[6]) catch 1.0;
+        }
+        const a = graphNamespacedKey(self, args[2]) catch { try resp.serializeError(w, "internal error"); return; };
+        defer self.allocator.free(a);
+        const b = graphNamespacedKey(self, args[3]) catch { try resp.serializeError(w, "internal error"); return; };
+        defer self.allocator.free(b);
+        _ = self.graph.addEdge(a, b, args[4], weight) catch |err| { try resp.serializeError(w, @errorName(err)); return; };
+        self.logToAOF(args);
+        try resp.serializeSimpleString(w, "OK");
+    }
+
+    /// MEMORY.CONTEXT <agent> <id> [DEPTH n] [TYPES t...]
+    /// Returns the center memory plus its related memories (BFS over edges).
+    fn cmdMemoryContext(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 3) { try resp.serializeError(w, "usage: MEMORY.CONTEXT <agent> <id> [DEPTH n] [TYPES t...]"); return; }
+        const agent = args[1];
+
+        var depth: u32 = 2;
+        var type_filters: std.ArrayList([]const u8) = .empty;
+        defer type_filters.deinit(self.allocator);
+        var i: usize = 3;
+        while (i < args.len) {
+            var fb: [64]u8 = undefined;
+            const flag = toUpper(args[i], &fb);
+            if (std.mem.eql(u8, flag, "DEPTH") and i + 1 < args.len) { depth = std.fmt.parseInt(u32, args[i + 1], 10) catch 2; i += 2; }
+            else if (std.mem.eql(u8, flag, "TYPES")) {
+                i += 1;
+                while (i < args.len) { type_filters.append(self.allocator, args[i]) catch {}; i += 1; }
+            }
+            else { i += 1; }
+        }
+
+        const center_nk = graphNamespacedKey(self, args[2]) catch { try resp.serializeError(w, "internal error"); return; };
+        defer self.allocator.free(center_nk);
+        const center_id = self.graph.resolveKey(center_nk) orelse { try resp.serializeNullValue(w, self.protocol_version); return; };
+
+        // BFS over edges touching visited nodes, up to `depth` hops. For each
+        // newly reached node we record (id, the edge type/weight that reached it).
+        const Reached = struct { id: u32, rel: []const u8, weight: f64 };
+        var reached: std.ArrayList(Reached) = .empty;
+        defer reached.deinit(self.allocator);
+        var visited = std.AutoHashMap(u32, void).init(self.allocator);
+        defer visited.deinit();
+        visited.put(center_id, {}) catch { try resp.serializeError(w, "out of memory"); return; };
+
+        var frontier: std.ArrayList(u32) = .empty;
+        defer frontier.deinit(self.allocator);
+        frontier.append(self.allocator, center_id) catch { try resp.serializeError(w, "out of memory"); return; };
+
+        var hop: u32 = 0;
+        while (hop < depth and frontier.items.len > 0) : (hop += 1) {
+            var next: std.ArrayList(u32) = .empty;
+            defer next.deinit(self.allocator);
+            for (frontier.items) |fid| {
+                for (self.graph.edge_from.items, 0..) |from, eidx| {
+                    if (!self.graph.edge_alive.isSet(eidx)) continue;
+                    var other: ?u32 = null;
+                    if (from == fid) other = self.graph.edge_to.items[eidx]
+                    else if (self.graph.edge_to.items[eidx] == fid) other = from;
+                    const oid = other orelse continue;
+                    if (!self.graph.node_alive.isSet(oid)) continue;
+                    if (visited.contains(oid)) continue;
+                    if (!self.memOwnedBy(oid, agent)) continue;
+                    const rel = self.graph.type_intern.resolve(self.graph.edge_type_id.items[eidx]);
+                    if (type_filters.items.len > 0) {
+                        var ok = false;
+                        for (type_filters.items) |tf| if (std.mem.eql(u8, tf, rel)) { ok = true; break; };
+                        if (!ok) continue;
+                    }
+                    visited.put(oid, {}) catch { try resp.serializeError(w, "out of memory"); return; };
+                    reached.append(self.allocator, .{ .id = oid, .rel = rel, .weight = self.graph.edge_weight.items[eidx] }) catch { try resp.serializeError(w, "out of memory"); return; };
+                    next.append(self.allocator, oid) catch { try resp.serializeError(w, "out of memory"); return; };
+                }
+            }
+            frontier.clearRetainingCapacity();
+            frontier.appendSlice(self.allocator, next.items) catch { try resp.serializeError(w, "out of memory"); return; };
+        }
+
+        // Reply: ["center", [id,text,type,importance], "related", [[id,text,type,rel,weight],...]]
+        try resp.serializeArrayHeader(w, 4);
+        try resp.serializeBulkString(w, "center");
+        {
+            const node = self.graph.getNodeById(center_id).?;
+            try resp.serializeArrayHeader(w, 4);
+            try resp.serializeBulkString(w, stripGraphDbPrefix(self, node.key) orelse node.key);
+            try resp.serializeBulkString(w, self.graph.node_props.get(center_id, "text") orelse "");
+            try resp.serializeBulkString(w, self.graph.node_props.get(center_id, "type") orelse "episodic");
+            try resp.serializeBulkString(w, self.graph.node_props.get(center_id, "importance") orelse "0.5");
+        }
+        try resp.serializeBulkString(w, "related");
+        try resp.serializeArrayHeader(w, reached.items.len);
+        for (reached.items) |rch| {
+            const node = self.graph.getNodeById(rch.id).?;
+            try resp.serializeArrayHeader(w, 5);
+            try resp.serializeBulkString(w, stripGraphDbPrefix(self, node.key) orelse node.key);
+            try resp.serializeBulkString(w, self.graph.node_props.get(rch.id, "text") orelse "");
+            try resp.serializeBulkString(w, self.graph.node_props.get(rch.id, "type") orelse "episodic");
+            try resp.serializeBulkString(w, rch.rel);
+            var wb: [32]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&wb, "{d:.4}", .{rch.weight}) catch "0");
+        }
+    }
+
+    /// MEMORY.DECAY <agent> [PRUNE thr] [DRY_RUN]
+    /// Scores each memory by importance*recency*frequency (no similarity term)
+    /// and, when PRUNE is set, deletes (or just counts, under DRY_RUN) those
+    /// below the threshold.
+    fn cmdMemoryDecay(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2) { try resp.serializeError(w, "usage: MEMORY.DECAY <agent> [PRUNE thr] [DRY_RUN]"); return; }
+        const agent = args[1];
+        var prune: ?f64 = null;
+        var dry_run = false;
+        var i: usize = 2;
+        while (i < args.len) {
+            var fb: [64]u8 = undefined;
+            const flag = toUpper(args[i], &fb);
+            if (std.mem.eql(u8, flag, "PRUNE") and i + 1 < args.len) { prune = std.fmt.parseFloat(f64, args[i + 1]) catch null; i += 2; }
+            else if (std.mem.eql(u8, flag, "DRY_RUN")) { dry_run = true; i += 1; }
+            else { i += 1; }
+        }
+
+        const ids = self.memCollectAgent(agent) catch { try resp.serializeError(w, "out of memory"); return; };
+        defer self.allocator.free(ids);
+        const now = self.memNow();
+
+        // Track lowest-scoring memory for the report.
+        var lowest_id: ?u32 = null;
+        var lowest_score: f64 = std.math.inf(f64);
+        var to_prune: std.ArrayList(u32) = .empty;
+        defer to_prune.deinit(self.allocator);
+
+        for (ids) |id| {
+            const c = self.memScoreOf(id, now);
+            const score = c.recency * c.importance * c.frequency;
+            if (score < lowest_score) { lowest_score = score; lowest_id = id; }
+            if (prune) |thr| if (score < thr) { to_prune.append(self.allocator, id) catch { try resp.serializeError(w, "out of memory"); return; }; };
+        }
+
+        const total = ids.len;
+        const pruned_n = to_prune.items.len;
+        const remaining = total - (if (dry_run) 0 else pruned_n);
+
+        if (!dry_run) {
+            for (to_prune.items) |id| {
+                const node = self.graph.getNodeById(id) orelse continue;
+                self.graph.removeNode(node.key) catch {};
+            }
+            if (pruned_n > 0) self.logToAOF(args);
+        }
+
+        // Reply mirrors the doc: DRY_RUN reports would_prune/would_keep/lowest;
+        // a real run reports pruned/remaining.
+        if (dry_run) {
+            try resp.serializeArrayHeader(w, 6);
+            try resp.serializeBulkString(w, "would_prune");
+            try resp.serializeInteger(w, @intCast(pruned_n));
+            try resp.serializeBulkString(w, "would_keep");
+            try resp.serializeInteger(w, @intCast(total - pruned_n));
+            try resp.serializeBulkString(w, "lowest");
+            if (lowest_id) |lid| {
+                const node = self.graph.getNodeById(lid).?;
+                try resp.serializeArrayHeader(w, 3);
+                try resp.serializeBulkString(w, stripGraphDbPrefix(self, node.key) orelse node.key);
+                var sb: [32]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&sb, "{d:.4}", .{lowest_score}) catch "0");
+                try resp.serializeBulkString(w, self.graph.node_props.get(lid, "text") orelse "");
+            } else {
+                try resp.serializeArrayHeader(w, 0);
+            }
+        } else {
+            try resp.serializeArrayHeader(w, 4);
+            try resp.serializeBulkString(w, "pruned");
+            try resp.serializeInteger(w, @intCast(pruned_n));
+            try resp.serializeBulkString(w, "remaining");
+            try resp.serializeInteger(w, @intCast(remaining));
+        }
+    }
+
+    /// MEMORY.LIST <agent> [TYPE t] [TAG tag] [LIMIT n] [SORT score|recency|importance]
+    fn cmdMemoryList(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2) { try resp.serializeError(w, "usage: MEMORY.LIST <agent> [TYPE t] [TAG tag] [LIMIT n] [SORT s]"); return; }
+        const agent = args[1];
+        var type_filter: ?[]const u8 = null;
+        var tag_filter: ?[]const u8 = null;
+        var limit: usize = std.math.maxInt(usize);
+        const SortMode = enum { score, recency, importance };
+        var sort_mode: SortMode = .recency;
+        var i: usize = 2;
+        while (i < args.len) {
+            var fb: [64]u8 = undefined;
+            const flag = toUpper(args[i], &fb);
+            if (std.mem.eql(u8, flag, "TYPE") and i + 1 < args.len) { type_filter = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "TAG") and i + 1 < args.len) { tag_filter = args[i + 1]; i += 2; }
+            else if (std.mem.eql(u8, flag, "LIMIT") and i + 1 < args.len) { limit = std.fmt.parseInt(usize, args[i + 1], 10) catch limit; i += 2; }
+            else if (std.mem.eql(u8, flag, "SORT") and i + 1 < args.len) {
+                var sb: [64]u8 = undefined;
+                const sv = toUpper(args[i + 1], &sb);
+                if (std.mem.eql(u8, sv, "SCORE")) sort_mode = .score
+                else if (std.mem.eql(u8, sv, "IMPORTANCE")) sort_mode = .importance
+                else sort_mode = .recency;
+                i += 2;
+            }
+            else { i += 1; }
+        }
+
+        const all = self.memCollectAgent(agent) catch { try resp.serializeError(w, "out of memory"); return; };
+        defer self.allocator.free(all);
+        const now = self.memNow();
+
+        const Row = struct { id: u32, key: f64 };
+        var rows: std.ArrayList(Row) = .empty;
+        defer rows.deinit(self.allocator);
+        for (all) |id| {
+            if (type_filter) |tf| {
+                const mt = self.graph.node_props.get(id, "type") orelse "episodic";
+                if (!std.mem.eql(u8, mt, tf)) continue;
+            }
+            if (tag_filter) |tg| {
+                const mtag = self.graph.node_props.get(id, "tag") orelse "";
+                if (!std.mem.eql(u8, mtag, tg)) continue;
+            }
+            const c = self.memScoreOf(id, now);
+            const k: f64 = switch (sort_mode) {
+                .score => c.recency * c.importance * c.frequency,
+                .recency => c.recency,
+                .importance => c.importance,
+            };
+            rows.append(self.allocator, .{ .id = id, .key = k }) catch { try resp.serializeError(w, "out of memory"); return; };
+        }
+        std.mem.sort(Row, rows.items, {}, struct {
+            fn lt(_: void, a: Row, b: Row) bool { return a.key > b.key; }
+        }.lt);
+
+        const n = @min(limit, rows.items.len);
+        try resp.serializeArrayHeader(w, n);
+        for (rows.items[0..n]) |row| {
+            const node = self.graph.getNodeById(row.id).?;
+            try resp.serializeArrayHeader(w, 5);
+            try resp.serializeBulkString(w, stripGraphDbPrefix(self, node.key) orelse node.key);
+            try resp.serializeBulkString(w, self.graph.node_props.get(row.id, "text") orelse "");
+            try resp.serializeBulkString(w, self.graph.node_props.get(row.id, "type") orelse "episodic");
+            try resp.serializeBulkString(w, self.graph.node_props.get(row.id, "importance") orelse "0.5");
+            try resp.serializeBulkString(w, self.graph.node_props.get(row.id, "created_at") orelse "0");
+        }
+    }
+
+    /// MEMORY.GET <agent> <id> — bumps access_count + last_accessed, returns fields.
+    fn cmdMemoryGet(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 3) { try resp.serializeError(w, "usage: MEMORY.GET <agent> <id>"); return; }
+        const nk = graphNamespacedKey(self, args[2]) catch { try resp.serializeError(w, "internal error"); return; };
+        defer self.allocator.free(nk);
+        const id = self.graph.resolveKey(nk) orelse { try resp.serializeNullValue(w, self.protocol_version); return; };
+        if (!self.memOwnedBy(id, args[1])) { try resp.serializeNullValue(w, self.protocol_version); return; }
+
+        // Bump access_count and last_accessed.
+        const new_count = self.memPropI64(id, "access_count", 0) + 1;
+        var cb: [24]u8 = undefined;
+        self.graph.setNodeProperty(nk, "access_count", std.fmt.bufPrint(&cb, "{d}", .{new_count}) catch "0") catch {};
+        var tb: [24]u8 = undefined;
+        self.graph.setNodeProperty(nk, "last_accessed", std.fmt.bufPrint(&tb, "{d}", .{self.memNow()}) catch "0") catch {};
+        self.logToAOF(args);
+
+        const node = self.graph.getNodeById(id).?;
+        try resp.serializeArrayHeader(w, 6);
+        try resp.serializeBulkString(w, stripGraphDbPrefix(self, node.key) orelse node.key);
+        try resp.serializeBulkString(w, self.graph.node_props.get(id, "text") orelse "");
+        try resp.serializeBulkString(w, self.graph.node_props.get(id, "type") orelse "episodic");
+        try resp.serializeBulkString(w, self.graph.node_props.get(id, "importance") orelse "0.5");
+        try resp.serializeBulkString(w, self.graph.node_props.get(id, "created_at") orelse "0");
+        var ab: [24]u8 = undefined; try resp.serializeBulkString(w, std.fmt.bufPrint(&ab, "{d}", .{new_count}) catch "0");
+    }
+
+    /// MEMORY.DEL <agent> <id> — delete node + its edges. Returns 1 / 0.
+    fn cmdMemoryDel(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 3) { try resp.serializeError(w, "usage: MEMORY.DEL <agent> <id>"); return; }
+        const nk = graphNamespacedKey(self, args[2]) catch { try resp.serializeError(w, "internal error"); return; };
+        defer self.allocator.free(nk);
+        const id = self.graph.resolveKey(nk) orelse { try resp.serializeInteger(w, 0); return; };
+        if (!self.memOwnedBy(id, args[1])) { try resp.serializeInteger(w, 0); return; }
+        self.graph.removeNode(nk) catch { try resp.serializeInteger(w, 0); return; };
+        self.logToAOF(args);
+        try resp.serializeInteger(w, 1);
     }
 
     // ── Upsert / Ingest / List / Impact / Paths Commands ──────────────

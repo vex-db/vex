@@ -1005,3 +1005,485 @@ test "GRAPH.COOCCUR INCR accumulates edge weight" {
     try std.testing.expect(eid != null);
     try std.testing.expectEqual(@as(f64, 2.0), g.edge_weight.items[eid.?]);
 }
+
+// ─── CACHE.SEM* (semantic cache) tests ─────────────────────────────────
+
+// Raw little-endian f32 bytes for a query/embedding vector.
+fn vecBytes(comptime n: usize, vals: [n]f32) [n * 4]u8 {
+    var v = vals;
+    var out: [n * 4]u8 = undefined;
+    @memcpy(&out, std.mem.sliceAsBytes(v[0..]));
+    return out;
+}
+
+test "CACHE.SEMSET then SEMGET hit returns key/response/score" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    const set = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "k1", "hello world", q[0..] });
+    defer allocator.free(set);
+    try std.testing.expectEqualStrings("+OK\r\n", set);
+
+    // Identical query → cosine 1.0 ≥ default 0.95 → hit.
+    const get = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMGET", q[0..] });
+    defer allocator.free(get);
+    // *3, key "k1", response "hello world", score "1.0000"
+    try std.testing.expectEqualStrings(
+        "*3\r\n$2\r\nk1\r\n$11\r\nhello world\r\n$6\r\n1.0000\r\n",
+        get,
+    );
+}
+
+test "CACHE.SEMGET miss on low similarity returns nil" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    const set = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "k1", "resp", q[0..] });
+    defer allocator.free(set);
+
+    // Orthogonal query → cosine 0.0 < 0.95 → miss → nil.
+    const ortho = vecBytes(3, .{ 0.0, 1.0, 0.0 });
+    const get = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMGET", ortho[0..] });
+    defer allocator.free(get);
+    try std.testing.expectEqualStrings("$-1\r\n", get);
+}
+
+test "CACHE.SEMSET PX expiry → SEMGET lazily misses" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    // PX 1ms → already expired by the time we read (and definitely after sleep).
+    const set = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "k1", "resp", q[0..], "PX", "1" });
+    defer allocator.free(set);
+    try std.testing.expectEqualStrings("+OK\r\n", set);
+
+    // Busy-wait past the 1ms expiry using the same wall-clock source the
+    // handler reads, so the lazy-expiry branch is guaranteed to fire.
+    const start = std.Io.Timestamp.now(std.testing.io, .real).toMilliseconds();
+    while (std.Io.Timestamp.now(std.testing.io, .real).toMilliseconds() < start + 5) {}
+
+    const get = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMGET", q[0..] });
+    defer allocator.free(get);
+    try std.testing.expectEqualStrings("$-1\r\n", get);
+
+    // Entry was lazily deleted → SEMSTATS reports 0 entries.
+    const stats = try testExec(&handler, allocator, &[_][]const u8{"CACHE.SEMSTATS"});
+    defer allocator.free(stats);
+    // *6 hits :0 misses :1 entries :0
+    try std.testing.expectEqualStrings(
+        "*6\r\n$4\r\nhits\r\n:0\r\n$6\r\nmisses\r\n:1\r\n$7\r\nentries\r\n:0\r\n",
+        stats,
+    );
+}
+
+test "CACHE.SEMINVAL by key removes the entry" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    const set = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "k1", "resp", q[0..] });
+    allocator.free(set);
+
+    const inval = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMINVAL", "k1" });
+    defer allocator.free(inval);
+    try std.testing.expectEqualStrings(":1\r\n", inval);
+
+    // Gone → miss.
+    const get = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMGET", q[0..] });
+    defer allocator.free(get);
+    try std.testing.expectEqualStrings("$-1\r\n", get);
+
+    // Invalidating a missing key → 0.
+    const inval2 = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMINVAL", "nope" });
+    defer allocator.free(inval2);
+    try std.testing.expectEqualStrings(":0\r\n", inval2);
+}
+
+test "CACHE.SEMINVAL TAG removes all entries with that tag" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q1 = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    const q2 = vecBytes(3, .{ 0.0, 1.0, 0.0 });
+    const q3 = vecBytes(3, .{ 0.0, 0.0, 1.0 });
+    const s1 = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "a", "ra", q1[0..], "TAG", "grp" });
+    allocator.free(s1);
+    const s2 = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "b", "rb", q2[0..], "TAG", "grp" });
+    allocator.free(s2);
+    const s3 = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "c", "rc", q3[0..], "TAG", "other" });
+    allocator.free(s3);
+
+    const inval = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMINVAL", "TAG", "grp" });
+    defer allocator.free(inval);
+    try std.testing.expectEqualStrings(":2\r\n", inval);
+
+    // Only the "other"-tagged entry remains.
+    const stats = try testExec(&handler, allocator, &[_][]const u8{"CACHE.SEMSTATS"});
+    defer allocator.free(stats);
+    try std.testing.expectEqualStrings(
+        "*6\r\n$4\r\nhits\r\n:0\r\n$6\r\nmisses\r\n:0\r\n$7\r\nentries\r\n:1\r\n",
+        stats,
+    );
+}
+
+test "CACHE.SEMCLEAR removes everything" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q1 = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    const q2 = vecBytes(3, .{ 0.0, 1.0, 0.0 });
+    const s1 = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "a", "ra", q1[0..] });
+    allocator.free(s1);
+    const s2 = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "b", "rb", q2[0..] });
+    allocator.free(s2);
+
+    const clear = try testExec(&handler, allocator, &[_][]const u8{"CACHE.SEMCLEAR"});
+    defer allocator.free(clear);
+    try std.testing.expectEqualStrings("+OK\r\n", clear);
+
+    const stats = try testExec(&handler, allocator, &[_][]const u8{"CACHE.SEMSTATS"});
+    defer allocator.free(stats);
+    try std.testing.expectEqualStrings(
+        "*6\r\n$4\r\nhits\r\n:0\r\n$6\r\nmisses\r\n:0\r\n$7\r\nentries\r\n:0\r\n",
+        stats,
+    );
+}
+
+test "CACHE.SEMSTATS counts hits and misses" {
+    const allocator = std.testing.allocator;
+    var kv = KVStore.init(allocator, std.testing.io);
+    defer kv.deinit();
+    var g = GraphEngine.init(allocator);
+    defer g.deinit();
+    var db = std.atomic.Value(u8).init(0);
+    var handler = CommandHandler.init(allocator, std.testing.io, &kv, &g, null, &db, .strict);
+
+    const q = vecBytes(3, .{ 1.0, 0.0, 0.0 });
+    const ortho = vecBytes(3, .{ 0.0, 1.0, 0.0 });
+    const set = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMSET", "k1", "resp", q[0..] });
+    allocator.free(set);
+
+    // 2 hits, 1 miss.
+    inline for (0..2) |_| {
+        const r = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMGET", q[0..] });
+        allocator.free(r);
+    }
+    const miss = try testExec(&handler, allocator, &[_][]const u8{ "CACHE.SEMGET", ortho[0..] });
+    allocator.free(miss);
+
+    const stats = try testExec(&handler, allocator, &[_][]const u8{"CACHE.SEMSTATS"});
+    defer allocator.free(stats);
+    try std.testing.expectEqualStrings(
+        "*6\r\n$4\r\nhits\r\n:2\r\n$6\r\nmisses\r\n:1\r\n$7\r\nentries\r\n:1\r\n",
+        stats,
+    );
+}
+
+// ─── MEMORY.* agent-memory commands ───────────────────────────────────────
+
+// Build raw little-endian f32 bytes for a 4-dim vector.
+fn memVec(comptime v: [4]f32) [16]u8 {
+    var out: [16]u8 = undefined;
+    var arr = v;
+    @memcpy(&out, std.mem.sliceAsBytes(arr[0..]));
+    return out;
+}
+
+const MemTestCtx = struct {
+    kv: KVStore,
+    g: GraphEngine,
+    db: std.atomic.Value(u8),
+    handler: CommandHandler,
+};
+
+fn memSetup(allocator: Allocator, ctx: *MemTestCtx) void {
+    ctx.kv = KVStore.init(allocator, std.testing.io);
+    ctx.g = GraphEngine.init(allocator);
+    ctx.db = std.atomic.Value(u8).init(0);
+    ctx.handler = CommandHandler.init(allocator, std.testing.io, &ctx.kv, &ctx.g, null, &ctx.db, .strict);
+}
+
+test "MEMORY.STORE returns id and MEMORY.GET bumps access_count" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    const vec = memVec(.{ 1.0, 0.0, 0.0, 0.0 });
+    const out = try testExec(&ctx.handler, allocator, &[_][]const u8{
+        "MEMORY.STORE", "alice", "likes zig", "ID", "m1", "TYPE", "semantic",
+        "IMPORTANCE", "0.8", "VEC", &vec,
+    });
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("$2\r\nm1\r\n", out);
+
+    // First GET → access_count 1.
+    const g1 = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.GET", "alice", "m1" });
+    defer allocator.free(g1);
+    try std.testing.expect(std.mem.indexOf(u8, g1, "$1\r\n1\r\n") != null);
+
+    // Second GET → access_count 2.
+    const g2 = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.GET", "alice", "m1" });
+    defer allocator.free(g2);
+    try std.testing.expect(std.mem.indexOf(u8, g2, "$1\r\n2\r\n") != null);
+}
+
+test "MEMORY.RECALL ranks by composite score (importance)" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    // Identical vectors, different importance — higher importance ranks first.
+    const vec = memVec(.{ 1.0, 0.0, 0.0, 0.0 });
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{
+            "MEMORY.STORE", "alice", "low", "ID", "lo", "IMPORTANCE", "0.2", "VEC", &vec,
+        });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{
+            "MEMORY.STORE", "alice", "high", "ID", "hi", "IMPORTANCE", "0.9", "VEC", &vec,
+        });
+        allocator.free(r);
+    }
+
+    const out = try testExec(&ctx.handler, allocator, &[_][]const u8{
+        "MEMORY.RECALL", "alice", &vec, "THRESHOLD", "0.0",
+    });
+    defer allocator.free(out);
+    const hi_pos = std.mem.indexOf(u8, out, "\r\nhi\r\n").?;
+    const lo_pos = std.mem.indexOf(u8, out, "\r\nlo\r\n").?;
+    try std.testing.expect(hi_pos < lo_pos);
+}
+
+test "MEMORY.RECALL recency decay affects order" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    const vec = memVec(.{ 0.0, 1.0, 0.0, 0.0 });
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{
+            "MEMORY.STORE", "bob", "fresh", "ID", "fresh", "IMPORTANCE", "0.5",
+            "HALFLIFE", "100", "VEC", &vec,
+        });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{
+            "MEMORY.STORE", "bob", "old", "ID", "old", "IMPORTANCE", "0.5",
+            "HALFLIFE", "100", "VEC", &vec,
+        });
+        allocator.free(r);
+    }
+    // Age "old" far into the past (created_at=1) so its recency decay → ~0.
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "GRAPH.SETPROP", "old", "created_at", "1" });
+        allocator.free(r);
+    }
+
+    const out = try testExec(&ctx.handler, allocator, &[_][]const u8{
+        "MEMORY.RECALL", "bob", &vec, "THRESHOLD", "0.0",
+    });
+    defer allocator.free(out);
+    const fresh_pos = std.mem.indexOf(u8, out, "\r\nfresh\r\n").?;
+    const old_pos = std.mem.indexOf(u8, out, "\r\nold\r\n").?;
+    try std.testing.expect(fresh_pos < old_pos);
+}
+
+test "MEMORY.RECALL isolates agents" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    const vec = memVec(.{ 1.0, 1.0, 0.0, 0.0 });
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{
+            "MEMORY.STORE", "agentA", "secret of A", "ID", "amem", "VEC", &vec,
+        });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{
+            "MEMORY.STORE", "agentB", "secret of B", "ID", "bmem", "VEC", &vec,
+        });
+        allocator.free(r);
+    }
+
+    // agentB recalls — must NOT see agentA's memory.
+    const out = try testExec(&ctx.handler, allocator, &[_][]const u8{
+        "MEMORY.RECALL", "agentB", &vec, "THRESHOLD", "0.0",
+    });
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "amem") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "bmem") != null);
+
+    // GET across agents is also blocked (null reply).
+    const g = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.GET", "agentB", "amem" });
+    defer allocator.free(g);
+    try std.testing.expect(g[0] == '$' or g[0] == '_'); // $-1 / _ null
+}
+
+test "MEMORY.RELATE + MEMORY.CONTEXT returns center and related" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "carol", "dark mode", "ID", "c1" });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "carol", "light mode now", "ID", "c2" });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.RELATE", "carol", "c2", "c1", "contradicts", "WEIGHT", "0.9" });
+        defer allocator.free(r);
+        try std.testing.expectEqualStrings("+OK\r\n", r);
+    }
+
+    const out = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.CONTEXT", "carol", "c2" });
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "center") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "related") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "contradicts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "dark mode") != null);
+}
+
+test "MEMORY.DECAY prunes low-score memories (with DRY_RUN)" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "dan", "keep", "ID", "keep", "IMPORTANCE", "0.9" });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "dan", "drop", "ID", "drop", "IMPORTANCE", "0.01", "HALFLIFE", "100" });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "GRAPH.SETPROP", "drop", "created_at", "1" });
+        allocator.free(r);
+    }
+
+    // DRY_RUN must not delete anything; reports would_prune 1.
+    const dry = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.DECAY", "dan", "PRUNE", "0.1", "DRY_RUN" });
+    defer allocator.free(dry);
+    try std.testing.expect(std.mem.indexOf(u8, dry, "would_prune") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dry, ":1\r\n") != null);
+
+    // Memory still present after dry run.
+    const still = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.GET", "dan", "drop" });
+    defer allocator.free(still);
+    try std.testing.expect(std.mem.indexOf(u8, still, "drop") != null);
+
+    // Real prune deletes it.
+    const real = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.DECAY", "dan", "PRUNE", "0.1" });
+    defer allocator.free(real);
+    try std.testing.expect(std.mem.indexOf(u8, real, "pruned") != null);
+
+    const gone = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.GET", "dan", "drop" });
+    defer allocator.free(gone);
+    try std.testing.expect(gone[0] == '$' or gone[0] == '_'); // null
+}
+
+test "MEMORY.DEL removes a memory" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "eve", "transient", "ID", "e1" });
+        allocator.free(r);
+    }
+    const del = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.DEL", "eve", "e1" });
+    defer allocator.free(del);
+    try std.testing.expectEqualStrings(":1\r\n", del);
+
+    // Deleting again → 0.
+    const del2 = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.DEL", "eve", "e1" });
+    defer allocator.free(del2);
+    try std.testing.expectEqualStrings(":0\r\n", del2);
+}
+
+test "MEMORY.LIST filters by type and tag" {
+    const allocator = std.testing.allocator;
+    var ctx: MemTestCtx = undefined;
+    memSetup(allocator, &ctx);
+    defer ctx.kv.deinit();
+    defer ctx.g.deinit();
+
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "frank", "a fact", "ID", "f1", "TYPE", "semantic", "TAG", "pref" });
+        allocator.free(r);
+    }
+    {
+        const r = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.STORE", "frank", "an event", "ID", "f2", "TYPE", "episodic" });
+        allocator.free(r);
+    }
+
+    const all = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.LIST", "frank" });
+    defer allocator.free(all);
+    try std.testing.expect(std.mem.indexOf(u8, all, "f1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, all, "f2") != null);
+
+    const sem = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.LIST", "frank", "TYPE", "semantic" });
+    defer allocator.free(sem);
+    try std.testing.expect(std.mem.indexOf(u8, sem, "f1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sem, "f2") == null);
+
+    const tagged = try testExec(&ctx.handler, allocator, &[_][]const u8{ "MEMORY.LIST", "frank", "TAG", "pref" });
+    defer allocator.free(tagged);
+    try std.testing.expect(std.mem.indexOf(u8, tagged, "f1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tagged, "f2") == null);
+}

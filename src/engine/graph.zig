@@ -120,6 +120,12 @@ pub const GraphEngine = struct {
     ch: ?ch_mod.CHData,
     ch_query_engine: ?ch_mod.CHQueryEngine,
 
+    // ─── Semantic cache (CACHE.SEM*) counters ──
+    /// Lifetime hit/miss counters for CACHE.SEMGET. Single-threaded handler
+    /// access in production; plain u64 is fine. Reported by CACHE.SEMSTATS.
+    semcache_hits: u64 = 0,
+    semcache_misses: u64 = 0,
+
     pub fn init(allocator: Allocator) GraphEngine {
         return .{
             .allocator = allocator,

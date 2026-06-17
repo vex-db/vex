@@ -122,6 +122,43 @@ pub fn build(b: *std.Build) void {
     });
     b.step("test-sentinel", "Run vex-sentinel unit tests").dependOn(&b.addRunArtifact(sentinel_tests).step);
 
+    // ── vex-embed: embedding proxy ────────────────────────────────────
+    // Standalone process that fronts vex and adds text→vector embedding via
+    // an external HTTP endpoint, keeping blocking HTTP off vex's event loop.
+    // Reuses src/log.zig like sentinel; all other logic lives under embed/.
+    const embed_imports = [_]std.Build.Module.Import{
+        .{ .name = "vex_log", .module = simpleModule(b, target, optimize, "src/log.zig") },
+    };
+
+    const embed_exe = b.addExecutable(.{
+        .name = "vex-embed",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("embed/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &embed_imports,
+        }),
+    });
+    b.installArtifact(embed_exe);
+    b.step("vex-embed", "Build vex-embed (embedding proxy)").dependOn(&embed_exe.step);
+
+    const run_embed = b.addRunArtifact(embed_exe);
+    run_embed.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_embed.addArgs(args);
+    b.step("run-vex-embed", "Run vex-embed").dependOn(&run_embed.step);
+
+    const embed_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("embed/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &embed_imports,
+        }),
+    });
+    b.step("test-vex-embed", "Run vex-embed unit tests").dependOn(&b.addRunArtifact(embed_tests).step);
+
     // ── Test root ─────────────────────────────────────────────────────
     // test_main.zig sits at the repo root so Zig 0.17's module-path check
     // allows @imports into both src/ and tests/unit/ from a single entry.

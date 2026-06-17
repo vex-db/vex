@@ -1,30 +1,37 @@
 # Vex
 
-A high-performance KV + Graph database written in Zig. Drop-in Redis replacement: 20-40% faster per instance on pipelined workloads, and up to 2.7x Redis throughput unpipelined once concurrency exceeds ~12 connections. Same ops, same clients, same horizontal scaling model -- fewer instances for the same throughput.
+An **in-process database for LLM applications**, written in Zig. One binary where vector search, knowledge-graph traversal, and key-value state share memory and the Redis protocol — so the **vector → graph → KV** path behind GraphRAG and agent memory runs in a single process with zero network hops, instead of stitching together Redis + a vector DB + a graph DB + glue code.
+
+It's built on a substrate that's fast on its own terms: 20-40% faster than Redis pipelined, up to 2.7× unpipelined, 22× faster shortest-path than Memgraph — all in a zero-dependency, RESP-compatible single binary.
 
 ## Why Vex?
 
-**Same scaling model as Redis, better per-instance performance.**
+**One engine for the LLM data stack.** GraphRAG, agent memory, and semantic caching normally mean running a vector DB *and* a graph DB *and* Redis, plus glue to move data between them on every request. Vex does all three in-process: `GRAPH.VECSEARCH → GRAPH.TRAVERSE → GET` is one fused path in shared memory, not three network round-trips.
 
-Redis is single-threaded. To scale, you add more instances. Vex does the same -- but each instance uses 4-8 cores efficiently via multi-reactor architecture with lock-free reads. You need 20-40% fewer instances for the same throughput.
+| Your LLM app needs | Typical stack | With Vex |
+|---|---|---|
+| Semantic response cache | Redis + a vector DB | `CACHE.SEM*` |
+| Agent memory | vector DB + bespoke ranking | `MEMORY.*` (ranked recall built in) |
+| GraphRAG | vector DB + Neo4j + glue | `GRAPH.RAG` (search + traverse, one call) |
+| KV / session state | Redis | KV (Redis-compatible) |
 
-| | Redis | Vex | Dragonfly |
-|---|---|---|---|
-| Sweet spot | 1 core | 4-8 cores | 32-64 cores |
-| Scale model | Add instances | Add instances | Bigger machine |
-| K8s / Docker | Small pods | Small pods | Huge pod |
-| Failure blast radius | 1 instance | 1 instance | Everything |
-| Protocol | RESP | RESP (compatible) | RESP (compatible) |
+### LLM primitives (the headline)
+- **Semantic cache** — `CACHE.SEMSET` / `SEMGET`: cache LLM responses by query *meaning*, not exact match. HNSW similarity, per-entry TTL + threshold, tag invalidation.
+- **Agent memory** — `MEMORY.STORE` / `RECALL` / `RELATE` / `CONTEXT` / `DECAY`: persistent memories with typed relationships and composite ranking (similarity · recency · importance · frequency).
+- **GraphRAG** — `GRAPH.RAG`: vector search + graph BFS expansion in one command; `GRAPH.COOCCUR` auto-links co-occurring entities.
+- **Vectors** — HNSW ANN search per graph node, f16 mmap storage, persistent indexes.
+- **Embedding proxy** *(experimental)* — optional `vex-embed` sidecar turns text → vectors via Ollama/OpenAI, keeping embedding off the hot path. *Scaffold today: transparent RESP proxy + `EMBED`; per-command auto-rewrite is WIP.*
+- **MCP server** *(roadmap)* — LLMs use vex's primitives as tools directly.
 
-- **20-40% faster than Redis** on pipelined workloads with equal resources (4 cores, `redis-benchmark`, median of 30 runs)
-- **Up to 2.7x Redis throughput unpipelined** (the default for most Redis clients): +30% at 16 connections, +166% at 128 (SET, 4 workers); parity ±13% below 12 connections where both servers are RTT-bound
-- **Beats Dragonfly** at 4 cores (+16% to +201%) -- shared-nothing routing overhead loses to striped locks at moderate core counts
-- **22x faster shortest path than Memgraph** via bidirectional BFS + CSR adjacency + Contraction Hierarchies
-- **Redis-compatible** -- works with `redis-cli`, redis-py, Jedis, go-redis, ioredis, any Redis client
-- **Built-in graph engine** -- TRAVERSE, PATH, WPATH (CH-accelerated), NEIGHBORS on the same data store
-- **Zero dependencies** -- pure Zig standard library, single binary
-- **Vector search + GRAPH.RAG** -- HNSW ANN search on graph nodes, semantic search → graph traversal in one command
-- **Production features** -- TLS, MULTI/EXEC, pub/sub, WATCH, LRU eviction, BGSAVE, clustering with automatic failover
+### The substrate (why it's credible)
+- **20-40% faster than Redis** pipelined; **up to 2.7× unpipelined** (4 cores, `redis-benchmark`) — see [Benchmarks](docs/benchmarks.md)
+- **22× faster shortest path than Memgraph** (bidirectional BFS + CSR adjacency + Contraction Hierarchies)
+- **Beats Dragonfly** at 4 cores (+16% to +201%)
+- **Redis-compatible** — `redis-cli`, redis-py, Jedis, go-redis, ioredis, any RESP client
+- **Zero dependencies** — pure Zig standard library, single binary; multi-reactor, lock-free reads
+- **Production features** — TLS, MULTI/EXEC, pub/sub, WATCH, LRU eviction, BGSAVE, clustering with automatic failover
+
+**Operationally it's still Redis-shaped:** single-threaded-per-instance mental model, same horizontal scaling, small pods. You just need fewer instances — and fewer *other* datastores.
 
 ## Documentation
 
@@ -202,10 +209,11 @@ See [Vector Search & GRAPH.RAG](docs/vector-search.md) for full RAG pipeline exa
 | **Sorted Sets** | ZADD/ZREM/ZRANGE/ZSCORE/ZRANK/ZCARD/ZINCRBY/ZCOUNT |
 | **Graph** | ADDNODE/ADDEDGE/TRAVERSE/PATH/WPATH/NEIGHBORS + 6 more |
 | **Vector Search** | GRAPH.SETVEC/GETVEC/VECSEARCH + GRAPH.RAG (search + traverse in one call) |
-| **GraphRAG** | GRAPH.RAG (subgraph returns) + GRAPH.COOCCUR (auto entity linking) |
-| **Semantic Cache** | CACHE.SEMSET/SEMGET -- cache LLM responses by query meaning |
-| **Agent Memory** | MEMORY.STORE/RECALL/RELATE/CONTEXT/DECAY -- persistent agent memory |
-| **MCP Server** | Native Model Context Protocol -- LLMs use Vex as a tool directly |
+| **GraphRAG** | GRAPH.RAG (vector search + graph expansion, one call) + GRAPH.COOCCUR (auto entity linking) |
+| **Semantic Cache** | CACHE.SEMSET/SEMGET/SEMINVAL/SEMCLEAR/SEMSTATS -- cache LLM responses by query meaning |
+| **Agent Memory** | MEMORY.STORE/RECALL/RELATE/CONTEXT/DECAY/LIST/GET/DEL -- persistent ranked agent memory |
+| **Embedding proxy** | `vex-embed` sidecar: text→vector via Ollama/OpenAI (experimental; auto-rewrite WIP) |
+| **MCP Server** | _Roadmap_ -- LLMs use Vex's primitives as tools directly |
 | **Transactions** | MULTI/EXEC/DISCARD + WATCH/UNWATCH optimistic locking |
 | **Pub/Sub** | SUBSCRIBE/PUBLISH/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE |
 | **Persistence** | Atomic snapshot + AOF with group commit + `appendfsync` (always/everysec/no) + STOP-WRITE on disk full |

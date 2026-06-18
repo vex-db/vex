@@ -2,7 +2,7 @@
 
 An **in-process database for LLM applications**, written in Zig. One binary where vector search, knowledge-graph traversal, and key-value state share memory and the Redis protocol — so the **vector → graph → KV** path behind GraphRAG and agent memory runs in a single process with zero network hops, instead of stitching together Redis + a vector DB + a graph DB + glue code.
 
-It's built on a substrate that's fast on its own terms: 20-40% faster than Redis pipelined, up to 2.7× unpipelined, 22× faster shortest-path than Memgraph — all in a zero-dependency, RESP-compatible single binary.
+It's built on a substrate that's fast on its own terms: on **identical hardware** it beats **Dragonfly** — the fastest multi-core Redis-compatible store — by **+35–46% unpipelined and 4.8–6.2× pipelined**, and it's **22× faster shortest-path than Memgraph** — all in a zero-dependency, RESP-compatible single binary.
 
 ## Why Vex?
 
@@ -24,11 +24,13 @@ It's built on a substrate that's fast on its own terms: 20-40% faster than Redis
 - **MCP server** *(roadmap)* — LLMs use vex's primitives as tools directly.
 
 ### The substrate (why it's credible)
-- **20-40% faster than Redis** pipelined; **up to 2.7× unpipelined** (4 cores, `redis-benchmark`) — see [Benchmarks](docs/benchmarks.md)
+- **Beats Dragonfly on identical hardware** — c6gn.16xlarge, 256B values, saturated: SET **+46%** unpipelined / **4.8×** pipelined, GET **+35%** / **6.2×**. (And it's the most CPU-efficient of the three — higher per-core throughput than Dragonfly, which is what gives the higher saturation ceiling.) See [Benchmarks](docs/benchmarks.md).
+- **20–40% faster than Redis** pipelined; wins unpipelined at every connection count past ~12 (`redis-benchmark`)
 - **22× faster shortest path than Memgraph** (bidirectional BFS + CSR adjacency + Contraction Hierarchies)
 - **Redis-compatible** — `redis-cli`, redis-py, Jedis, go-redis, ioredis, any RESP client
 - **Zero dependencies** — pure Zig standard library, single binary; multi-reactor, lock-free reads
 - **Production features** — TLS, MULTI/EXEC, pub/sub, WATCH, LRU eviction, BGSAVE, clustering with automatic failover
+- **Tunable** — worker pinning, io_uring one-thread-per-ring flags, RFS guidance for many-core boxes — see [Tuning](docs/tuning.md)
 
 **Operationally it's still Redis-shaped:** single-threaded-per-instance mental model, same horizontal scaling, small pods. You just need fewer instances — and fewer *other* datastores.
 
@@ -50,7 +52,9 @@ It's built on a substrate that's fast on its own terms: 20-40% faster than Redis
 | **[Clustering](docs/clustering.md)** | Leader/follower replication, epoch mechanism, VEX.PROMOTE, consistency model |
 | **[Observability](docs/observability.md)** | INFO, SLOWLOG, LATENCY, CLIENT LIST, DEBUG/MEMORY/CONFIG, JSON logs, redis_exporter |
 | **[Separation of Concerns](docs/separation-of-concerns.md)** | How vex / vex-sentinel / sidecars are split. Mechanism vs policy. |
-| **[Benchmarks](docs/benchmarks.md)** | KV vs Redis (pipelined + unpipelined), graph vs Memgraph, internal engine benchmarks |
+| **[Benchmarks](docs/benchmarks.md)** | vs Dragonfly (head-to-head), vs Redis (pipelined + unpipelined), graph vs Memgraph |
+| **[Tuning](docs/tuning.md)** | Worker pinning, io_uring flags, NAPI, RFS, RSS-queue guidance — every knob, measured |
+| **[Kernel-bypass (AF_XDP)](docs/af-xdp-design.md)** | Design sketch: what going around the kernel net stack would buy and cost |
 | **[Unpipelined Command Grids](docs/unpipelined-command-grids.md)** | Per-command vex-vs-Redis deltas across workers × connections |
 | **[Deployment](docs/deployment.md)** | Production checklist, systemd, Docker, tuning |
 | **[Vector Search & GRAPH.RAG](docs/vector-search.md)** | HNSW vector search, f16 mmap storage, RAG pipeline examples |
@@ -101,7 +105,30 @@ Workers auto-detect from CPU core count (capped at 8). See [Configuration](docs/
 
 ## Benchmarks
 
-Benchmarked with **`redis-benchmark`** (industry standard). Docker containers with **equal, isolated resources**: 4 CPU cores + 4GB RAM each, CPU-pinned (`cpuset`). See [Benchmarks](docs/benchmarks.md) for full methodology, UDS results, and internal engine numbers.
+> **On honesty:** the headline below is a **head-to-head against Dragonfly on
+> *its own* published methodology and hardware** — same box, same client, same
+> flags, both engines measured in the same run. We don't quote the easy "25× vs
+> single-threaded Redis" multiple (any multi-core engine can; it's just core
+> count). And we learned the hard way that a single load-generator caps ~1–3M
+> ops/s and makes every engine look tied — so these are **saturated** numbers
+> (≥2 client boxes). Full methodology + the kernel-bound caveats: [Benchmarks](docs/benchmarks.md).
+
+### vs Dragonfly (c6gn.16xlarge, 256-byte values, `--distinct-client-seed`, saturated)
+
+Both engines on the *same* 64-core / 32-RSS-queue box, driven by separate c6gn
+client boxes, all cores, RFS on:
+
+| | vex | Dragonfly | vex margin |
+|---|---|---|---|
+| SET, unpipelined | **4.42M** | 3.03M | **+46%** |
+| SET, pipelined (P=30) | **31.96M** | 6.64M | **4.8×** |
+| GET, unpipelined | **4.09M** | 3.03M | **+35%** |
+| GET, pipelined (P=30) | **33.70M** | 5.41M | **6.2×** |
+
+vex wins **every cell**. Unpipelined is the closer fight (both engines are
+kernel-network-bound there); pipelined is where vex's engine efficiency shows.
+vex is also the most **CPU-efficient** of vex / Dragonfly / Redis (highest
+throughput per core), which is exactly why its *saturation* ceiling is higher.
 
 ### KV: Vex vs Redis 8.0 (`redis-benchmark`, P=50, c=16)
 

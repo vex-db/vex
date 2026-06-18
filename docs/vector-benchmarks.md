@@ -230,12 +230,23 @@ Based on architecture analysis:
 
 ### Memory (100K @ 768d)
 
-| DB | Expected RSS |
-|----|-------------|
-| **Vex (f16 mmap)** | ~30 MB (HNSW only, vectors on disk) |
-| Redis (f32) | ~350 MB |
-| Qdrant (scalar quant) | ~200 MB |
-| Weaviate (f32) | ~400 MB |
+Vex uses two tiers, so it has two honest numbers: a full f32 write buffer
+before `SAVE`, and an f16 mmap tier after. Compare like-for-like — these are
+resident-memory figures for the same 100K × 768d set:
+
+| DB | Resident RSS | Notes |
+|----|--------------|-------|
+| **Vex** — after `SAVE`, idle | **~30 MB** | HNSW resident; f16 vectors mmap'd, cold pages evicted (147 MB on disk) |
+| **Vex** — before `SAVE` / bulk-load peak | ~300 MB | full f32 write buffer, flushed to f16 on `SAVE` |
+| Redis (f32) | ~350 MB | vectors held resident |
+| Qdrant (scalar quant) | ~200 MB | |
+| Weaviate (f32) | ~400 MB | |
+
+The win is real but conditional: after a save, vex's resident set is just the
+HNSW index because vectors are f16 on disk and paged in on demand — under heavy
+search a hot subset pages back into the OS cache, so steady-state sits between
+~30 MB and the 147 MB on-disk size depending on working set. The other DBs keep
+all vectors resident regardless.
 
 ---
 

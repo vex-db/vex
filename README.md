@@ -28,7 +28,7 @@ It's built on a substrate that's fast on its own terms: on **identical hardware*
 - **20–40% faster than Redis** pipelined; wins unpipelined at every connection count past ~12 (`redis-benchmark`)
 - **22× faster shortest path than Memgraph** (bidirectional BFS + CSR adjacency + Contraction Hierarchies)
 - **Redis-compatible** — `redis-cli`, redis-py, Jedis, go-redis, ioredis, any RESP client
-- **Zero dependencies** — pure Zig standard library, single binary; multi-reactor, lock-free reads
+- **Zero dependencies** — pure Zig standard library, single binary; multi-reactor, concurrent reads (256-stripe rwlock + seqlock)
 - **Production features** — TLS, MULTI/EXEC, pub/sub, WATCH, LRU eviction, BGSAVE, clustering with automatic failover
 - **Tunable** — worker pinning, io_uring one-thread-per-ring flags, RFS guidance for many-core boxes — see [Tuning](docs/tuning.md)
 
@@ -99,7 +99,7 @@ EOF
 zig build run
 ```
 
-Workers auto-detect from CPU core count (capped at 8). See [Configuration](docs/configuration.md) for all options, [Deployment](docs/deployment.md) for Docker details.
+Workers default to `min(CPU cores, 8)` — a conservative default. On many-core, network-optimized boxes vex scales well past that (set `--workers` explicitly and enable **RFS** — see [Tuning](docs/tuning.md)); on few-RSS-queue NICs, more workers can *hurt* unpipelined throughput without RFS, which is why the default is capped. See [Configuration](docs/configuration.md) for all options, [Deployment](docs/deployment.md) for Docker details.
 
 ---
 
@@ -380,7 +380,7 @@ src/                            # vex (the data-plane binary)
 - Centralize version string
 
 ### v0.6.0 -- Vector Search, GRAPH.RAG & Performance
-GRAPH.SETVEC/GETVEC/VECSEARCH for storing and searching embeddings on graph nodes. GRAPH.RAG combines vector ANN search + graph BFS expansion in a single command — purpose-built for agentic AI and RAG pipelines. HNSW index (M=16, ef=200/50), cosine similarity, graph-native NodeId results. io_uring recv/send for TCP I/O, SQPOLL + async AOF fsync + Direct I/O. Batch commands (MGET/MSET/HMGET/HMSET/HGETALL), RESP serialization optimization, parallel BFS frontier expansion, parallel vector field load/save.
+GRAPH.SETVEC/GETVEC/VECSEARCH for storing and searching embeddings on graph nodes. GRAPH.RAG combines vector ANN search + graph BFS expansion in a single command — purpose-built for agentic AI and RAG pipelines. HNSW index (M=16, ef=200/50), cosine similarity, graph-native NodeId results. io_uring recv/send for TCP I/O, async AOF fsync + Direct I/O. (SQPOLL was trialled here and later removed — it oversubscribes cores at `workers > 1`.) Batch commands (MGET/MSET/HMGET/HMSET/HGETALL), RESP serialization optimization, parallel BFS frontier expansion, parallel vector field load/save.
 
 ### v0.5.0 -- Sets & Sorted Sets
 Sets (SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SUNION/SINTER/SDIFF), Sorted Sets (ZADD/ZREM/ZRANGE/ZSCORE/ZRANK/ZCARD/ZINCRBY/ZCOUNT). All 5 Redis data types now supported.
@@ -428,8 +428,8 @@ Redis-compatible KV + graph DB with multi-reactor architecture.
 - Streams (`XADD`/`XREAD`/`XRANGE`/`XLEN`)
 - Persistence for lists, hashes, sets, sorted sets (snapshot + AOF)
 
-### v1.0 -- DPDK, Scripting & Query
-- DPDK kernel bypass networking (optional, Linux)
+### v1.0 -- Kernel-bypass, Scripting & Query
+- AF_XDP / DPDK kernel-bypass networking (optional, Linux) — see [design sketch](docs/af-xdp-design.md)
 - Full io_uring event loop with connection lifecycle management (accept, close)
 - Lua scripting (`EVAL`/`EVALSHA`)
 - Graph secondary indexes on properties

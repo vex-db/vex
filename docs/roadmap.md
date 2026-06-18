@@ -47,7 +47,7 @@ graph or KV; Neo4j has no vector + KV + speed.
 Legend: **shipped** · _experimental_ · `roadmap`
 
 ### Shipped
-- **KV** — Redis-compatible, multi-reactor, lock-free reads
+- **KV** — Redis-compatible, multi-reactor, concurrent reads (striped rwlock + seqlock)
 - **Graph** — `TRAVERSE` / `PATH` / `WPATH` (CH-accelerated) / `NEIGHBORS`, typed hits, `GRAPH.COOCCUR`
 - **Vector** — HNSW ANN per graph node, f16 mmap storage, persistent indexes
 - **GraphRAG** — `GRAPH.RAG` (vector search + graph expansion, one call)

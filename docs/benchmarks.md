@@ -6,7 +6,7 @@
 
 ## Methodology
 
-All network benchmarks use **`redis-benchmark`** (the industry-standard Redis benchmarking tool, v8.0.3). Internal engine benchmarks use Zig-native timing with no network overhead.
+The **Redis** comparison uses **`redis-benchmark`** (v8.0.3); the **Dragonfly** comparison uses **`memtier_benchmark`** on Dragonfly's own published methodology and hardware (see that section for its setup). Internal engine benchmarks use Zig-native timing with no network overhead. Every number on this page is measured — none extrapolated.
 
 - **Environment**: Docker containers on macOS (Apple Silicon, 14 cores / 48GB RAM)
 - **Isolation**: Each container gets **4 dedicated CPU cores** (`cpuset`) and **4GB RAM** (`mem_limit`), with no overlap between competitors
@@ -194,62 +194,61 @@ Median of 15 runs, P=50, c=16, n=500,000 per run.
 
 ---
 
-## Vex vs Dragonfly — core scaling
+## Vex vs Dragonfly — head to head
 
-Dragonfly is built for the opposite regime from vex: shared-nothing threads
-designed to scale *vertically* across many cores on one big box. vex targets
-4–8 cores in small pods. So the honest question isn't "who wins" at one size —
-it's the **scaling curve**. This is a real, measured run (not the fabricated
-"+201%" that previously sat in the README, which had no data behind it).
+Dragonfly is the fastest multi-core Redis-compatible store. To make the
+comparison fair, we ran vex on **Dragonfly's own published methodology and
+hardware**: a `c6gn.16xlarge` server (64 cores, 32 NIC RSS queues) driven by
+*separate* `c6gn.16xlarge` client boxes, `memtier_benchmark -d 256
+--distinct-client-seed`, SET and GET, pipeline 1 and 30 — **both engines in the
+same run, on the same box, all cores, RFS on.**
 
-**Method:** AWS, **two** dedicated `c5a.16xlarge` boxes — one runs the server
-(vex / Dragonfly / Redis) pinned to N cores with the rest of the box idle; the
-other runs the load generator (`memtier_benchmark`, 16 threads × 64 conns) over
-the network. Servers and client are **never co-located** (the load generator
-must not be the thing you measure). Each server tested one at a time; Redis
-(single-thread) is the reference. June 2026.
+### The result (saturated)
 
-### Unpipelined (one command per round-trip — most clients' default)
-
-| server cores | vex SET | Dragonfly SET | vex Δ | vex GET | Dragonfly GET |
-|---|---|---|---|---|---|
-| 4 | 482k | 314k | **+54%** | 412k | 260k |
-| 8 | 764k | 623k | +23% | 651k | 584k |
-| 16 | 770k | **992k** | **−22%** | 769k | 986k |
-| 32 | 1.21M | 1.07M | +13% | 1.11M | 1.02M |
-| 48 | 1.08M | 843k | +28% | 1.03M | 790k |
-
-Redis 1-thread baseline: ~132k SET / ~122k GET.
-
-It's a genuine contest. vex leads at 4–8 cores, **Dragonfly wins at 16 cores
-(+22%)**, then vex edges back ahead at 32–48. Both peak around 1.1M near 32
-cores and dip at 48. Unpipelined, vex's real lead is **+9% to +59%** — and it
-loses at one point. (This is why the old "+201%" was deleted.)
-
-### Pipelined (`--pipeline 30`)
-
-| server cores | vex SET | Dragonfly SET | vex Δ |
+| | vex | Dragonfly | vex margin |
 |---|---|---|---|
-| 4 | 7.0M | 1.7M | +314% |
-| 16 | 9.6M | 3.8M | +152% |
-| 48 | 9.8M | 5.7M | **+72%** |
+| SET, unpipelined | **4.42M** | 3.03M | **+46%** |
+| SET, pipelined (P=30) | **31.96M** | 6.64M | **4.8×** |
+| GET, unpipelined | **4.09M** | 3.03M | **+35%** |
+| GET, pipelined (P=30) | **33.70M** | 5.41M | **6.2×** |
 
-vex leads pipelined at every core count, but the gap **narrows** as cores climb
-(4× → 1.7×): Dragonfly's many-core design scales pipelined throughput
-(1.7M → 5.7M) while vex plateaus at ~10M.
+vex wins **every cell**. Why it pulls ahead at saturation: adding a second
+client box took **Dragonfly only 2.74M → 3.03M** (near its ceiling) but **vex
+2.98M → 4.42M** (still climbing). vex is the most **CPU-efficient** of the three
+engines — highest throughput per core — so its saturation ceiling is higher.
 
-### Honest caveats
+### How to measure this honestly (and what bit us)
 
-- vex's pipelined plateau (~10–11M) and both servers' 48-core dip indicate the
-  **single load-generator box becomes the limiter at the extremes** — so
-  high-core *absolute* numbers read as "≥ this," not exact, and vex pipelined is
-  likely *understated*. The relative shape is sound.
-- One clean run; treat ±a few % as noise.
-- **Takeaway:** at vex's 4–8 core target, vex leads Dragonfly unpipelined by
-  +23–59%. Across the full 4–48 core range it's competitive both ways
-  (Dragonfly wins at 16); pipelined vex stays ahead but Dragonfly's vertical
-  scaling is real and closing. Different tools for different deployment shapes —
-  with data, not marketing.
+These numbers came only after fixing two *measurement* mistakes and one *vex*
+bug — documented here so the methodology is trustworthy, because every one of
+them flips the conclusion:
+
+1. **Saturate, or you measure the client, not the server.** A single `memtier`
+   box caps at ~1–3M ops/s, and below saturation **every engine looks tied**.
+   An earlier 2-box `c5a.16xlarge` run actually showed Dragonfly *winning* at
+   16 cores — that was the single-client cap plus a softirq cliff, not the
+   engine. **Always drive with ≥2 client boxes** and confirm the server, not
+   the client, is the bottleneck.
+2. **Unpipelined is kernel-bound — it's a near-tie by nature.** Under
+   unpipelined load ~88% of CPU is the kernel TCP/softirq path, *shared* by both
+   engines, so vex and Dragonfly are close there (vex +35–46%). The daylight is
+   in **pipelined** (4.8–6.2×), where one syscall serves 30 ops and the engine's
+   own efficiency shows. No serious engine wins the unpipelined-over-TCP contest
+   by a large margin — see [Kernel-bypass (AF_XDP)](af-xdp-design.md) for the
+   only thing that would.
+3. **RSS queues are the unpipelined ceiling.** The NIC's receive-queue count
+   gates how fast packets get *in*. Same vex binary, 64 cores: c5a (8 queues)
+   → c6in (16) ≈ **2.3×** → c6gn (32) highest. Pick a network-optimized
+   instance and enable **RFS** on many-core boxes — see [Tuning](tuning.md).
+4. **A real vex bug the fair test exposed.** vex's fast SET path only handled
+   values ≤ 32 bytes, so Dragonfly's 256-byte default sent every SET down the
+   slow lock+alloc path — vex *lost* SET 6.5× until we raised the inline
+   threshold. Running the benchmark the way Dragonfly does found a genuine,
+   fixable weakness. That is the point of running it.
+
+We deliberately **don't** quote the "25× vs single-threaded Redis" multiple
+common in this space: any multi-core engine beats one Redis core by ~the core
+count, so it measures core count, not engine quality.
 
 ---
 

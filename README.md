@@ -1,441 +1,171 @@
 # Vex
 
-An **in-process database for LLM applications**, written in Zig. One binary where vector search, knowledge-graph traversal, and key-value state share memory and the Redis protocol — so the **vector → graph → KV** path behind GraphRAG and agent memory runs in a single process with zero network hops, instead of stitching together Redis + a vector DB + a graph DB + glue code.
+**The memory database for AI agents.** Vector search, a knowledge graph, and
+key-value state in one Redis-compatible binary — so an agent's long-term memory,
+semantic cache, and session state live in *one* place instead of a vector DB +
+a graph DB + Redis and the glue between them.
 
-It's built on a substrate that's fast on its own terms: on **identical hardware** it beats **Dragonfly** — the fastest multi-core Redis-compatible store — by **+35–46% unpipelined and 4.8–6.2× pipelined**, and it's **22× faster shortest-path than Memgraph** — all in a zero-dependency, RESP-compatible single binary.
-
-## Why Vex?
-
-**One engine for the LLM data stack.** GraphRAG, agent memory, and semantic caching normally mean running a vector DB *and* a graph DB *and* Redis, plus glue to move data between them on every request. Vex does all three in-process: `GRAPH.VECSEARCH → GRAPH.TRAVERSE → GET` is one fused path in shared memory, not three network round-trips.
-
-| Your LLM app needs | Typical stack | With Vex |
-|---|---|---|
-| Semantic response cache | Redis + a vector DB | `CACHE.SEM*` |
-| Agent memory | vector DB + bespoke ranking | `MEMORY.*` (ranked recall built in) |
-| GraphRAG | vector DB + Neo4j + glue | `GRAPH.RAG` (search + traverse, one call) |
-| KV / session state | Redis | KV (Redis-compatible) |
-
-### LLM primitives (the headline)
-- **Semantic cache** — `CACHE.SEMSET` / `SEMGET`: cache LLM responses by query *meaning*, not exact match. HNSW similarity, per-entry TTL + threshold, tag invalidation.
-- **Agent memory** — `MEMORY.STORE` / `RECALL` / `RELATE` / `CONTEXT` / `DECAY`: persistent memories with typed relationships and composite ranking (similarity · recency · importance · frequency).
-- **GraphRAG** — `GRAPH.RAG`: vector search + graph BFS expansion in one command; `GRAPH.COOCCUR` auto-links co-occurring entities.
-- **Vectors** — HNSW ANN search per graph node, f16 mmap storage, persistent indexes.
-- **Embedding proxy** *(experimental)* — optional `vex-embed` sidecar turns text → vectors via Ollama/OpenAI, keeping embedding off the hot path. *Scaffold today: transparent RESP proxy + `EMBED`; per-command auto-rewrite is WIP.*
-- **MCP server** *(roadmap)* — LLMs use vex's primitives as tools directly.
-
-### The substrate (why it's credible)
-- **Beats Dragonfly on identical hardware** — c6gn.16xlarge, 256B values, saturated: SET **+46%** unpipelined / **4.8×** pipelined, GET **+35%** / **6.2×**. (And it's the most CPU-efficient of the three — higher per-core throughput than Dragonfly, which is what gives the higher saturation ceiling.) See [Benchmarks](docs/benchmarks.md).
-- **20–40% faster than Redis** pipelined; wins unpipelined at every connection count past ~12 (`redis-benchmark`)
-- **22× faster shortest path than Memgraph** (bidirectional BFS + CSR adjacency + Contraction Hierarchies)
-- **Redis-compatible** — `redis-cli`, redis-py, Jedis, go-redis, ioredis, any RESP client
-- **Zero dependencies** — pure Zig standard library, single binary; multi-reactor, concurrent reads (256-stripe rwlock + seqlock)
-- **Production features** — TLS, MULTI/EXEC, pub/sub, WATCH, LRU eviction, BGSAVE, clustering with automatic failover
-- **Tunable** — worker pinning, io_uring one-thread-per-ring flags, RFS guidance for many-core boxes — see [Tuning](docs/tuning.md)
-
-**Operationally it's still Redis-shaped:** single-threaded-per-instance mental model, same horizontal scaling, small pods. You just need fewer instances — and fewer *other* datastores.
-
-> **Where this is going:** see the **[Vision & Roadmap](docs/roadmap.md)** — the LLM-native goal, the primitives-only scope line, and what's shipped vs. experimental vs. roadmap.
-
-## Documentation
-
-| Page | Description |
-|------|-------------|
-| **[Vision & Roadmap](docs/roadmap.md)** | Where this is going: the LLM-native goal, design principles, what's shipped vs. roadmap |
-| **[Commands](docs/commands.md)** | Full command reference: KV, graph, vector, semantic cache, agent memory, pub/sub |
-| **[Configuration](docs/configuration.md)** | CLI flags, config file format, environment variables, precedence |
-| **[Architecture](docs/architecture.md)** | System design, why it's fast, source layout, event loop, connection lifecycle |
-| **[Persistence](docs/persistence.md)** | Snapshot format, AOF, BGSAVE, group commit, durability guarantees |
-| **[Security](docs/security.md)** | Authentication, TLS encryption, OpenSSL loading, handshake flow |
-| **[Memory Management](docs/memory.md)** | maxmemory, LRU eviction, access tracking, memory estimation |
-| **[Pub/Sub](docs/pubsub.md)** | SUBSCRIBE/PUBLISH/UNSUBSCRIBE, cross-worker delivery, pub/sub mode |
-| **[Transactions](docs/transactions.md)** | MULTI/EXEC/DISCARD, atomicity, error handling, limitations |
-| **[Clustering](docs/clustering.md)** | Leader/follower replication, epoch mechanism, VEX.PROMOTE, consistency model |
-| **[Observability](docs/observability.md)** | INFO, SLOWLOG, LATENCY, CLIENT LIST, DEBUG/MEMORY/CONFIG, JSON logs, redis_exporter |
-| **[Separation of Concerns](docs/separation-of-concerns.md)** | How vex / vex-sentinel / sidecars are split. Mechanism vs policy. |
-| **[Benchmarks](docs/benchmarks.md)** | vs Dragonfly (head-to-head), vs Redis (pipelined + unpipelined), graph vs Memgraph |
-| **[Tuning](docs/tuning.md)** | Worker pinning, io_uring flags, NAPI, RFS, RSS-queue guidance — every knob, measured |
-| **[Kernel-bypass (AF_XDP)](docs/af-xdp-design.md)** | Design sketch: what going around the kernel net stack would buy and cost |
-| **[Unpipelined Command Grids](docs/unpipelined-command-grids.md)** | Per-command vex-vs-Redis deltas across workers × connections |
-| **[Deployment](docs/deployment.md)** | Production checklist, systemd, Docker, tuning |
-| **[Vector Search & GRAPH.RAG](docs/vector-search.md)** | HNSW vector search, f16 mmap storage, RAG pipeline examples |
-| **[Vector Benchmarks](docs/vector-benchmarks.md)** | Benchmark design: Vex vs Redis+RediSearch vs Qdrant vs Weaviate |
-| **[LLM Ecosystem](docs/llm-ecosystem.md)** | How Vex fits into LLM infrastructure: GraphRAG, semantic cache, agent memory, MCP |
-| **[GraphRAG](docs/graphrag.md)** | Enhanced vector search + knowledge graph traversal for RAG pipelines |
-| **[Semantic Cache](docs/semantic-cache.md)** | Cache LLM responses by query meaning, not exact match |
-| **[Agent Memory](docs/agent-memory.md)** | Persistent memory primitives for LLM agents with decay and relationships |
-| **[MCP Server](docs/mcp-server.md)** | Model Context Protocol support -- LLMs use Vex as a tool directly |
-| **[Testing](docs/testing.md)** | 233 tests, coverage table, test patterns |
-
----
-
-## Quick Start
-
-### Docker (easiest)
+One process. One protocol (RESP — works with every Redis client). And on
+identical hardware it's faster than both Redis *and* Dragonfly.
 
 ```bash
 docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest --reactor
+```
+
+```
+redis-cli -p 6380
+
+# Give an agent a memory, then recall it by meaning — not exact text
+> MEMORY.STORE agent:7 "user prefers dark mode and terse replies" IMPORTANCE 0.8
+> MEMORY.RECALL agent:7 "what are the UI preferences?" K 3
+1) "user prefers dark mode and terse replies"   # ranked by similarity·recency·importance
+
+# Cache an LLM answer by what the question MEANS
+> CACHE.SEMSET "how do I reset my password?" "Settings → Security → Reset."
+> CACHE.SEMGET "i forgot my password, help" THRESHOLD 0.85
+"Settings → Security → Reset."
+```
+
+The things an agent needs to remember are **first-class commands**, not a stack
+you assemble.
+
+---
+
+## Why agents need this
+
+An agent that remembers — past conversations, user preferences, a knowledge
+base — needs three capabilities working *together*:
+
+- **Semantic recall** — "what do I know that's *relevant* to this?" (vectors)
+- **Relationships** — "what's connected to this?" (a knowledge graph)
+- **State** — sessions, counters, flags (key-value)
+
+The usual answer is a vector DB *and* Neo4j *and* Redis, kept in sync by code on
+every request. Vex collapses that into one engine where they share memory:
+`GRAPH.RAG` does a vector search **and** graph expansion in a single call, with
+no network hops between steps.
+
+| Your agent needs | Typical stack | With Vex |
+|---|---|---|
+| Long-term memory | vector DB + ranking code | `MEMORY.*` — ranked recall built in |
+| Semantic cache | Redis + a vector DB | `CACHE.SEM*` |
+| Knowledge / GraphRAG | vector DB + Neo4j + glue | `GRAPH.RAG` — search + traverse, one call |
+| Session / KV state | Redis | KV (Redis-compatible) |
+
+## The agent primitives
+
+- **Agent memory** — `MEMORY.STORE / RECALL / RELATE / CONTEXT / DECAY`.
+  Persistent memories with typed relationships and **composite ranking**
+  (similarity · recency · importance · frequency), so recall surfaces what
+  actually matters, and `DECAY` ages out the stale. → [Agent Memory](docs/agent-memory.md)
+- **Semantic cache** — `CACHE.SEMSET / SEMGET`. Cache LLM responses by query
+  *meaning* to cut tokens and latency on near-duplicate questions. Per-entry TTL
+  + similarity threshold + tag invalidation. → [Semantic Cache](docs/semantic-cache.md)
+- **GraphRAG** — `GRAPH.RAG`: vector ANN search + graph BFS expansion in one
+  command; `GRAPH.COOCCUR` auto-links entities that co-occur. → [GraphRAG](docs/graphrag.md)
+- **Vectors** — HNSW nearest-neighbor search per graph node, f16 mmap storage,
+  persistent indexes. → [Vector Search](docs/vector-search.md)
+
+Embeddings can run in-process via the optional `vex-embed` sidecar (text →
+vectors via Ollama/OpenAI). An **MCP server** — so agents call vex's primitives
+as tools directly — is on the [roadmap](docs/roadmap.md).
+
+## It's also just a fast Redis
+
+Vex speaks RESP, so `redis-cli`, redis-py, ioredis, go-redis — anything — just
+works. And the substrate is genuinely fast:
+
+- **Beats Dragonfly on identical hardware** (c6gn.16xlarge, 256B values,
+  saturated): SET **+46%** unpipelined / **4.8×** pipelined; GET **+35%** / **6.2×**.
+- **20–40% faster than Redis** pipelined; wins unpipelined past ~12 connections.
+- **22× faster shortest-path than Memgraph.**
+
+> Honest framing: unpipelined small-op throughput is *kernel-network-bound*, so
+> vex and Dragonfly are close there (vex ahead) — the daylight is in pipelined
+> and per-engine efficiency. We don't quote the "25× vs single-threaded Redis"
+> multiple (any multi-core engine can). Full numbers + methodology:
+> [Benchmarks](docs/benchmarks.md). Squeezing many-core boxes: [Tuning](docs/tuning.md).
+
+---
+
+## Setup & use
+
+### Run
+
+```bash
+# Docker
+docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest --reactor
+
+# Or build from source (Zig 0.17)
+zig build run -- --reactor
 redis-cli -p 6380
 ```
 
-### Build from Source
+### Configure
 
 ```bash
-zig build                                          # Build
-zig build run -- --reactor                        # Reactor mode (recommended)
-zig build test                                     # Run tests (233 tests)
-redis-cli -p 6380                                  # Connect
-```
-
-Or with a config file:
-```bash
-cat > vex.conf << 'EOF'
+cat > vex.conf <<'EOF'
 port 6380
 reactor
-workers 4
+workers 4               # min(cores, 8) by default; see Tuning for many-core boxes
 maxmemory 256mb
 maxmemory-policy allkeys-lru
-loglevel info
 EOF
 zig build run
 ```
 
-Workers default to `min(CPU cores, 8)` — a conservative default. On many-core, network-optimized boxes vex scales well past that (set `--workers` explicitly and enable **RFS** — see [Tuning](docs/tuning.md)); on few-RSS-queue NICs, more workers can *hurt* unpipelined throughput without RFS, which is why the default is capped. See [Configuration](docs/configuration.md) for all options, [Deployment](docs/deployment.md) for Docker details.
+Precedence: `--flags` > `vex.conf` (or `VEX_CONFIG`) > defaults.
+Full list: [Configuration](docs/configuration.md).
 
----
-
-## Benchmarks
-
-> **On honesty:** the headline below is a **head-to-head against Dragonfly on
-> *its own* published methodology and hardware** — same box, same client, same
-> flags, both engines measured in the same run. We don't quote the easy "25× vs
-> single-threaded Redis" multiple (any multi-core engine can; it's just core
-> count). And we learned the hard way that a single load-generator caps ~1–3M
-> ops/s and makes every engine look tied — so these are **saturated** numbers
-> (≥2 client boxes). Full methodology + the kernel-bound caveats: [Benchmarks](docs/benchmarks.md).
-
-### vs Dragonfly (c6gn.16xlarge, 256-byte values, `--distinct-client-seed`, saturated)
-
-Both engines on the *same* 64-core / 32-RSS-queue box, driven by separate c6gn
-client boxes, all cores, RFS on:
-
-| | vex | Dragonfly | vex margin |
-|---|---|---|---|
-| SET, unpipelined | **4.42M** | 3.03M | **+46%** |
-| SET, pipelined (P=30) | **31.96M** | 6.64M | **4.8×** |
-| GET, unpipelined | **4.09M** | 3.03M | **+35%** |
-| GET, pipelined (P=30) | **33.70M** | 5.41M | **6.2×** |
-
-vex wins **every cell**. Unpipelined is the closer fight (both engines are
-kernel-network-bound there); pipelined is where vex's engine efficiency shows.
-vex is also the most **CPU-efficient** of vex / Dragonfly / Redis (highest
-throughput per core), which is exactly why its *saturation* ceiling is higher.
-
-### KV: Vex vs Redis 8.0 (`redis-benchmark`, P=50, c=16)
-
-| Command | Redis TCP | Vex TCP | TCP Δ | Redis UDS | Vex UDS | UDS Δ |
-|---|---|---|---|---|---|---|
-| LPUSH | 1.02M | **1.27M** | **+24%** | 3.03M | **7.94M** | **+162%** |
-| HSET | 879K | **1.12M** | **+27%** | 3.49M | **8.11M** | **+132%** |
-| RPUSH | 1.05M | **1.34M** | **+27%** | 3.90M | **8.57M** | **+120%** |
-| ZADD | 891K | **1.18M** | **+32%** | 3.33M | **6.98M** | **+109%** |
-| SADD | 1.12M | **1.34M** | **+20%** | 4.17M | **7.50M** | **+79%** |
-| INCR | 958K | **1.31M** | **+37%** | 4.13M | **6.17M** | **+49%** |
-| SET | 1.08M | **1.22M** | **+13%** | 3.62M | **4.59M** | **+27%** |
-| GET | 1.15M | **1.34M** | **+17%** | 5.68M | **7.14M** | **+26%** |
-| LPOP | 1.52M | **1.64M** | **+8%** | 6.00M | **6.82M** | **+13%** |
-| RPOP | 1.54M | **1.65M** | **+7%** | 6.00M | **7.32M** | **+22%** |
-
-Vex wins **10/10 TCP** (+7% to +37%), **10/10 UDS** (+13% to +162%). At P=100 c=32 UDS: ZADD +236%, LPUSH +224%, HSET +178%. Full results: [Benchmarks](docs/benchmarks.md)
-
-### KV unpipelined (one command per round-trip — the default for most clients)
-
-SET vs Redis 8.0.3, vex `--workers 4`, AWS c5a.2xlarge (8 vCPU), 50k ops x 3 runs:
-
-| Connections | 4 | 8 | 16 | 32 | 64 | 128 |
-|---|---|---|---|---|---|---|
-| Vex Δ vs Redis | −13% | −4% | **+30%** | **+109%** | **+138%** | **+166%** |
-
-Below ~12 connections both servers are RTT-bound and effectively tied (vex wins +13-38% at c≤2, dips at exactly c=4, parity by c=8). From c=16 up, Redis saturates its single thread (~110k ops/s) while vex keeps scaling to ~300k. Per-command grids across w={1,2,4,6,8} x c={1..128}: [Benchmarks](docs/benchmarks.md)
-
-### Graph: Vex vs Memgraph (10K nodes / 50K edges)
-
-| Operation | Memgraph | Vex | Speedup |
-|---|---|---|---|
-| Shortest Path | 4,524 us | **210 us** | **22x faster** |
-| AddNode | 175.4 us | **138.1 us** | **+21%** |
-| AddEdge | 185.9 us | **140.5 us** | **+24%** |
-| Traverse (depth 3) | 334 us | **228 us** | **+32%** |
-| Neighbors | 202 us | **130 us** | **+36%** |
-
-Full benchmark data, single-command results, and methodology: [Benchmarks](docs/benchmarks.md)
-
----
-
-## Example
+### A tiny RAG, end to end
 
 ```
-redis-cli -p 6380
+# index a document node with an embedding + a topic edge
+> GRAPH.ADDNODE doc:1 document
+> GRAPH.SETVEC doc:1 embedding <f32_bytes>
+> GRAPH.ADDNODE topic:ai topic
+> GRAPH.ADDEDGE doc:1 topic:ai about
 
-127.0.0.1:6380> SET greeting "hello world"
-OK
-127.0.0.1:6380> GET greeting
-"hello world"
-
-127.0.0.1:6380> GRAPH.ADDNODE service:auth service
-(integer) 0
-127.0.0.1:6380> GRAPH.ADDNODE service:user service
-(integer) 1
-127.0.0.1:6380> GRAPH.ADDEDGE service:auth service:user calls
-(integer) 0
-
-127.0.0.1:6380> GRAPH.PATH service:auth service:user
-1) "service:auth"
-2) "service:user"
-
-127.0.0.1:6380> MULTI
-OK
-127.0.0.1:6380> SET k1 v1
-QUEUED
-127.0.0.1:6380> SET k2 v2
-QUEUED
-127.0.0.1:6380> EXEC
-1) OK
-2) OK
-
-127.0.0.1:6380> SUBSCRIBE news
-1) "subscribe"
-2) "news"
-3) (integer) 1
-
-# Vector search + graph expansion (RAG)
-127.0.0.1:6380> GRAPH.ADDNODE doc:1 document
-(integer) 0
-127.0.0.1:6380> GRAPH.ADDNODE topic:ai topic
-(integer) 1
-127.0.0.1:6380> GRAPH.ADDEDGE doc:1 topic:ai about
-(integer) 0
-127.0.0.1:6380> GRAPH.SETVEC doc:1 embedding <f32_bytes>
-OK
-127.0.0.1:6380> GRAPH.RAG embedding <query_bytes> K 5 DEPTH 1 DIR OUT
-1) 1) "doc:1"
-   2) "0.9523"
-   3) 1) "title"  2) "Attention Is All You Need"
-   4) 1) "topic:ai"
+# one call: nearest docs to the query vector + 1-hop graph expansion
+> GRAPH.RAG embedding <query_bytes> K 5 DEPTH 1 DIR OUT
+1) 1) "doc:1"  2) "0.9523"  3) ("title" "Attention Is All You Need")  4) ("topic:ai")
 ```
 
-See [Vector Search & GRAPH.RAG](docs/vector-search.md) for full RAG pipeline examples with Python.
+Python pipelines and full walkthroughs: [Vector Search](docs/vector-search.md),
+[Agent Memory](docs/agent-memory.md), [Semantic Cache](docs/semantic-cache.md).
+
+### Compatibility
+
+All five Redis data types (strings, lists, hashes, sets, sorted sets) + graph +
+vector + the agent primitives. MULTI/EXEC, WATCH, pub/sub, 16 logical DBs.
+Full command reference: [Commands](docs/commands.md).
 
 ---
 
-## Features at a Glance
+## Production
 
-| Feature | Details |
-|---------|---------|
-| **Strings** | SET/GET/DEL/MGET/MSET/INCR/DECR/APPEND/EXPIRE/SETNX/GETSET + 20 more |
-| **Lists** | LPUSH/RPUSH/LPOP/RPOP/LLEN/LRANGE/LINDEX/LSET/LREM |
-| **Hashes** | HSET/HGET/HDEL/HGETALL/HLEN/HEXISTS/HMSET/HMGET/HKEYS/HVALS/HINCRBY |
-| **Sets** | SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SUNION/SINTER/SDIFF |
-| **Sorted Sets** | ZADD/ZREM/ZRANGE/ZSCORE/ZRANK/ZCARD/ZINCRBY/ZCOUNT |
-| **Graph** | ADDNODE/ADDEDGE/TRAVERSE/PATH/WPATH/NEIGHBORS + 6 more |
-| **Vector Search** | GRAPH.SETVEC/GETVEC/VECSEARCH + GRAPH.RAG (search + traverse in one call) |
-| **GraphRAG** | GRAPH.RAG (vector search + graph expansion, one call) + GRAPH.COOCCUR (auto entity linking) |
-| **Semantic Cache** | CACHE.SEMSET/SEMGET/SEMINVAL/SEMCLEAR/SEMSTATS -- cache LLM responses by query meaning |
-| **Agent Memory** | MEMORY.STORE/RECALL/RELATE/CONTEXT/DECAY/LIST/GET/DEL -- persistent ranked agent memory |
-| **Embedding proxy** | `vex-embed` sidecar: text→vector via Ollama/OpenAI (experimental; auto-rewrite WIP) |
-| **MCP Server** | _Roadmap_ -- LLMs use Vex's primitives as tools directly |
-| **Transactions** | MULTI/EXEC/DISCARD + WATCH/UNWATCH optimistic locking |
-| **Pub/Sub** | SUBSCRIBE/PUBLISH/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE |
-| **Persistence** | Atomic snapshot + AOF with group commit + `appendfsync` (always/everysec/no) + STOP-WRITE on disk full |
-| **TLS** | OpenSSL via dlopen -- no build dependency |
-| **Memory Limits** | --maxmemory with noeviction or allkeys-lru (enforced in ConcurrentKV too) |
-| **Auth** | --requirepass with constant-time comparison |
-| **Observability** | SLOWLOG, LATENCY, CLIENT LIST, INFO (50 fields), DEBUG, MEMORY, runtime CONFIG SET. Field names mirror Redis 7. |
-| **Client Compat** | CONFIG GET/SET, CLIENT ID/LIST/SETNAME, OBJECT, TIME, RESET, DEBUG, MEMORY |
-| **Config File** | Auto-load `vex.conf` + `VEX_CONFIG` env + `--config` flag |
-| **Logging** | Text or JSON format, file or stderr, 4 levels |
-| **Clustering** | Leader/follower replication, epoch-based split-brain protection, non-blocking broadcast, per-follower bounded outbox, true seq-precise lag, atomic full-sync |
-| **Multi-DB** | 16 logical databases (SELECT 0-15) |
+Redis-shaped to operate: same client tooling, same horizontal scaling, small
+pods. Plus TLS, snapshot + AOF persistence (group commit, `appendfsync`,
+STOP-WRITE on disk-full), LRU eviction, and leader/follower clustering with
+epoch-based failover. The operator surface (`INFO`, `SLOWLOG`, `LATENCY`,
+`CLIENT LIST`) mirrors Redis 7, so `redis_exporter` works unmodified.
+→ [Deployment](docs/deployment.md) · [Observability](docs/observability.md) · [Clustering](docs/clustering.md)
 
----
+## Documentation
 
-## Architecture
-
-```
-   Clients (redis-cli, redis-py, ioredis, ...) ─── RESP ──┐
-                                                          │
-                  Accept Thread (main)                    │
-                  /    |    |    \                        │
-             Worker0  W1   W2   W3   -- N event-loop threads
-             (kqueue) ...            -- kqueue/epoll/io_uring
-             /  |  \
-          conn conn conn             -- non-blocking I/O + slow-client backpressure
-                |
-       ConcurrentKV (+ maxmemory eviction)   -- 256-stripe rwlock
-       GraphEngine                           -- CSR + bidirectional BFS
-       PubSubRegistry                        -- shared subscriber map
-       AOF (group commit + appendfsync)      -- batched persistence + STOP-WRITE
-       atomic_io                             -- tmp+fsync+rename+dir-fsync
-       observability (WorkerStats, SLOWLOG,  -- INFO, CLIENT LIST,
-                      LATENCY, ClientReg)       DEBUG, MEMORY, CONFIG
-
-   Cluster mode (optional):
-       leader ──┬─→ follower 1 (per-follower bounded outbox + drain thread)
-                ├─→ follower 2
-                └─→ follower N
-       epoch (vex.epoch)  ←─ persisted, monotonic across leader promotions
-       VEX.PROMOTE / VEX.STATUS admin commands  ←─ for vex-sentinel
-```
-
-Sidecars (separate processes, not in vex binary):
-- **`redis_exporter`** for Prometheus metrics (works today, field names mirror Redis 7)
-- **`vex-sentinel`** for failover orchestration (planned — Zig, same monorepo, `sentinel/` folder)
-- **log shippers** (Vector / Fluentbit / promtail) consume JSON-formatted logs
-
-Deep dive: [Architecture](docs/architecture.md). For the data-plane / control-plane split: [Separation of Concerns](docs/separation-of-concerns.md).
-
----
-
-## Source Layout
-
-```
-src/                            # vex (the data-plane binary)
-├── main.zig                    # Entry point, CLI, config loading
-├── config.zig                  # Config file parser
-├── log.zig                     # Logger: text/JSON, file or stderr
-├── server/
-│   ├── tcp.zig                 # Accept loop, reactor mode
-│   ├── worker.zig              # Event loop worker + pub/sub + transactions
-│   ├── event_loop.zig          # kqueue/epoll/io_uring abstraction
-│   ├── resp.zig                # RESP v2/v3 protocol
-│   └── tls.zig                 # TLS (OpenSSL via dlopen)
-├── engine/
-│   ├── kv.zig                  # KV store + LRU eviction (single-thread)
-│   ├── concurrent_kv.zig       # 256-stripe rwlock KV + maxmemory eviction
-│   ├── list.zig                # List data type (deque)
-│   ├── hash.zig                # Hash data type (field maps)
-│   ├── set.zig                 # Set data type (unique members)
-│   ├── sorted_set.zig          # Sorted set (score-ordered)
-│   ├── graph.zig               # CSR graph engine + vector integration
-│   ├── query.zig               # BFS, Dijkstra, traversal
-│   ├── vector_store.zig        # f32 vector storage (per node, per field)
-│   ├── hnsw.zig                # HNSW approximate nearest neighbor index
-│   └── rag.zig                 # GRAPH.RAG executor (search + expand)
-├── command/
-│   └── handler.zig             # Command dispatch + BGSAVE + admin (VEX.*)
-├── cluster/
-│   ├── replication.zig         # Leader/follower wire, epoch, non-blocking broadcast
-│   └── protocol.zig            # VX frame protocol (v2 with epoch + ack frames)
-├── observability/              # NEW — operator surface
-│   ├── stats.zig               # WorkerStats counters + global atomics
-│   ├── cmd_table.zig           # Comptime command name → index, write classifier
-│   ├── event_stats.zig         # LATENCY monitor event rings
-│   └── clients.zig             # CLIENT LIST registry
-└── storage/
-    ├── snapshot.zig            # Binary snapshot (CRC-32)
-    ├── aof.zig                 # AOF + group commit + appendfsync + STOP-WRITE
-    └── atomic_io.zig           # NEW — tmp+fsync+rename+dir-fsync helpers
-```
-
-**Planned**: `sentinel/` (Zig binary for cluster orchestration), `tests/chaos/` (bash/Python chaos tests). See [Separation of Concerns](docs/separation-of-concerns.md).
-
----
-
-## Changelog
-
-### v0.8.0 — Production Hardening (Observability + Stability)
-
-**Observability (Redis-compatible operator surface):**
-- `INFO` expanded to ~50 fields across 11 sections (Server, Clients, Memory, Keyspace, Graph, Persistence, CPU, Replication, Cluster, Stats, Commandstats). Field names mirror Redis 7 — `redis_exporter` works against vex unmodified.
-- `SLOWLOG GET / LEN / RESET` with per-worker bounded rings.
-- `LATENCY LATEST / HISTORY / DOCTOR / RESET` for rare slow events (fsync, snapshot, eviction).
-- `CLIENT LIST / INFO` aggregated across workers via a global client registry.
-- `DEBUG OBJECT / SLEEP`, `MEMORY USAGE / STATS`.
-- `CONFIG GET *` returns 13 known knobs; runtime-mutable: `log-level`, `latency-monitor-threshold`, `appendfsync`.
-- Logger: file output + JSON format (`log-file`, `log-format`). All `std.debug.print` in server code now routed through the Logger.
-
-**Stability:**
-- Atomic persistence: snapshot save, AOF rewrite, HNSW serialize, vector store save all use tmp+fsync+rename+dir-fsync. `kill -9` mid-write preserves the previous version.
-- `appendfsync` config: `always` / `everysec` (default; background thread) / `no`. Bounded data loss on crash.
-- Disk-full STOP-WRITE state: ENOSPC sets a process flag; write commands return `-MISCONF`. Reads continue. Operator clears via `CONFIG SET appendfsync no`.
-- ConcurrentKV maxmemory enforcement: per-stripe sample-LRU eviction + `MaxMemoryReached` error.
-- Slow-client backpressure: `max-client-buffer` enforced on output too. Slow consumers get closed instead of OOMing the worker.
-- Stripe-lock spin-loop replaced with exponential backoff + 5s timeout.
-- Connection-limit cmpxchg loop (no over-admit by N when workers race).
-- Non-blocking replication broadcast: per-follower bounded outbox + drain thread. One slow follower can't stall the broadcast.
-- Cluster epoch mechanism: monotonic, persisted to `vex.epoch`, carried in heartbeats. Followers reject stale-epoch frames. Old leaders self-demote on higher epoch.
-- `VEX.PROMOTE <epoch>` / `VEX.STATUS` admin commands. (`vex-sentinel` will drive them — planned.)
-- Follower `repl_ack` frame: leaders compute true seq-precise lag per follower in `INFO Replication`.
-- Atomic snapshot + AOF coordination on follower full-sync (truncate-then-atomic-install).
-
-**Separation of concerns clarified:**
-- vex is the data plane only. Cluster orchestration policy moves to `vex-sentinel` (planned). Metrics export is `redis_exporter` (works today) or native `/metrics` via a Zig Prom library (later). Chaos testing belongs in `tests/chaos/`. See [Separation of Concerns](docs/separation-of-concerns.md).
-
-### v0.7.1
-- HNSW index persistence (`.vhi` files — skip rebuild on cold start)
-- Fix vector persistence (`.vvf` files now saved during SAVE/BGSAVE)
-- Fix AOF flush in scaled mode (writes were buffered but never flushed to disk)
-- Fix prop_mask rebuild on snapshot load
-- VVF bounds validation for corruption detection
-- Migrate to Zig 0.17
-- Centralize version string
-
-### v0.6.0 -- Vector Search, GRAPH.RAG & Performance
-GRAPH.SETVEC/GETVEC/VECSEARCH for storing and searching embeddings on graph nodes. GRAPH.RAG combines vector ANN search + graph BFS expansion in a single command — purpose-built for agentic AI and RAG pipelines. HNSW index (M=16, ef=200/50), cosine similarity, graph-native NodeId results. io_uring recv/send for TCP I/O, async AOF fsync + Direct I/O. (SQPOLL was trialled here and later removed — it oversubscribes cores at `workers > 1`.) Batch commands (MGET/MSET/HMGET/HMSET/HGETALL), RESP serialization optimization, parallel BFS frontier expansion, parallel vector field load/save.
-
-### v0.5.0 -- Sets & Sorted Sets
-Sets (SADD/SREM/SMEMBERS/SISMEMBER/SCARD/SUNION/SINTER/SDIFF), Sorted Sets (ZADD/ZREM/ZRANGE/ZSCORE/ZRANK/ZCARD/ZINCRBY/ZCOUNT). All 5 Redis data types now supported.
-
-### v0.4.0 -- Lists, Hashes & WATCH
-Lists (LPUSH/RPUSH/LPOP/RPOP/LLEN/LRANGE/LINDEX/LSET/LREM), Hashes (HSET/HGET/HDEL/HGETALL/HLEN/HEXISTS/HMSET/HMGET/HKEYS/HVALS/HINCRBY), WATCH/UNWATCH optimistic locking. 30 Redis compatibility commands (CONFIG, CLIENT, COPY, UNLINK, PSUBSCRIBE, TIME, OBJECT, RESET, etc.).
-
-### v0.3.0 -- Production Hardening
-TLS, MULTI/EXEC, pub/sub, LRU eviction, BGSAVE, AOF group commit, config files, structured logging, automatic failover.
-
-### v0.2.0 -- Distributed KV + Graph Read Replicas
-Leader/follower replication, full sync, heartbeat lag tracking, write forwarding.
-
-### v0.1.0 -- Initial Release
-Redis-compatible KV + graph DB with multi-reactor architecture.
-
----
-
-## Roadmap
-
-### v0.7 -- LLM Ecosystem ([details](docs/llm-ecosystem.md))
-- `GRAPH.RAG` v2 -- subgraph returns (nodes + edges + scores, not flat list)
-- `GRAPH.COOCCUR` -- auto-create edges between entities sharing context
-- `CACHE.SEMSET/SEMGET/SEMINVAL/SEMCLEAR/SEMSTATS` -- semantic LLM response cache
-- `MEMORY.STORE/RECALL/RELATE/CONTEXT/DECAY` -- agent memory with temporal decay
-- Native MCP server (`--mcp` flag) -- LLMs use Vex as a tool via Model Context Protocol
-- Ecosystem: [langchain-vex](https://github.com/pratyush-sngh/langchain-vex), [llama-index-vex](https://github.com/pratyush-sngh/llama-index-vex)
-
-### v0.8 -- Partitioned Graph & Graph Query
-- Hash-partition graph nodes across machines
-- Ghost nodes for 1-hop boundary cache
-- BSP BFS for cross-partition traversals
-- Distributed Dijkstra
-- Consistent hash ring with vnodes
-- `GRAPH.MATCH` — pattern matching (subgraph queries)
-- `GRAPH.PAGERANK` — iterative PageRank
-- `GRAPH.COMPONENTS` — connected components (union-find)
-- `GRAPH.DEGREE key [IN|OUT]` — node degree count
-- `GRAPH.COMMON from to` — common neighbors
-
-### v0.9 -- Engine Internals
-- Custom concurrent hashmap (replace Zig std HashMap for thread-safe resize)
-- Dual encoding for small collections (ziplist for lists/sets < 128 items)
-- Sorted set skip list (O(log n) ZRANGE/ZRANK)
-- Streams (`XADD`/`XREAD`/`XRANGE`/`XLEN`)
-- Persistence for lists, hashes, sets, sorted sets (snapshot + AOF)
-
-### v1.0 -- Kernel-bypass, Scripting & Query
-- AF_XDP / DPDK kernel-bypass networking (optional, Linux) — see [design sketch](docs/af-xdp-design.md)
-- Full io_uring event loop with connection lifecycle management (accept, close)
-- Lua scripting (`EVAL`/`EVALSHA`)
-- Graph secondary indexes on properties
-- Cypher query language subset
-
----
+| | |
+|---|---|
+| **[Vision & Roadmap](docs/roadmap.md)** | The agent-first north star; shipped vs experimental vs roadmap |
+| **[Commands](docs/commands.md)** | Full reference: KV, graph, vector, semantic cache, agent memory, pub/sub |
+| **[Agent Memory](docs/agent-memory.md)** · **[Semantic Cache](docs/semantic-cache.md)** · **[GraphRAG](docs/graphrag.md)** | The agent primitives, in depth |
+| **[Vector Search & GRAPH.RAG](docs/vector-search.md)** | HNSW search, f16 storage, RAG pipeline examples |
+| **[Architecture](docs/architecture.md)** | System design, event loop, why it's fast, source layout |
+| **[Benchmarks](docs/benchmarks.md)** · **[Tuning](docs/tuning.md)** | vs Dragonfly & Redis (methodology); every tuning knob, measured |
+| **[Configuration](docs/configuration.md)** · **[Deployment](docs/deployment.md)** | Flags, config file, env; production checklist |
+| **[Persistence](docs/persistence.md)** · **[Security](docs/security.md)** · **[Clustering](docs/clustering.md)** | Snapshot/AOF; TLS/auth; replication & failover |
+| **[Transactions](docs/transactions.md)** · **[Pub/Sub](docs/pubsub.md)** · **[Observability](docs/observability.md)** | MULTI/EXEC/WATCH; channels; INFO/SLOWLOG/LATENCY |
+| **[Kernel-bypass (AF_XDP)](docs/af-xdp-design.md)** | Design sketch: going around the kernel net stack |
+| **[Changelog](CHANGELOG.md)** · **[Testing](docs/testing.md)** | Release history; test suite & coverage |
 
 ## License
 

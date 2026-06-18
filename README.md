@@ -90,6 +90,11 @@ works. And the substrate is genuinely fast:
 
 ## Setup & use
 
+Two shapes, same binary: run Vex **local** (beside your app, over a Unix socket —
+best for a personal project or single-machine agent) or **networked over TCP**
+(a shared service with replication, TLS, and metrics — best for enterprise). See
+**[Two ways to run Vex](docs/usage-patterns.md)**.
+
 ### Run
 
 ```bash
@@ -161,6 +166,7 @@ epoch-based failover. The operator surface (`INFO`, `SLOWLOG`, `LATENCY`,
 | **[Vector Search & GRAPH.RAG](docs/vector-search.md)** | HNSW search, f16 storage, RAG pipeline examples |
 | **[Architecture](docs/architecture.md)** | System design, event loop, why it's fast, source layout |
 | **[Benchmarks](docs/benchmarks.md)** · **[Tuning](docs/tuning.md)** | vs Dragonfly & Redis (methodology); every tuning knob, measured |
+| **[Two ways to run Vex](docs/usage-patterns.md)** | Local (Unix socket, personal) vs networked (TCP, enterprise) |
 | **[Configuration](docs/configuration.md)** · **[Deployment](docs/deployment.md)** | Flags, config file, env; production checklist |
 | **[Persistence](docs/persistence.md)** · **[Security](docs/security.md)** · **[Clustering](docs/clustering.md)** | Snapshot/AOF; TLS/auth; replication & failover |
 | **[Transactions](docs/transactions.md)** · **[Pub/Sub](docs/pubsub.md)** · **[Observability](docs/observability.md)** | MULTI/EXEC/WATCH; channels; INFO/SLOWLOG/LATENCY |

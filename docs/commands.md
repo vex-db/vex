@@ -284,22 +284,26 @@ See [Vector Search](vector-search.md) for full details.
 
 | Command | Description |
 |---------|-------------|
-| `GRAPH.SETVEC key field vector` | Set a vector on a node (space-separated floats) |
+| `GRAPH.SETVEC key field <f32_bytes>` | Set a vector on a node (raw little-endian f32 bytes; dim = len/4) |
 | `GRAPH.GETVEC key field` | Get the vector stored on a node |
-| `GRAPH.VECSEARCH field K vector` | Find K nearest neighbors by cosine similarity |
-| `GRAPH.RAG field K depth vector` | Vector search + graph BFS expansion in one query |
+| `GRAPH.VECSEARCH field <f32_bytes> K <n>` | K nearest neighbors by cosine similarity |
+| `GRAPH.RAG field <f32_bytes> K <n> [DEPTH d] [DIR IN\|OUT\|BOTH] [EDGETYPE t] [NODETYPE t]` | Vector search + graph BFS expansion in one query |
 
 ### Vector Search Examples
+
+Vectors are **raw little-endian f32 bytes** (the dimension is inferred from the
+byte length); the examples below pass them via `redis-cli -x` / a client's binary
+arg. From Python: `model.encode(text).astype('<f4').tobytes()`.
 
 ```
 127.0.0.1:6380> GRAPH.ADDNODE doc:1 document
 (integer) 0
-127.0.0.1:6380> GRAPH.SETVEC doc:1 embedding 0.1 0.2 0.3 0.4
+127.0.0.1:6380> GRAPH.SETVEC doc:1 embedding "<f32_bytes>"
 OK
-127.0.0.1:6380> GRAPH.VECSEARCH embedding 3 0.1 0.2 0.3 0.4
+127.0.0.1:6380> GRAPH.VECSEARCH embedding "<f32_bytes>" K 3
 1) "doc:1"
 2) "0.9999"
-127.0.0.1:6380> GRAPH.RAG embedding 3 2 0.1 0.2 0.3 0.4
+127.0.0.1:6380> GRAPH.RAG embedding "<f32_bytes>" K 3 DEPTH 2
 1) "doc:1"
 ```
 

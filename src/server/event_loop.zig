@@ -530,6 +530,14 @@ pub const EventLoop = struct {
     fn pollIoUring(self: *EventLoop, out: []Event, timeout_ms: i32) ![]Event {
         _ = timeout_ms; // io_uring submit_and_wait with wait_nr=1 blocks until at least 1 completion
 
+        // A R_DISABLED ring rejects submit_and_wait with BADFD until enabled.
+        // The worker normally calls enableRing() explicitly before its poll loop
+        // (making it the SINGLE_ISSUER submitter); this lazy guard covers any
+        // path that constructs an EventLoop and polls directly (e.g. unit tests).
+        // No-op once enabled, and enabling here still honors SINGLE_ISSUER since
+        // this is the thread that submits.
+        if (self.pending_enable) self.enableRing();
+
         // A failed notify re-arm (SQ full) would otherwise permanently deafen
         // this worker to new-connection/pub-sub wakeups. Retry it here, where
         // the SQE rides the imminent submit_and_wait; poll_add is level-

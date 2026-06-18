@@ -172,7 +172,9 @@ GRAPH.RAG embedding <query> K 5 DEPTH 1
 
 ### Storage: Dual-Tier with f16 Quantization
 
-Vectors are stored on disk as **f16** (half precision) in `.vvf` files and backed by **mmap**. The OS manages hot/cold paging — frequently accessed vectors stay in RAM, cold vectors are on disk with zero RSS.
+Vectors live in **two tiers**: a heap **f32 write buffer** for everything inserted since the last save, and an **f16 mmap** tier (`.vvf` files) for everything that's been persisted. `SAVE`/`BGSAVE` merges the buffer into the mmap tier and drops the f32 copies. After a save, the OS manages hot/cold paging on the f16 tier — searched vectors stay in RAM, untouched ones cost ~0 resident memory.
+
+**This is the key thing to understand about memory:** a vector is f32-in-RAM until you save, then f16-on-disk. So resident memory is high right after a bulk insert (full f32 buffer) and drops sharply after the first `SAVE`. See the table below — it lists both numbers.
 
 ```
 Write path:  GRAPH.SETVEC → normalize → heap f32 (write buffer)
@@ -188,15 +190,20 @@ Data (sorted by node_id): [node_id:u32 + vector:[dim]f16]*
 
 ### Memory Usage
 
-| Vectors | Dims | f32 heap (old) | f16 mmap (new) | HNSW | Total RSS |
-|---------|------|---------------|----------------|------|-----------|
-| 10K | 384 | 15 MB | 7.5 MB disk, ~0 cold | ~3 MB | ~3 MB cold |
-| 10K | 768 | 30 MB | 15 MB disk, ~0 cold | ~3 MB | ~3 MB cold |
-| 100K | 384 | 150 MB | 75 MB disk | ~30 MB | ~30 MB cold |
-| 100K | 768 | 300 MB | 147 MB disk | ~30 MB | ~30 MB cold |
-| 1M | 768 | 3 GB | 1.47 GB disk | ~300 MB | ~300 MB cold |
+Two resident-memory numbers matter, and they're very different:
 
-Hot vectors (being searched by HNSW) are paged in by the OS. Cold vectors have zero RSS. HNSW neighbor lists (~300 bytes/node) always stay in memory.
+- **Before SAVE** — every inserted vector is a heap f32 in the write buffer. This is the high-water mark you'll see right after a bulk load.
+- **After SAVE, idle** — vectors are f16 in mmap'd `.vvf` files; cold pages get evicted, so resident memory falls to roughly the HNSW index (which always stays in RAM). Active search pages a hot subset back in, so steady-state-under-load sits between this and the on-disk size depending on your working set.
+
+| Vectors | Dims | Disk (f16 `.vvf`) | RSS before SAVE (f32 buffer) | RSS after SAVE, idle | HNSW (always resident) |
+|---------|------|-------------------|------------------------------|----------------------|------------------------|
+| 10K  | 384 | 7.5 MB  | ~15 MB  | ~3 MB   | ~3 MB   |
+| 10K  | 768 | 15 MB   | ~31 MB  | ~3 MB   | ~3 MB   |
+| 100K | 384 | 75 MB   | ~154 MB | ~30 MB  | ~30 MB  |
+| 100K | 768 | 147 MB  | ~300 MB | ~30 MB  | ~30 MB  |
+| 1M   | 768 | 1.47 GB | ~3 GB   | ~300 MB | ~300 MB |
+
+The HNSW column is a conservative upper bound (~300 bytes/node: a per-node neighbor-slice header + up to 32 layer-0 neighbors ×4 B + sparse higher layers; the real figure is typically lower). HNSW neighbor lists are heap-resident and **not** mmap'd, so they don't page out — they set the floor for "after SAVE, idle."
 
 ### Lazy Initialization
 

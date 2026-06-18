@@ -33,7 +33,7 @@ Field names mirror Redis 7's, so any tooling that talks to Redis (`redis-cli`, `
 
 ```
 # Server
-vex_version:0.7.4
+vex_version:0.7.5
 engine:csr_soa_v2
 os:linux
 arch:x86_64
@@ -288,7 +288,7 @@ VEX.PROMOTE <epoch>      -> +OK; validates epoch > current, persists vex.epoch a
 `log-format json` produces one JSON object per line:
 
 ```json
-{"ts":"2026-05-24T11:36:45Z","level":"INFO","msg":"vex v0.7.4 ready: port=17999 kv_keys=0 graph_nodes=0 aof_replayed=0"}
+{"ts":"2026-05-24T11:36:45Z","level":"INFO","msg":"vex v0.7.5 ready: port=17999 kv_keys=0 graph_nodes=0 aof_replayed=0"}
 {"ts":"2026-05-24T11:36:46Z","level":"WARN","msg":"repl-leader: broadcast to fd=14 failed (ConnectionClosed); closing follower"}
 ```
 

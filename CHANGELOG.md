@@ -21,6 +21,12 @@
 - `VEX.PROMOTE <epoch>` / `VEX.STATUS` admin commands.
 - True seq-precise replication lag per follower; atomic follower full-sync.
 
+### v0.7.5 — SET fast path + agent-first docs
+- **256-byte inline SET fast path.** Values up to 256 B now take the lock-light inline path; previously only ≤32 B did, so larger SETs fell to a write-lock + heap allocation. Big SET-throughput win for the 64–256 B values typical of cache/session workloads (`INLINE_BUF_SIZE` 32→256).
+- **Opt-in io_uring / worker tuning knobs, all default-off:** `VEX_PIN_WORKERS` (worker→CPU affinity), `VEX_NAPI_BUSY_POLL_US`, `VEX_POLL_SPIN_US` / `_ADAPTIVE` (spin-before-park), `VEX_URING_FLAGS` (SINGLE_ISSUER|DEFER_TASKRUN|COOP_TASKRUN). See [docs/tuning.md](docs/tuning.md).
+- **Fix:** R_DISABLED io_uring rings are now enabled lazily on first poll, so paths that drive an event loop directly (e.g. unit tests) no longer hit `BADFD`.
+- **Docs:** agent-first rewrite against the real APIs; honest Dragonfly head-to-head and vector memory figures (f32 write buffer vs f16 mmap); new `docs/tuning.md` and `docs/usage-patterns.md`; `zig build check-docs` drift guard in CI.
+
 ### v0.7.1
 - HNSW index persistence (`.vhi`), vector persistence fix (`.vvf`), AOF flush fix in scaled mode, prop_mask rebuild fix, VVF bounds validation, Zig 0.17 migration.
 

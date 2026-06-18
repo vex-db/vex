@@ -175,6 +175,21 @@ pub fn build(b: *std.Build) void {
     });
     b.step("test", "Run all unit tests").dependOn(&b.addRunArtifact(unit_tests).step);
 
+    // ── Doc/code drift guard ─────────────────────────────────────────────
+    // `zig build check-docs` verifies docs/commands.md covers the registered
+    // command table and that known-stale phrasings haven't reappeared. Reads
+    // the real `command_names` array + @embedFile's the docs, so it can't go
+    // out of sync. Wired into CI alongside the unit tests.
+    const docs_check = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("docs_check_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.step("check-docs", "Verify docs match the command table + no stale phrasings")
+        .dependOn(&b.addRunArtifact(docs_check).step);
+
     // ── Coverage ──────────────────────────────────────────────────────
     // `zig build coverage` runs the unit-test binary under kcov, emitting
     // an HTML + Cobertura report under coverage/. Requires kcov on PATH

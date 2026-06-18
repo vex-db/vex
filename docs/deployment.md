@@ -272,7 +272,9 @@ For durability with performance:
 
 ### io_uring (Linux)
 
-On Linux, Vex automatically uses io_uring with SQPOLL for async TCP I/O and AOF fsync. Falls back to epoll if io_uring is unavailable. No configuration required.
+On Linux, Vex automatically uses io_uring for async TCP I/O and AOF fsync, falling back to epoll if io_uring is unavailable. No configuration required. (SQPOLL is **not** used — its kernel poll thread oversubscribes cores at `workers > 1`.) On kernels ≥ 6.1 the ring uses the one-thread-per-ring flags (`SINGLE_ISSUER | DEFER_TASKRUN | COOP_TASKRUN`) and workers are pinned to cores by default.
+
+For many-core / network-optimized boxes, see **[Tuning](tuning.md)** — RFS, RSS-queue guidance, and the `VEX_*` knobs (`VEX_PIN_WORKERS`, `VEX_URING_FLAGS`, `VEX_NAPI_BUSY_POLL_US`).
 
 ### Direct I/O (Linux)
 

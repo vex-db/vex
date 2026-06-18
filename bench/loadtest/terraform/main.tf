@@ -15,10 +15,6 @@ locals {
 
   run_id = "run-${formatdate("YYYYMMDD-hhmmss", timestamp())}-${random_id.run.hex}"
 
-  results_prefix = trimsuffix(var.results_prefix, "/")
-  result_key     = "${local.results_prefix}/${local.run_id}/results.csv"
-  result_s3_uri  = "s3://${var.results_bucket}/${local.result_key}"
-
   ami_id = var.use_ssm_ami ? nonsensitive(data.aws_ssm_parameter.al2023.value) : var.ami_id
 
   common_tags = {
@@ -82,42 +78,11 @@ resource "aws_vpc_security_group_egress_rule" "all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-# --- IAM: server instance may PutObject under the results prefix ------------
-data "aws_iam_policy_document" "assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["ec2.amazonaws.com"]
-    }
-  }
-}
-
-data "aws_iam_policy_document" "s3_put" {
-  statement {
-    sid       = "PutResults"
-    actions   = ["s3:PutObject"]
-    resources = ["arn:aws:s3:::${var.results_bucket}/${local.results_prefix}/*"]
-  }
-}
-
-resource "aws_iam_role" "server" {
-  name_prefix        = "${var.key_name_prefix}-srv-"
-  assume_role_policy = data.aws_iam_policy_document.assume.json
-  tags               = merge(local.common_tags, { Name = "${var.key_name_prefix}-server-role" })
-}
-
-resource "aws_iam_role_policy" "server_s3" {
-  name_prefix = "s3-put-"
-  role        = aws_iam_role.server.id
-  policy      = data.aws_iam_policy_document.s3_put.json
-}
-
-resource "aws_iam_instance_profile" "server" {
-  name_prefix = "${var.key_name_prefix}-srv-"
-  role        = aws_iam_role.server.name
-  tags        = merge(local.common_tags, { Name = "${var.key_name_prefix}-server-profile" })
-}
+# NOTE: no IAM here. This account's principal is denied IAM (CreateRole returns
+# InvalidClientTokenId), and instance profiles are unavailable. Results are
+# exfiltrated via the EC2 serial console (get-console-output) instead of S3 —
+# the same mechanism the validated 2-box run used. The orchestrator script
+# already prints the CSV to /dev/console between markers; run.sh polls for it.
 
 # --- Client user-data: substitute the SSH public key placeholder ------------
 locals {
@@ -143,15 +108,17 @@ resource "aws_instance" "client" {
   tags = merge(local.common_tags, { Name = "${var.key_name_prefix}-client-${count.index}" })
 }
 
-# --- Server user-data: start from the committed orchestrator, substitute the
-# client IPs + private key, then SWAP the trailing "emit CSV to console + tail
-# shutdown" block for an S3 upload of /tmp/results.csv followed by shutdown.
+# --- Server user-data: the committed orchestrator with the client IPs and the
+# throwaway private key substituted in. The script already runs the sweep and
+# prints results.csv to /dev/console between ===VEXBENCH-RESULTS-{START,END}===
+# markers, then self-terminates. run.sh harvests that via get-console-output.
 #
-# DECISION: we keep bench/loadtest/scripts/server-userdata.sh as the single
-# source of benchmark logic (no duplication / drift). The Terraform layer only
-# rewrites the final output step. The console block is a stable, unique anchor.
+# DECISION: bench/loadtest/scripts/server-userdata.sh stays the single source
+# of benchmark logic (no duplication / drift). Terraform only injects the IPs
+# and key; it does NOT rewrite the output step (no S3 — this account denies IAM,
+# so there is no instance profile to authorize an upload).
 locals {
-  server_base = replace(
+  server_user_data = replace(
     replace(
       file("${local.scripts_dir}/server-userdata.sh"),
       "CLIENT_IPS_PLACEHOLDER",
@@ -160,20 +127,6 @@ locals {
     "PRIVKEY_B64_PLACEHOLDER",
     base64encode(tls_private_key.bench.private_key_openssh),
   )
-
-  # We anchor ONLY on the console-emit loop (a stable, unique 7-line block in
-  # the committed script) and replace it with: a one-shot console echo of the
-  # CSV (handy for `terraform console`-less debugging via EC2 serial console)
-  # plus an S3 upload with retries. The client-teardown + self-shutdown lines
-  # that follow in the committed script are left untouched, so the fleet still
-  # tears itself down exactly as before.
-  console_loop = "for rep in 1 2 3 4 5; do\n  echo \"===VEXBENCH-RESULTS-START===\" > /dev/console\n  cat \"$R\" > /dev/console\n  echo \"===VEXBENCH-RESULTS-END===\" > /dev/console\n  sleep 25\ndone"
-
-  s3_emit = "echo \"===VEXBENCH-RESULTS-START===\" > /dev/console\ncat \"$R\" > /dev/console\necho \"===VEXBENCH-RESULTS-END===\" > /dev/console\n# Ship results to S3 (instance profile grants PutObject); retry as NAT/creds settle.\nfor attempt in 1 2 3 4 5; do\n  if aws s3 cp \"$R\" \"${local.result_s3_uri}\" --region ${var.region} > /dev/console 2>&1; then\n    echo \"===VEXBENCH-S3-OK ${local.result_s3_uri}===\" > /dev/console\n    break\n  fi\n  echo \"===VEXBENCH-S3-RETRY $attempt===\" > /dev/console\n  sleep 15\ndone"
-
-  # AL2023 ships awscli v2 (`aws`) preinstalled; no extra install needed.
-  # The replace() is asserted to actually fire by a precondition on the server.
-  server_user_data = replace(local.server_base, local.console_loop, local.s3_emit)
 }
 
 # --- Server box (launched after clients so private IPs are known) -----------
@@ -183,7 +136,6 @@ resource "aws_instance" "server" {
   subnet_id                            = var.subnet_id
   vpc_security_group_ids               = [aws_security_group.bench.id]
   key_name                             = aws_key_pair.bench.key_name
-  iam_instance_profile                 = aws_iam_instance_profile.server.name
   user_data                            = local.server_user_data
   instance_initiated_shutdown_behavior = "terminate"
 
@@ -204,11 +156,11 @@ resource "aws_instance" "server" {
       condition     = data.aws_subnet.target.vpc_id == var.nonprod_vpc_id
       error_message = "REFUSING: subnet ${var.subnet_id} resolves to VPC ${data.aws_subnet.target.vpc_id}, not the allowed non-prod VPC ${var.nonprod_vpc_id}."
     }
-    # Fail loudly if the committed script's console-emit loop drifted and the
-    # S3 swap silently no-op'd (results would never reach S3 otherwise).
+    # The client IPs must have been injected, or the orchestrator has no load
+    # generators to drive (it would idle, emit nothing, and self-terminate).
     precondition {
-      condition     = strcontains(local.server_user_data, "aws s3 cp")
-      error_message = "S3 upload was not injected into server user-data: the console-emit anchor in scripts/server-userdata.sh changed. Update local.console_loop in main.tf."
+      condition     = !strcontains(local.server_user_data, "CLIENT_IPS_PLACEHOLDER")
+      error_message = "Client IPs were not injected into the server user-data; the CLIENT_IPS_PLACEHOLDER anchor in scripts/server-userdata.sh changed."
     }
   }
 }

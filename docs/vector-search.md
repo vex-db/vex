@@ -4,18 +4,19 @@
 
 ---
 
-## Overview
+In Vex, vectors aren't a separate store — they live **on graph nodes**. Each
+node can carry several named vector fields (a text embedding *and* an image
+embedding, say), each backed by its own HNSW index for sub-millisecond ANN
+search, persisted as f16 on disk and paged in by the OS. Because the vectors and
+the graph share one engine, "find similar, then expand to what's related" is a
+single in-process call — that's [`GRAPH.RAG`](graphrag.md).
 
-Vex integrates vector similarity search directly into the graph engine. Embeddings are stored as properties on graph nodes, and HNSW indexes enable sub-millisecond approximate nearest neighbor (ANN) search. The `GRAPH.RAG` command combines vector search with graph traversal in a single call — purpose-built for retrieval-augmented generation (RAG) pipelines.
+This page covers the **vector layer**: storing vectors, searching them, and how
+the HNSW + f16 storage works. For the search-plus-graph-expansion RAG story, see
+[GraphRAG](graphrag.md).
 
-**What makes this different from standalone vector databases:**
-
-| | Pinecone + Redis + Neo4j | Vex |
-|---|---|---|
-| Vector search | API call (~50ms) | In-process HNSW (~0.1ms) |
-| Fetch metadata | Redis GET x K (~5ms) | Same memory, zero-copy |
-| Graph expand | Neo4j query (~20ms) | CSR traverse (~0.05ms) |
-| **Total** | **~75ms, 3 network hops** | **~0.2ms, 1 command** |
+Vectors are **raw little-endian f32 bytes** on the wire (dimension inferred from
+length) — from Python, `model.encode(text).astype('<f4').tobytes()`.
 
 ---
 
@@ -74,107 +75,34 @@ Returns an array of `[key, score, key, score, ...]` pairs, sorted by similarity 
  6) "0.8876"
 ```
 
-### GRAPH.RAG
+### GRAPH.RAG — search + expand
 
-The flagship command. Vector search + graph expansion in one call.
-
-```
-GRAPH.RAG <field> <query_bytes> K <n> [DEPTH d] [DIR OUT|IN|BOTH] [EDGETYPE t] [NODETYPE t]
-```
-
-**Parameters:**
-- `field`: vector field name to search
-- `query_bytes`: query vector as raw f32 bytes
-- `K n`: return top-n results
-- `DEPTH d`: how many hops to expand from each result (default 1)
-- `DIR`: expansion direction — `OUT`, `IN`, or `BOTH` (default `OUT`)
-- `EDGETYPE t`: only expand through edges of this type
-- `NODETYPE t`: only include nodes of this type in expansion
-
-**Response format:**
-```
-*K                              # K results
-  *4                            # each result: [key, score, props, neighbors]
-    $<len> <node_key>           # matched node
-    $<len> <score>              # cosine similarity (0-1)
-    *N                          # properties (key-value pairs)
-      $<len> <prop_key>
-      $<len> <prop_value>
-    *M                          # expanded neighbor keys
-      $<len> <neighbor_key>
-```
+`GRAPH.RAG` runs `VECSEARCH` and then a BFS graph expansion from each hit in one
+call, returning a flat `[key, score, props, neighbors]` array per result
+(graph-expanded nodes carry `score = -1`). Full signature, reply shape, and a
+complete RAG pipeline live in [GraphRAG](graphrag.md).
 
 ---
 
-## Usage Example: RAG Pipeline
-
-### 1. Build the Knowledge Graph
-
-```
-# Create document nodes
-GRAPH.ADDNODE doc:transformer document
-GRAPH.SETPROP doc:transformer title "Attention Is All You Need"
-GRAPH.SETPROP doc:transformer year "2017"
-
-GRAPH.ADDNODE doc:bert document
-GRAPH.SETPROP doc:bert title "BERT: Pre-training of Deep Bidirectional Transformers"
-
-GRAPH.ADDNODE author:vaswani person
-GRAPH.ADDNODE topic:attention topic
-
-# Create relationships
-GRAPH.ADDEDGE doc:transformer author:vaswani authored_by
-GRAPH.ADDEDGE doc:transformer topic:attention about
-GRAPH.ADDEDGE doc:bert doc:transformer cites
-```
-
-### 2. Add Embeddings
-
-From your application (Python example using redis-py):
+## Storing and searching (Python)
 
 ```python
 import redis
-import numpy as np
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer('all-MiniLM-L6-v2')  # 384-dim
+model = SentenceTransformer('all-MiniLM-L6-v2')   # 384-dim
 r = redis.Redis(port=6380)
+def emb(t): return model.encode(t).astype('<f4').tobytes()   # raw f32 bytes
 
-# Encode and store
-for doc_key, text in documents.items():
-    embedding = model.encode(text).astype(np.float32)
-    r.execute_command('GRAPH.SETVEC', doc_key, 'embedding', embedding.tobytes())
+# store a vector on a node (node must exist via GRAPH.ADDNODE)
+r.execute_command('GRAPH.ADDNODE', 'doc:transformer', 'document')
+r.execute_command('GRAPH.SETVEC', 'doc:transformer', 'embedding',
+                  emb("Attention Is All You Need"))
+
+# K nearest neighbours by cosine similarity → [key, score, key, score, ...]
+hits = r.execute_command('GRAPH.VECSEARCH', 'embedding',
+                         emb("how does attention work?"), 'K', '5')
 ```
-
-### 3. Query with GRAPH.RAG
-
-```python
-query = "How do transformer attention mechanisms work?"
-query_vec = model.encode(query).astype(np.float32)
-
-# One command: find similar docs + expand to related entities
-results = r.execute_command(
-    'GRAPH.RAG', 'embedding', query_vec.tobytes(),
-    'K', '5', 'DEPTH', '1', 'DIR', 'OUT'
-)
-
-# results[0] = [b'doc:transformer', b'0.9523', [b'title', b'Attention Is All You Need', ...], [b'author:vaswani', b'topic:attention']]
-# results[1] = [b'doc:bert', b'0.8876', [...], [b'doc:transformer']]
-
-# Feed to LLM as context
-context = format_rag_context(results)
-llm_response = call_llm(query, context)
-```
-
-### 4. What the LLM Receives
-
-From a single `GRAPH.RAG` command, the LLM gets:
-- **doc:transformer** (similarity: 0.95) — title: "Attention Is All You Need", year: 2017
-  - Related: author:vaswani (person), topic:attention (topic)
-- **doc:bert** (similarity: 0.89) — title: "BERT: Pre-training..."
-  - Related: doc:transformer (cites)
-
-This is richer context than pure vector search — the graph relationships provide reasoning chains the LLM can follow.
 
 ---
 

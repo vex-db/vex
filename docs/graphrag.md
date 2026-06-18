@@ -1,331 +1,131 @@
 # GraphRAG
 
-[Back to README](../README.md) | [LLM Ecosystem](llm-ecosystem.md) | [Vector Search](vector-search.md) | [Agent Memory](agent-memory.md)
+[Back to README](../README.md) · [Vector Search](vector-search.md) · [Agent Memory](agent-memory.md) · [Commands](commands.md)
 
 ---
 
-> **Partial implementation — read carefully.** The core `GRAPH.RAG`,
-> `GRAPH.VECSEARCH`, `GRAPH.SETVEC`, and `GRAPH.GETVEC` commands are real, but
-> the accurate signatures live in [Vector Search](vector-search.md): the query
-> vector is passed as **raw f32 bytes**, `K` / `DEPTH` / `DIR` / `EDGETYPE` are
-> keyword flags (not positional), and the reply is always the flat
-> `[key, score, props, neighbors]` array. `GRAPH.COOCCUR` **is implemented**
-> (see its section below — it matches this design). **Not implemented** (design
-> proposal only): the `FORMAT subgraph` reply mode. Note: HNSW indices **do**
-> persist to disk (`.vhi` files) and reload on startup — any "not yet
-> implemented" note about HNSW persistence below is outdated.
+Plain vector RAG returns a flat list of similar chunks. **GraphRAG** returns the
+chunks *plus what they're connected to* — the entities they mention, the entities
+those co-occur with, the edges between them — so the LLM gets *structure*, not
+just a pile of text. The catch is that the usual way to build it is a vector DB
+**and** a graph DB **and** glue code that fans out across both on every query.
 
----
+Vex does it in **one command**. `GRAPH.RAG` runs the vector search and the graph
+expansion in the same process, over shared memory:
 
-## Overview
+| Step | Typical stack | Vex |
+|---|---|---|
+| Embed query | OpenAI / Ollama | same |
+| ANN search | Pinecone (~50 ms) | `GRAPH.VECSEARCH` (~0.1 ms) |
+| Fetch metadata | Redis `GET` × K (~5 ms) | zero-copy, same process |
+| Graph expansion | Neo4j Cypher (~20 ms) | CSR BFS (~0.05 ms) |
+| Assemble | your app code | `GRAPH.RAG` returns it |
+| **Total** | **~75 ms + glue** | **~0.2 ms, one call** |
 
-GraphRAG combines vector similarity search with knowledge graph traversal to produce richer context for LLMs than pure vector RAG. Instead of returning a flat list of similar chunks, GraphRAG returns a **connected subgraph** -- the chunks plus their relationships, entity co-occurrences, and causal chains.
+## The two commands that matter
 
-Vex implements GraphRAG as database-level primitives. No external graph database, no multi-hop API calls, no glue code.
-
-**Pipeline comparison:**
-
-| Step | Traditional Stack | Vex |
-|------|------------------|-----|
-| 1. Embed query | OpenAI / Ollama | OpenAI / Ollama (same) |
-| 2. ANN search | Pinecone (~50ms) | `GRAPH.VECSEARCH` (~0.1ms) |
-| 3. Fetch metadata | Redis GET x K (~5ms) | Zero-copy (same process) |
-| 4. Graph expansion | Neo4j Cypher (~20ms) | CSR BFS (~0.05ms) |
-| 5. Return subgraph | Assemble in app code | `GRAPH.RAG` returns it |
-| **Total** | **~75ms + app logic** | **~0.2ms, 1 command** |
-
----
-
-## Commands
-
-| Command | Type | Description |
-|---------|------|-------------|
-| `GRAPH.RAG field K depth query_vec [opts]` | Read | Vector search + graph expansion, returns subgraph |
-| `GRAPH.COOCCUR tag_property [opts]` | Write | Auto-create edges between co-occurring entities |
-| `GRAPH.VECSEARCH field K query_vec` | Read | Pure ANN search (existing, see [Vector Search](vector-search.md)) |
-| `GRAPH.INGEST json` | Write | Bulk ingest nodes + edges from JSON (existing) |
-
-### GRAPH.RAG (v2 -- Subgraph Returns)
-
-Vector search + graph expansion in one call. Returns a full subgraph with nodes, edges, properties, and similarity scores.
+### `GRAPH.RAG` — search + expand, one call
 
 ```
-GRAPH.RAG <field> <K> <depth> <query_f32...>
-    [DIR OUT|IN|BOTH]
-    [EDGETYPE <type>]
-    [NODETYPE <type>]
-    [FORMAT flat|subgraph]
+GRAPH.RAG <field> <f32_bytes> K <n>
+    [DEPTH <d>]                 # BFS hops from each hit (0 = no expansion)
+    [DIR IN|OUT|BOTH]           # expansion direction (default OUT)
+    [EDGETYPE <type>]           # only expand along edges of this type
+    [NODETYPE <type>]           # only include nodes of this type
 ```
 
-**Parameters:**
-- `field`: vector field name to search (e.g., `embedding`)
-- `K`: number of top results from vector search
-- `depth`: BFS expansion depth from each result (0 = no expansion)
-- `query_f32...`: query vector as space-separated floats
-- `DIR`: expansion direction (default `OUT`)
-- `EDGETYPE`: filter expansion to edges of this type only
-- `NODETYPE`: filter expansion to nodes of this type only
-- `FORMAT`: response format (default `flat` for backward compatibility)
-
-**Response format (FORMAT subgraph):**
+The query vector is **raw little-endian f32 bytes** (dimension inferred from
+length), same as `GRAPH.SETVEC`. The reply is a **flat array**, one entry per
+result node — `[key, score, props, neighbors]`:
 
 ```
-1) "nodes"
-2) 1) 1) "id"
-      2) "doc:transformer"
-      3) "type"
-      4) "document"
-      5) "score"
-      6) "0.9523"
-      7) "props"
-      8) 1) "title"
-         2) "Attention Is All You Need"
-         3) "year"
-         4) "2017"
-   2) 1) "id"
-      2) "author:vaswani"
-      3) "type"
-      4) "person"
-      5) "score"
-      6) "-1"
-      7) "props"
-      8) 1) "name"
-         2) "Ashish Vaswani"
-3) "edges"
-4) 1) 1) "from"
-      2) "doc:transformer"
-      3) "to"
-      4) "author:vaswani"
-      5) "type"
-      6) "authored_by"
-      7) "weight"
-      8) "1.0"
+> GRAPH.RAG embedding "<query_bytes>" K 5 DEPTH 1 DIR OUT
+1) 1) "doc:transformer"                         # key
+   2) "0.9523"                                  # cosine score (graph-expanded nodes: -1)
+   3) 1) "title" 2) "Attention Is All You Need" # props
+   4) 1) "author:vaswani" 2) "topic:attention"  # 1-hop neighbors
 ```
 
-Nodes from vector search have a `score` (0.0-1.0 cosine similarity). Nodes discovered via graph expansion have `score` = `-1` (not directly matched).
+### `GRAPH.COOCCUR` — auto-build the edges
 
-**Response format (FORMAT flat -- default, backward compatible):**
-
-```
-1) 1) "doc:transformer"
-   2) "0.9523"
-   3) 1) "title"  2) "Attention Is All You Need"
-   4) 1) "author:vaswani"  2) "topic:attention"
-```
-
-### GRAPH.COOCCUR
-
-Auto-create edges between nodes that share a property value. This is the core link-building step in GraphRAG -- connecting entities that appear in the same document chunk.
+The graph is only useful once entities are linked. `COOCCUR` connects every node
+that shares a property value — the standard "these entities appeared in the same
+chunk" link — so you don't hand-write edges:
 
 ```
-GRAPH.COOCCUR <tag_property>
-    [TYPE <edge_type>]
-    [WINDOW <max_group_size>]
-    [WEIGHT <default_weight>]
-    [INCR]
+GRAPH.COOCCUR <prop> [TYPE <edge_type>] [WINDOW <max_group>] [WEIGHT <w>] [INCR]
 ```
 
-**Parameters:**
-- `tag_property`: the property to group by (e.g., `chunk_id`, `source_doc`)
-- `TYPE`: label for created edges (default `CO_OCCURS`)
-- `WINDOW`: skip groups larger than this (prevents O(n^2) cliques, default 50)
-- `WEIGHT`: default weight for new edges (default 1.0)
-- `INCR`: if edge already exists, increment its weight instead of skipping
-
-**Example:**
-
-After ingesting a document where entities "OpenAI", "GPT-4", and "Transformer" all appear in chunk_17:
-
 ```
-# Entities already ingested with chunk_id property
-GRAPH.ADDNODE entity:openai organization
-GRAPH.SETPROP entity:openai chunk_id "chunk_17"
-GRAPH.ADDNODE entity:gpt4 model
-GRAPH.SETPROP entity:gpt4 chunk_id "chunk_17"
-GRAPH.ADDNODE entity:transformer architecture
-GRAPH.SETPROP entity:transformer chunk_id "chunk_17"
-
-# Auto-link co-occurring entities
-GRAPH.COOCCUR chunk_id TYPE CO_OCCURS INCR
-(integer) 3
-# Created: openai<->gpt4, openai<->transformer, gpt4<->transformer
-
-# If another chunk also mentions openai + transformer:
-GRAPH.SETPROP entity:openai chunk_id "chunk_42"
-GRAPH.SETPROP entity:transformer chunk_id "chunk_42"
-GRAPH.COOCCUR chunk_id TYPE CO_OCCURS INCR
-# openai<->transformer weight incremented to 2.0 (stronger relationship)
+# entities tagged with the chunk they appeared in...
+> GRAPH.COOCCUR chunk_id TYPE CO_OCCURS WINDOW 20 INCR
+(integer) 3      # openai<->gpt4, openai<->transformer, gpt4<->transformer
 ```
 
-**Returns:** count of edges created or updated.
+`WINDOW` caps group size (skip huge cliques — it's O(n·k²) in group size `k`),
+`INCR` strengthens an existing edge instead of skipping it, so an entity pair
+seen across many chunks ends up with a higher weight. Returns edges created/updated.
 
----
-
-## Full GraphRAG Pipeline
-
-### Step 1: Ingest Documents
-
-Split documents into chunks and create nodes:
+## A full pipeline
 
 ```python
 import redis
-import numpy as np
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer('all-MiniLM-L6-v2')  # 384-dim
+model = SentenceTransformer('all-MiniLM-L6-v2')   # 384-dim
 r = redis.Redis(port=6380)
+def emb(t): return model.encode(t).astype('<f4').tobytes()   # f32 bytes
 
-# Create chunk nodes with embeddings
-for chunk in document_chunks:
-    r.execute_command('GRAPH.ADDNODE', f'chunk:{chunk.id}', 'chunk')
-    r.execute_command('GRAPH.SETPROP', f'chunk:{chunk.id}', 'text', chunk.text)
-    r.execute_command('GRAPH.SETPROP', f'chunk:{chunk.id}', 'source', chunk.doc_id)
+# 1. chunks → nodes with embeddings
+for c in chunks:
+    r.execute_command('GRAPH.ADDNODE', f'chunk:{c.id}', 'chunk')
+    r.execute_command('GRAPH.SETPROP', f'chunk:{c.id}', 'text', c.text)
+    r.execute_command('GRAPH.SETVEC', f'chunk:{c.id}', 'embedding', emb(c.text))
 
-    embedding = model.encode(chunk.text).astype(np.float32)
-    r.execute_command('GRAPH.SETVEC', f'chunk:{chunk.id}', 'embedding',
-                      *[str(x) for x in embedding])
+# 2. entities (extraction is the LLM's job — use spaCy / LlamaIndex / MS GraphRAG)
+for c in chunks:
+    for ent in extract_entities(c.text):
+        k = f'entity:{ent.id}'
+        r.execute_command('GRAPH.UPSERT_NODE', k, ent.type)
+        r.execute_command('GRAPH.SETPROP', k, 'chunk_id', c.id)
+        r.execute_command('GRAPH.ADDEDGE', k, f'chunk:{c.id}', 'MENTIONED_IN')
+
+# 3. link co-occurring entities, then compact the CSR for fast traversal
+r.execute_command('GRAPH.COOCCUR', 'chunk_id', 'TYPE', 'CO_OCCURS', 'WINDOW', '20', 'INCR')
+r.execute_command('GRAPH.COMPACT')
+
+# 4. query: top-5 chunks + their 1-hop graph context, one call
+hits = r.execute_command('GRAPH.RAG', 'embedding', emb("how does attention work?"),
+                         'K', '5', 'DEPTH', '1', 'DIR', 'BOTH')
+context = format_for_llm(hits)      # chunks + linked entities + scores
+answer = llm.chat(f"Context:\n{context}\n\nAnswer: {query}")
 ```
 
-### Step 2: Extract Entities (Use Microsoft GraphRAG or LlamaIndex)
+`GRAPH.INGEST <json>` bulk-loads nodes + edges in one call if you already have
+the graph extracted.
 
-This is the AI-side work. Use an existing tool:
+## Use with Microsoft GraphRAG / LlamaIndex
 
-**Option A: Microsoft GraphRAG** (full pipeline, LLM-powered extraction)
-```python
-# GraphRAG extracts entities + relationships using an LLM.
-# Write a Vex output adapter (~200 lines) to redirect writes:
-#   Entity → GRAPH.ADDNODE entity:{name} {type}
-#   Relationship → GRAPH.ADDEDGE entity:{from} entity:{to} {rel_type}
-#   Community summary → GRAPH.SETPROP community:{id} summary {text}
-```
+Entity and relationship extraction — and community summarization — is LLM work;
+vex is the store and the query engine. Point an existing pipeline at vex via a
+thin output adapter: **MS GraphRAG** (Neo4j → vex) keeps its LLM extraction +
+Leiden community detection and just writes to vex over RESP; **LlamaIndex
+PropertyGraphIndex** works the same via a graph-store adapter. Why vex instead of
+Neo4j + a vector DB: **22× faster shortest path**, vector search and graph in one
+process, one binary, no Cypher to learn.
 
-**Option B: LlamaIndex PropertyGraphIndex** (lighter weight)
-```python
-from llama_index.core import PropertyGraphIndex
+## Honest scope
 
-# With a Vex graph store adapter:
-# index = PropertyGraphIndex.from_documents(
-#     documents,
-#     graph_store=VexPropertyGraphStore(redis_client=r),
-# )
-```
-
-**Option C: Manual extraction** (simplest, no LLM needed)
-```python
-import spacy
-nlp = spacy.load("en_core_web_sm")
-
-for chunk in document_chunks:
-    doc = nlp(chunk.text)
-    for ent in doc.ents:
-        node_key = f'entity:{ent.text.lower().replace(" ", "_")}'
-        r.execute_command('GRAPH.UPSERT_NODE', node_key, ent.label_)
-        r.execute_command('GRAPH.SETPROP', node_key, 'chunk_id', chunk.id)
-        # Link entity to its source chunk
-        r.execute_command('GRAPH.ADDEDGE', node_key, f'chunk:{chunk.id}', 'MENTIONED_IN')
-```
-
-### Step 3: Build Co-occurrence Links
-
-```
-# Auto-link entities that appear in the same chunk
-GRAPH.COOCCUR chunk_id TYPE CO_OCCURS WINDOW 20 INCR
-```
-
-### Step 4: Compact the Graph
-
-```
-# Rebuild CSR for optimal traversal performance
-GRAPH.COMPACT
-```
-
-### Step 5: Query
-
-```python
-query = "How do transformer attention mechanisms work?"
-query_vec = model.encode(query).astype(np.float32)
-
-results = r.execute_command(
-    'GRAPH.RAG', 'embedding', '5', '2',
-    *[str(x) for x in query_vec],
-    'DIR', 'BOTH', 'FORMAT', 'subgraph'
-)
-
-# results contains:
-# - Top 5 chunks by semantic similarity (with scores)
-# - All entities linked to those chunks (depth 1)
-# - Co-occurring entities (depth 2)
-# - All edges between them (type, weight)
-
-# Feed the subgraph to the LLM
-context = format_subgraph_for_llm(results)
-response = llm.chat(f"Based on this context:\n{context}\n\nAnswer: {query}")
-```
-
----
-
-## Integration with Microsoft GraphRAG
-
-Microsoft GraphRAG is the most complete open-source GraphRAG pipeline. It handles:
-- Document chunking
-- LLM-powered entity/relationship extraction
-- Community detection (Leiden algorithm)
-- Community summarization
-- Local + global search strategies
-
-**Vex replaces Neo4j as the graph store.** Everything else stays the same.
-
-```
-┌─────────────────────────────────────────┐
-│          Microsoft GraphRAG             │
-│                                         │
-│  Documents → Chunking → LLM Extraction  │
-│      → Community Detection → Summaries  │
-│                    │                     │
-│              Output Adapter              │
-│          (Neo4j → Vex, ~200 lines)       │
-└────────────────────┬────────────────────┘
-                     │ RESP protocol
-                     ▼
-┌─────────────────────────────────────────┐
-│              Vex Engine                 │
-│                                         │
-│  GRAPH.INGEST (bulk load entities)      │
-│  GRAPH.COOCCUR (auto-link)              │
-│  GRAPH.SETVEC (store embeddings)        │
-│  GRAPH.RAG (query time)                 │
-└─────────────────────────────────────────┘
-```
-
-**Why Vex over Neo4j for this:**
-- 22x faster shortest path queries
-- No Cypher query language to learn (RESP commands)
-- Vector search + graph in same process (Neo4j needs a separate vector DB)
-- Single binary deployment vs Neo4j JVM + plugins
-
----
-
-## Pros
-
-- **Single-command RAG**: `GRAPH.RAG` does vector search + graph expansion in ~0.2ms. No multi-service orchestration.
-- **Subgraph returns**: LLMs get structural context (who relates to whom, through what), not just a flat chunk list.
-- **Co-occurrence auto-linking**: `GRAPH.COOCCUR` eliminates manual edge creation. Run it after each ingestion batch.
-- **Incremental**: Add documents and entities incrementally. No need to rebuild the entire graph.
-- **Framework-compatible**: Works with MS GraphRAG and LlamaIndex via thin output adapters.
-- **22x faster graph queries than Memgraph**: CSR adjacency + bidirectional BFS.
-
-## Cons
-
-- **No built-in entity extraction**: Vex stores and queries the graph. Extracting entities from text requires an external tool (MS GraphRAG, LlamaIndex, spaCy). This is by design -- entity extraction is an AI problem, not a database problem.
-- **HNSW rebuild on cold start**: Until HNSW persistence is implemented (Phase 1), restarting Vex rebuilds the HNSW index from vectors. ~2-5s per 100K vectors.
-- **Single-node graph limit**: Current graph engine runs on one machine. For graphs exceeding available RAM (hundreds of millions of nodes), partitioned graph (v0.7 roadmap) is needed.
-- **No Cypher/SPARQL**: Graph queries use Vex's command-based API, not a declarative query language. Simpler for programmatic use, less flexible for ad-hoc exploration.
-- **COOCCUR is O(n*k^2)**: Where n = number of groups and k = group size. The `WINDOW` parameter caps k, but very large datasets need batched runs.
-
-## Limitations
-
-- **Subgraph size**: `GRAPH.RAG` with high K and deep DEPTH can return large subgraphs. The response is bounded by K * (avg_degree ^ DEPTH) nodes. Use DEPTH 1-2 for most workloads.
-- **Vector dimension**: All vectors in a field must have the same dimension. You cannot mix 384-dim and 768-dim embeddings in the same field.
-- **f16 quantization**: On-disk vectors use f16 (half precision). Cosine distance error ~1e-3. Acceptable for ANN retrieval, not for exact distance computation.
-- **Edge directionality**: `GRAPH.COOCCUR` creates bidirectional relationships (two directed edges). This doubles edge count compared to undirected graphs.
-- **No community detection**: MS GraphRAG uses Leiden clustering for community summarization. Vex doesn't have a built-in community detection algorithm. Use GraphRAG's pipeline for this step and ingest the results.
+- **Extraction isn't built in** — by design. Pulling entities/relationships from
+  text is an AI problem (MS GraphRAG, LlamaIndex, spaCy); vex stores and queries
+  the result.
+- **Flat reply, not a subgraph object.** `GRAPH.RAG` returns the
+  `[key, score, props, neighbors]` array above — graph-expanded nodes carry
+  `score = -1` (not directly matched). There's no separate "subgraph" reply mode.
+- **Bound the fan-out.** Result size is ~`K · avg_degree^DEPTH`; keep `DEPTH` at
+  1–2. `COOCCUR` makes bidirectional links (two directed edges), doubling edge count.
+- **Single-machine graph.** Fits in one box's RAM; partitioned graph is on the
+  [roadmap](roadmap.md). On-disk vectors are f16 (cosine error ~1e-3 — fine for
+  ANN), and HNSW indexes **persist** (`.vhi`) and reload on startup (no cold rebuild).
+- **No community detection** — use the upstream pipeline's clustering and ingest
+  the summaries as nodes.

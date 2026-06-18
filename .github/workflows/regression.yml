@@ -69,6 +69,9 @@ jobs:
       - name: zig build test-sentinel
         run: zig build test-sentinel --summary all
 
+      - name: zig build check-docs (doc/code drift guard)
+        run: zig build check-docs --summary all
+
   # ── PR gate: chaos regressions (each script ≤ ~60s) ──────────────────
   quick-chaos:
     name: Quick chaos suite

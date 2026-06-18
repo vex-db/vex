@@ -4,27 +4,12 @@ output "region" {
 }
 
 output "run_id" {
-  description = "Unique id for this benchmark run (also the S3 key segment)."
+  description = "Unique id for this benchmark run."
   value       = local.run_id
 }
 
-output "results_s3_uri" {
-  description = "Full s3:// URI of the results.csv the server uploads at the end of the sweep."
-  value       = local.result_s3_uri
-}
-
-output "results_bucket" {
-  description = "Bucket the results land in."
-  value       = var.results_bucket
-}
-
-output "results_key" {
-  description = "S3 object key of the results.csv (use with `aws s3api wait object-exists`)."
-  value       = local.result_key
-}
-
 output "server_instance_id" {
-  description = "Server (orchestrator) instance id."
+  description = "Server (orchestrator) instance id — run.sh polls its serial console for results."
   value       = aws_instance.server.id
 }
 

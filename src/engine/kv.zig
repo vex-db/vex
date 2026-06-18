@@ -39,10 +39,15 @@ pub const KVStore = struct {
     };
 
     /// Inline buffer size for small values. Values ≤ this are stored in-place
-    /// (no heap allocation, enables lock-free GET via SeqLock).
-    /// 32 bytes covers redis-benchmark default (3 bytes) + most real-world keys.
-    /// Kept small to minimize Entry size for cache efficiency.
-    pub const INLINE_BUF_SIZE = 32;
+    /// (no heap allocation; SET takes the lock-light rdlock+seqlock fast path
+    /// instead of the wrlock+alloc slow path, and GET stays alloc-free).
+    /// Raised 32→256 so realistic value sizes (e.g. the 256B benchmark default
+    /// and most session/JSON payloads) hit the fast SET path — SET of >32B
+    /// values was ~6.5× slower than Dragonfly purely from falling off this.
+    /// Trade-off: grows Entry by ~224B, so small-value-only workloads pay more
+    /// memory/cache; the proper long-term fix is a per-worker value arena for
+    /// non-inline values (keeps Entry small AND SET fast).
+    pub const INLINE_BUF_SIZE = 256;
 
     pub const Entry = struct {
         value: []const u8, // heap-allocated for large values, points into inline_buf for small
@@ -51,9 +56,9 @@ pub const KVStore = struct {
         int_value: i64 = 0, // cached native integer (valid when flags.is_integer)
         /// SeqLock: odd = write in progress, even = stable. Readers retry if changed.
         seq: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
-        /// Inline buffer for small values (≤ 128 bytes). Avoids heap alloc + enables lock-free GET.
+        /// Inline buffer for small values (≤ INLINE_BUF_SIZE). Avoids heap alloc + enables lock-free GET.
         inline_buf: [INLINE_BUF_SIZE]u8 = undefined,
-        inline_len: u8 = 0,
+        inline_len: u16 = 0, // u16: INLINE_BUF_SIZE (256) exceeds u8 range
         flags: EntryFlags = .{},
     };
 

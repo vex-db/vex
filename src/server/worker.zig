@@ -28,6 +28,64 @@ const SortedSetStore = @import("../engine/sorted_set.zig").SortedSetStore;
 const builtin = @import("builtin");
 const is_linux = builtin.os.tag == .linux;
 
+/// Worker-to-core pinning (Linux). Profiling at 32 workers showed ~172k
+/// cpu-migrations / 5s and 2.1M context-switches — unpinned workers bounce
+/// across cores, landing on cold caches and misaligned with where their
+/// sockets' packets arrive. Pinning worker `id` to the id-th CPU of its
+/// *allowed* set (so it respects taskset/cgroup cpusets) removes the migration
+/// and, because cores are numbered cluster-by-cluster, naturally groups
+/// consecutive workers into the same cache cluster. Default on; set
+/// VEX_PIN_WORKERS=0 to disable.
+const AFFINITY_WORDS = 1024 / @bitSizeOf(usize);
+const CpuMask = [AFFINITY_WORDS]usize;
+
+inline fn maskTest(mask: *const CpuMask, cpu: usize) bool {
+    return (mask[cpu / @bitSizeOf(usize)] & (@as(usize, 1) << @intCast(cpu % @bitSizeOf(usize)))) != 0;
+}
+
+fn workerPinningEnabled() bool {
+    const raw = std.c.getenv("VEX_PIN_WORKERS") orelse return true;
+    const s = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
+    return !(std.mem.eql(u8, s, "0") or std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "no"));
+}
+
+/// Pin the calling thread to one CPU chosen from its current allowed set.
+fn pinSelfToCpu(worker_id: usize) void {
+    if (!is_linux) return;
+    var allowed: CpuMask = @splat(0);
+    const grc = std.os.linux.syscall3(.sched_getaffinity, 0, @sizeOf(CpuMask), @intFromPtr(&allowed));
+    if (@as(isize, @bitCast(grc)) < 0) return;
+
+    // Pick the worker_id-th set CPU in the allowed mask (wrap if fewer CPUs).
+    var count: usize = 0;
+    var cpu: usize = 0;
+    while (cpu < AFFINITY_WORDS * @bitSizeOf(usize)) : (cpu += 1) {
+        if (maskTest(&allowed, cpu)) count += 1;
+    }
+    if (count == 0) return;
+    var target: usize = 0;
+    var nth: usize = worker_id % count;
+    cpu = 0;
+    while (cpu < AFFINITY_WORDS * @bitSizeOf(usize)) : (cpu += 1) {
+        if (maskTest(&allowed, cpu)) {
+            if (nth == 0) {
+                target = cpu;
+                break;
+            }
+            nth -= 1;
+        }
+    }
+
+    var one: CpuMask = @splat(0);
+    one[target / @bitSizeOf(usize)] = @as(usize, 1) << @intCast(target % @bitSizeOf(usize));
+    const src = std.os.linux.syscall3(.sched_setaffinity, 0, @sizeOf(CpuMask), @intFromPtr(&one));
+    if (@as(isize, @bitCast(src)) < 0) {
+        vex_log.warn("worker {d}: sched_setaffinity(cpu={d}) failed", .{ worker_id, target });
+    } else {
+        vex_log.info("worker {d}: pinned to cpu {d}", .{ worker_id, target });
+    }
+}
+
 const READ_BUF_SIZE = 64 * 1024;
 const MAX_NEW_FDS = 256;
 
@@ -555,6 +613,14 @@ pub const Worker = struct {
     }
 
     pub fn run(self: *Worker) void {
+        // Pin this worker to a core (kills cpu-migrations; clusters consecutive
+        // workers into the same cache cluster). Default on; VEX_PIN_WORKERS=0 off.
+        if (is_linux and workerPinningEnabled()) pinSelfToCpu(self.id);
+
+        // Enable a R_DISABLED io_uring ring FROM THIS THREAD so this worker is
+        // the SINGLE_ISSUER submitter (DEFER_TASKRUN path). No-op otherwise.
+        if (is_linux) self.loop.enableRing();
+
         // Detect io_uring availability at runtime
         if (is_linux) {
             self.use_uring_io = self.loop.use_uring;
@@ -2463,7 +2529,7 @@ pub const Worker = struct {
                         // path, since both paths share the rdlock.
                         const copy_t0: u64 = if (probe_on) probes.start() else 0;
                         var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                        var vlen: u8 = undefined;
+                        var vlen: u16 = undefined;
                         var attempts: u32 = 0;
                         while (attempts < 64) : (attempts += 1) {
                             const s1 = entry.seq.load(.acquire);
@@ -2671,7 +2737,7 @@ pub const Worker = struct {
 
                         if (entry.flags.is_inline) {
                             var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                            var vlen: u8 = undefined;
+                            var vlen: u16 = undefined;
                             var attempts: u32 = 0;
                             while (attempts < 64) : (attempts += 1) {
                                 const s1 = entry.seq.load(.acquire);

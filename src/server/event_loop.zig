@@ -62,6 +62,65 @@ fn readSpinAdaptive() bool {
     return !(std.mem.eql(u8, s, "0") or std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "no"));
 }
 
+// ── io_uring NAPI busy-poll ──────────────────────────────────────────────
+// When VEX_NAPI_BUSY_POLL_US > 0, register the ring's NAPI context so a waiting
+// io_uring_enter busy-polls the NIC's receive queue INLINE for up to that many
+// microseconds before parking — the worker processes the network softirq work
+// in its own context instead of waiting for a separate softirq to run and then
+// a scheduler wakeup. This attacks the context-switch/parking churn AND the
+// kernel-network cost directly (unlike the app-level spin above, which polled an
+// already-empty completion queue). Requires Linux >= 6.9; no-ops gracefully if
+// the kernel rejects the registration.
+const IORING_REGISTER_NAPI: usize = 27;
+
+const io_uring_napi = extern struct {
+    busy_poll_to: u32,
+    prefer_busy_poll: u8,
+    pad: [3]u8 = .{ 0, 0, 0 },
+    resv: u64 = 0,
+};
+
+fn readNapiBusyPollUs() u32 {
+    const raw = std.c.getenv("VEX_NAPI_BUSY_POLL_US") orelse return 0;
+    const s = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
+    return std.fmt.parseInt(u32, s, 10) catch 0;
+}
+
+/// Register NAPI busy-poll on `ring_fd`. Returns true on success.
+fn registerNapi(ring_fd: i32, busy_poll_us: u32) bool {
+    var cfg = io_uring_napi{ .busy_poll_to = busy_poll_us, .prefer_busy_poll = 1 };
+    // nr_args MUST be 1 for IORING_REGISTER_NAPI (matches liburing); the kernel
+    // rejects 0 with -EINVAL.
+    const rc = linux.syscall4(
+        .io_uring_register,
+        @as(usize, @intCast(ring_fd)),
+        IORING_REGISTER_NAPI,
+        @intFromPtr(&cfg),
+        1,
+    );
+    return @as(isize, @bitCast(rc)) >= 0;
+}
+
+// ── io_uring one-thread-per-ring setup flags ─────────────────────────────
+// SINGLE_ISSUER + DEFER_TASKRUN + COOP_TASKRUN: completion task-work runs on
+// this worker's io_uring_enter (submit_and_wait) instead of being forced via an
+// IPI/softirq — fewer cross-task wakeups and lower per-completion overhead for a
+// reactor where one thread owns one ring. DEFER_TASKRUN requires SINGLE_ISSUER,
+// which requires the ring to be ENABLED by its sole submitter — so the ring is
+// created R_DISABLED and enabled from the worker thread (see enableRing).
+// Requires Linux >= 6.1. VEX_URING_FLAGS=0 forces the plain (flags=0) ring.
+const IORING_REGISTER_ENABLE_RINGS: usize = 12;
+const URING_OPT_FLAGS: u32 = linux.IORING_SETUP_SINGLE_ISSUER |
+    linux.IORING_SETUP_DEFER_TASKRUN |
+    linux.IORING_SETUP_COOP_TASKRUN;
+
+fn readUringFlags() u32 {
+    const raw = std.c.getenv("VEX_URING_FLAGS") orelse return URING_OPT_FLAGS;
+    const s = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
+    if (std.mem.eql(u8, s, "0") or std.mem.eql(u8, s, "false")) return 0;
+    return URING_OPT_FLAGS;
+}
+
 pub const EventLoop = struct {
     pub const Event = struct {
         fd: i32,
@@ -123,6 +182,10 @@ pub const EventLoop = struct {
     /// load. Pair with a large VEX_POLL_SPIN_US for a near-never-park busy poll.
     /// Default true (polite: spin only when recently busy).
     spin_adaptive: bool,
+    /// Ring was created R_DISABLED (SINGLE_ISSUER/DEFER_TASKRUN path) and must
+    /// be enabled from the worker thread before first submit. enableRing()
+    /// (called in Worker.run on the worker's own thread) flips this to false.
+    pending_enable: bool,
 
     pub fn init() !EventLoop {
         if (is_linux) {
@@ -135,20 +198,24 @@ pub const EventLoop = struct {
     }
 
     fn initLinux() !EventLoop {
-        // Plain io_uring, falling back to epoll. SQPOLL is deliberately NOT
-        // used: each ring's kernel busy-poll thread costs a full core, which
-        // oversubscribes the host at --workers > 1 (measured: thousands of
-        // involuntary preemptions and ms-scale wakeup tails with 4 workers
-        // + 4 sqpoll kthreads on 8 vCPUs), while batched submit_and_wait
-        // already amortizes the submit syscalls SQPOLL would save.
+        // SQPOLL deliberately NOT used (kthread-per-ring oversubscribes at
+        // --workers > 1). Try the one-thread-per-ring optimization flags first
+        // (created R_DISABLED, enabled on the worker thread); fall back to a
+        // plain ring, then epoll. VEX_URING_FLAGS=0 forces the plain ring.
+        const opt = readUringFlags();
+        if (opt != 0) {
+            if (linux.IoUring.init(1024, opt | linux.IORING_SETUP_R_DISABLED)) |ring_val| {
+                return initLinuxUring(ring_val, true);
+            } else |_| {} // kernel < 6.1 or flags unsupported → plain ring
+        }
         if (linux.IoUring.init(1024, 0)) |ring_val| {
-            return initLinuxUring(ring_val);
+            return initLinuxUring(ring_val, false);
         } else |_| {
             return initLinuxEpoll();
         }
     }
 
-    fn initLinuxUring(ring_val: linux.IoUring) !EventLoop {
+    fn initLinuxUring(ring_val: linux.IoUring, defer_enable: bool) !EventLoop {
         var ring = ring_val;
         const efd_raw = linux.eventfd(0, linux.EFD.NONBLOCK);
         if (efd_raw > std.math.maxInt(usize) / 2) {
@@ -173,19 +240,53 @@ pub const EventLoop = struct {
             .spin_ns = readSpinNs(),
             .spin_hot = false,
             .spin_adaptive = readSpinAdaptive(),
+            .pending_enable = defer_enable,
         };
 
-        self.submitPollAdd(efd, @as(u32, linux.POLL.IN)) catch {
-            ring.deinit();
-            _ = std.c.close(efd);
-            return initLinuxEpoll();
-        };
+        // A R_DISABLED ring cannot be submitted to until enabled from the sole
+        // issuer (the worker thread) — defer the notify poll-add + NAPI to
+        // enableRing(). The plain ring is armed here as before.
+        if (!defer_enable) {
+            self.submitPollAdd(efd, @as(u32, linux.POLL.IN)) catch {
+                ring.deinit();
+                _ = std.c.close(efd);
+                return initLinuxEpoll();
+            };
+            self.armNapi();
+        }
 
-        const sqpoll = (self.ring.flags & linux.IORING_SETUP_SQPOLL) != 0;
-        probes_mod.ring_mode.store(if (sqpoll) 3 else 2, .monotonic);
-        vex_log.info("event_loop: io_uring backend active (sqpoll={})", .{sqpoll});
+        probes_mod.ring_mode.store(2, .monotonic);
+        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={})", .{ defer_enable, defer_enable });
 
         return self;
+    }
+
+    /// Enable a R_DISABLED ring FROM THE CALLING (worker) thread, making it the
+    /// SINGLE_ISSUER submitter, then arm the notify poll + NAPI. No-op unless
+    /// the ring is pending enable. MUST be called on the worker's own thread.
+    pub fn enableRing(self: *EventLoop) void {
+        if (!is_linux) return;
+        if (!self.use_uring or !self.pending_enable) return;
+        const rc = linux.syscall4(.io_uring_register, @as(usize, @intCast(self.ring.fd)), IORING_REGISTER_ENABLE_RINGS, 0, 0);
+        if (@as(isize, @bitCast(rc)) < 0)
+            vex_log.warn("event_loop: ENABLE_RINGS failed (rc={d})", .{@as(isize, @bitCast(rc))});
+        self.submitPollAdd(self.notify_read_fd, @as(u32, linux.POLL.IN)) catch {
+            self.notify_rearm_pending = true;
+        };
+        self.armNapi();
+        self.pending_enable = false;
+    }
+
+    /// Opt-in NAPI busy-poll (VEX_NAPI_BUSY_POLL_US). Off by default.
+    fn armNapi(self: *EventLoop) void {
+        if (!is_linux) return;
+        const napi_us = readNapiBusyPollUs();
+        if (napi_us > 0) {
+            if (registerNapi(self.ring.fd, napi_us))
+                vex_log.info("event_loop: io_uring NAPI busy-poll on ({d}us)", .{napi_us})
+            else
+                vex_log.warn("event_loop: NAPI busy-poll unavailable (kernel < 6.9?), continuing without", .{});
+        }
     }
 
     fn initLinuxEpoll() !EventLoop {
@@ -227,6 +328,7 @@ pub const EventLoop = struct {
             .spin_ns = 0, // epoll path parks via epoll_wait timeout, no CQ to peek
             .spin_hot = false,
             .spin_adaptive = true,
+            .pending_enable = false,
         };
     }
 
@@ -276,6 +378,7 @@ pub const EventLoop = struct {
             .spin_ns = 0, // kqueue path parks via kevent timeout, no CQ to peek
             .spin_hot = false,
             .spin_adaptive = true,
+            .pending_enable = false,
         };
     }
 

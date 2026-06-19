@@ -115,6 +115,11 @@ pub const RetireList = struct {
     items: std.array_list.Managed(Item),
     /// Total bytes currently deferred (for observability / backpressure).
     pending_bytes: usize = 0,
+    /// Safe epoch at the last reclaim. While it hasn't advanced, no retired
+    /// item can have become reclaimable (a new retire is tagged with the
+    /// current epoch ≥ safe), so reclaim can early-exit in O(1) instead of
+    /// re-walking the list on every write within a tick.
+    last_safe: u64 = 0,
 
     pub fn init(backing: std.mem.Allocator, gc: *EpochGC) RetireList {
         return .{ .backing = backing, .gc = gc, .items = std.array_list.Managed(Item).init(backing) };
@@ -131,6 +136,10 @@ pub const RetireList = struct {
     /// current safe epoch. Returns the number reclaimed.
     pub fn reclaim(self: *RetireList) usize {
         const safe = self.gc.safeEpoch();
+        // Within a tick the safe epoch is frozen; nothing new is reclaimable, so
+        // skip the O(n) walk. The real sweep runs once when the epoch advances.
+        if (safe == self.last_safe) return 0;
+        self.last_safe = safe;
         var freed: usize = 0;
         var i: usize = 0;
         while (i < self.items.items.len) {

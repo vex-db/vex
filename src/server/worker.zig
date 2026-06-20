@@ -3416,11 +3416,17 @@ pub const Worker = struct {
             return;
         }
         // Cork the socket: buffer writes into one TCP segment (uncork sends).
-        // macOS: TCP_NOPUSH (4), Linux: TCP_CORK (3). IPPROTO_TCP = 6.
-        const cork_opt: c_int = if (comptime @import("builtin").os.tag == .linux) 3 else 4;
+        // LINUX ONLY (TCP_CORK=3). macOS TCP_NOPUSH does NOT flush sub-segment
+        // data on uncork — a small reply (< MSS) stays wedged in the kernel send
+        // buffer, so a c=1 request/reply client hangs waiting for a reply that
+        // never ships (observed as a stuck Send-Q). macOS already sets
+        // TCP_NODELAY on the accepted socket, so small replies flush immediately
+        // without corking; we simply skip the cork there.
+        const cork_opt: c_int = 3; // TCP_CORK (Linux); unused on other OSes
         const cork_on: c_int = 1;
         const cork_off: c_int = 0;
-        if (conn.ssl == null) {
+        const do_cork = is_linux and conn.ssl == null;
+        if (do_cork) {
             _ = std.c.setsockopt(conn.fd, 6, cork_opt, @ptrCast(&cork_on), @sizeOf(c_int));
         }
 
@@ -3436,13 +3442,13 @@ pub const Worker = struct {
                 const pending = conn.write_buf.items.len - conn.write_offset;
                 if (pending > self.max_client_buffer) {
                     vex_log.warn("client {d} closed: output buffer {d} > limit {d}", .{ conn.client_id, pending, self.max_client_buffer });
-                    if (conn.ssl == null) {
+                    if (do_cork) {
                         _ = std.c.setsockopt(conn.fd, 6, cork_opt, @ptrCast(&cork_off), @sizeOf(c_int));
                     }
                     self.closeConn(conn.fd);
                     return;
                 }
-                if (conn.ssl == null) {
+                if (do_cork) {
                     _ = std.c.setsockopt(conn.fd, 6, cork_opt, @ptrCast(&cork_off), @sizeOf(c_int));
                 }
                 if (!conn.write_registered) {
@@ -3459,7 +3465,7 @@ pub const Worker = struct {
         }
 
         // All data flushed — uncork to send the batched segment
-        if (conn.ssl == null) {
+        if (do_cork) {
             _ = std.c.setsockopt(conn.fd, 6, cork_opt, @ptrCast(&cork_off), @sizeOf(c_int));
         }
         conn.write_buf.clearRetainingCapacity();

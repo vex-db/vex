@@ -1169,10 +1169,19 @@ pub const Server = struct {
         }
 
         var next_worker: usize = 0;
+        var accept_errs: u64 = 0;
         while (!shutdown.load(.acquire)) {
             const stream = net_server.accept(self.io) catch |err| {
                 if (shutdown.load(.acquire)) break;
-                log("accept error: {}", .{err});
+                // A persistent accept failure (e.g. fd exhaustion) keeps the
+                // listener readable, so a bare `continue` becomes a 100% CPU
+                // spin that also spams the log. Back off and rate-limit the
+                // message. (fd limit is raised at startup; see raiseFdLimit.)
+                accept_errs += 1;
+                if (accept_errs == 1 or accept_errs % 1000 == 0)
+                    log("accept error ({d}x): {}", .{ accept_errs, err });
+                var backoff: std.c.timespec = .{ .sec = 0, .nsec = 20 * std.time.ns_per_ms };
+                _ = std.c.nanosleep(&backoff, null);
                 continue;
             };
             const fd = stream.socket.handle;

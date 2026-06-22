@@ -179,6 +179,24 @@ fn installSignalHandlers() void {
     _ = c.sigaction(c.SIG.TERM, &sa, null);
 }
 
+/// Raise the open-fd soft limit toward `maxclients` (+headroom for listeners,
+/// AOF, epoch rings). The OS default (often 1024) otherwise caps accepts far
+/// below maxclients: `accept()` fails with EMFILE and the accept loop spins
+/// (100% CPU + log spam) while clients past ~1024 get refused. Redis does the
+/// same on startup. Best-effort: never raises above the hard limit.
+fn raiseFdLimit(maxclients: u32) void {
+    const want: u64 = @as(u64, maxclients) + 128;
+    var lim = std.posix.getrlimit(.NOFILE) catch return;
+    if (lim.cur >= want) return;
+    const target = @min(want, lim.max);
+    lim.cur = target;
+    std.posix.setrlimit(.NOFILE, lim) catch |err| {
+        log("warn: could not raise fd limit to {d} (hard={d}): {s}", .{ target, lim.max, @errorName(err) });
+        return;
+    };
+    log("fd limit raised: soft={d} hard={d} (maxclients={d})", .{ target, lim.max, maxclients });
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
@@ -187,6 +205,7 @@ pub fn main(init: std.process.Init) !void {
     const config = parseArgs(init);
     initGlobalLogger(allocator, config.log_file, config.log_level, config.log_format);
     defer vex_log.global.deinit();
+    raiseFdLimit(config.maxclients);
     @import("observability/stats.zig").start_time_ms = nowMillis();
     @import("observability/event_stats.zig").threshold_us.store(config.latency_threshold_us, .monotonic);
     // Cluster epoch — load from `<data_dir>/vex.epoch` if present.

@@ -20,6 +20,12 @@
 - Cluster epoch mechanism: monotonic, persisted to `vex.epoch`, carried in heartbeats; stale-epoch frames rejected; old leaders self-demote.
 - `VEX.PROMOTE <epoch>` / `VEX.STATUS` admin commands.
 - True seq-precise replication lag per follower; atomic follower full-sync.
+- **Reactor fd limit:** `RLIMIT_NOFILE` is raised to `maxclients` at startup (was the OS default, often 1024), and the TCP accept loop now backs off + rate-limits on error instead of tight-spinning. Fixes a throughput collapse past ~1024 connections where `accept()` spun on `EMFILE` (single-core SET cratered 320K→105K at 1600 conns; now flat across 200–6400).
+- **Reactor (macOS):** don't `TCP_NOPUSH`-cork replies on macOS — sub-MSS replies could wedge in the kernel send buffer and hang rapid request/reply clients (Linux `TCP_CORK` unaffected).
+- **Epoch reclaim:** O(1) early-exit when the safe epoch hasn't advanced, removing an O(n²) blowup on the write path.
+
+**Docs:**
+- `docs/benchmarks.md`: per-core ceiling + latency anatomy from AWS `c6in.8xlarge` runs (single pinned core, separate client over ENA, saturated) — vex beats single-thread Redis per-core at P1 (1.16–1.32×), latency is ~99.5% network/kernel (SET ~110 ns, total vex CPU ~1.3 µs), with the must-saturate-the-core caveat.
 
 ### v0.7.5 — SET fast path + agent-first docs
 - **256-byte inline SET fast path.** Values up to 256 B now take the lock-light inline path; previously only ≤32 B did, so larger SETs fell to a write-lock + heap allocation. Big SET-throughput win for the 64–256 B values typical of cache/session workloads (`INLINE_BUF_SIZE` 32→256).

@@ -5,8 +5,11 @@
 **Goal:** make the `vector → graph → KV` fusion usable by LLMs. 0.8 proved the engine
 is fast and stable; 0.9 ships the surface that turns that substrate into the pitch.
 
-- **Finish embeddings** — `vex-embed` per-command text→vector auto-rewrite + a live
-  integration test against a local embedder. Prerequisite for MCP.
+- **Embeddings** — `vex-embed` per-command auto-rewrite **landed**: `--auto-rewrite`
+  + a `TEXT "<string>"` marker on the vector commands (`CACHE.SEMGET/SEMSET`,
+  `GRAPH.VECSEARCH/RAG/SETVEC`, `MEMORY.RECALL/STORE`) embeds inline and substitutes
+  raw f32 bytes before forwarding. Remaining: a live integration test against a local
+  embedder, and HTTPS transport (plain HTTP only today). Prerequisite for MCP.
 - **MCP server** — flagship LLM-native surface: primitives-as-tools for Claude /
   Cursor / agents (tools map 1:1 to RESP commands, so it stays primitives-only).
 - **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges) and

@@ -154,8 +154,19 @@ const ConnCtx = struct {
                         replaceHead(&pending, e.consumed) catch return;
                     },
                     .not_embed => |consumed| {
-                        // A full, non-EMBED command sits at the head — forward
-                        // exactly those bytes to vex and drop them.
+                        // A full, non-EMBED command sits at the head. With
+                        // auto-rewrite on, an allowlisted command carrying a
+                        // `TEXT "<s>"` marker is embedded inline + rewritten;
+                        // otherwise it's forwarded byte-for-byte.
+                        if (self.proxy.cfg.auto_rewrite) {
+                            switch (self.tryRewrite(vex_fd, pending.items[0..consumed])) {
+                                .forwarded, .failed => {
+                                    replaceHead(&pending, consumed) catch return;
+                                    continue;
+                                },
+                                .not_applicable => {},
+                            }
+                        }
                         writeAll(vex_fd, pending.items[0..consumed]) catch return;
                         replaceHead(&pending, consumed) catch return;
                     },
@@ -201,13 +212,100 @@ const ConnCtx = struct {
         writeAll(self.client_fd, bytes) catch return;
         writeAll(self.client_fd, "\r\n") catch return;
 
-        // TODO(auto-rewrite): per-command interception for CACHE.* / MEMORY.*
-        // hooks in here. Instead of returning the vector to the client, the
-        // proxy would embed the text argument inline and rewrite the command
-        // into the vector form before forwarding to vex (e.g. CACHE.SET key
-        // <text> → GRAPH.SETVEC … <vec>). Out of scope for the scaffold.
+    }
+
+    /// Auto-rewrite: if `cmd_bytes` is an allowlisted command carrying one or
+    /// more `TEXT "<string>"` markers, embed each string inline and replace the
+    /// two-arg `TEXT <s>` pair with a single arg of raw f32 bytes, then forward
+    /// the rewritten command to vex. Returns:
+    ///   .forwarded      — rewritten and sent to vex (caller drops the head)
+    ///   .failed         — embedding/IO error; a RESP error was sent to the
+    ///                     client and the original command is NOT forwarded
+    ///   .not_applicable — not a rewrite target; caller forwards verbatim
+    fn tryRewrite(self: *ConnCtx, vex_fd: c.fd_t, cmd_bytes: []const u8) RewriteResult {
+        const allocator = self.proxy.allocator;
+        const cmd = resp_detect.parseCommand(cmd_bytes) orelse return .not_applicable;
+        if (cmd.argc == 0 or !isEmbeddable(cmd.arg(cmd_bytes, 0))) return .not_applicable;
+
+        // A marker is a "TEXT" arg followed by a value arg. Count them so we
+        // can write the (smaller) array header before substituting.
+        var markers: usize = 0;
+        var j: usize = 1;
+        while (j + 1 < cmd.argc) : (j += 1) {
+            if (eqlIgnoreCase(cmd.arg(cmd_bytes, j), "TEXT")) {
+                markers += 1;
+                j += 1; // skip the value so a literal "TEXT" value isn't recounted
+            }
+        }
+        if (markers == 0) return .not_applicable;
+
+        var out = std.array_list.Managed(u8).init(allocator);
+        defer out.deinit();
+        var hdr: [16]u8 = undefined;
+        const h = std.fmt.bufPrint(&hdr, "*{d}\r\n", .{cmd.argc - markers}) catch return .failed;
+        out.appendSlice(h) catch return .failed;
+
+        var i: usize = 0;
+        while (i < cmd.argc) : (i += 1) {
+            const a = cmd.arg(cmd_bytes, i);
+            if (i + 1 < cmd.argc and eqlIgnoreCase(a, "TEXT")) {
+                const text = cmd.arg(cmd_bytes, i + 1);
+                const vec = embedder.embed(allocator, self.proxy.cfg, text) catch |err| {
+                    replyEmbedError(self.client_fd, err);
+                    return .failed;
+                };
+                defer allocator.free(vec);
+                const bytes = embedder.floatsToBytes(allocator, vec) catch {
+                    writeAll(self.client_fd, "-ERR vex-embed: out of memory\r\n") catch {};
+                    return .failed;
+                };
+                defer allocator.free(bytes);
+                writeBulk(&out, bytes) catch return .failed;
+                i += 1; // value consumed alongside the marker
+            } else {
+                writeBulk(&out, a) catch return .failed;
+            }
+        }
+        writeAll(vex_fd, out.items) catch return .failed;
+        return .forwarded;
     }
 };
+
+const RewriteResult = enum { forwarded, not_applicable, failed };
+
+/// Commands whose `TEXT "<s>"` marker is embedded inline. Everything else is
+/// forwarded verbatim even with `--auto-rewrite`, so a literal arg of "TEXT"
+/// in an ordinary command (SET/HSET/…) is never mistaken for a marker.
+const embeddable_cmds = [_][]const u8{
+    "CACHE.SEMGET", "CACHE.SEMSET", "GRAPH.VECSEARCH", "GRAPH.RAG",
+    "GRAPH.SETVEC",  "MEMORY.RECALL", "MEMORY.STORE",
+};
+
+fn isEmbeddable(name: []const u8) bool {
+    for (embeddable_cmds) |cmd| if (eqlIgnoreCase(name, cmd)) return true;
+    return false;
+}
+
+fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (std.ascii.toUpper(x) != std.ascii.toUpper(y)) return false;
+    return true;
+}
+
+/// Append `data` as a RESP bulk string: `$<len>\r\n<data>\r\n`.
+fn writeBulk(out: *std.array_list.Managed(u8), data: []const u8) !void {
+    var hdr: [16]u8 = undefined;
+    try out.appendSlice(try std.fmt.bufPrint(&hdr, "${d}\r\n", .{data.len}));
+    try out.appendSlice(data);
+    try out.appendSlice("\r\n");
+}
+
+fn replyEmbedError(client_fd: c.fd_t, err: anyerror) void {
+    var ebuf: [128]u8 = undefined;
+    const msg = std.fmt.bufPrint(&ebuf, "-ERR vex-embed: {s}\r\n", .{@errorName(err)}) catch
+        "-ERR vex-embed: embedding failed\r\n";
+    writeAll(client_fd, msg) catch {};
+}
 
 /// Background copy: src → dst until EOF/error or `stop`.
 const PumpCtx = struct {

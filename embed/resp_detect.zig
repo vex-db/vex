@@ -107,6 +107,54 @@ pub fn mightBeEmbed(buf: []const u8) bool {
     return eqlIgnoreCase(buf[0..n], prefix[0..n]);
 }
 
+// ── General command parse (for auto-rewrite) ────────────────────────
+// detectEmbed only needs arg0/arg1; the rewrite path needs every arg's
+// boundaries so it can substitute a `TEXT "<s>"` pair with embedded bytes.
+
+pub const MAX_ARGS = 64;
+
+pub const Arg = struct { start: usize, end: usize };
+
+pub const Command = struct {
+    /// Total bytes of the whole `*…` command.
+    consumed: usize,
+    argc: usize,
+    args: [MAX_ARGS]Arg = undefined, // valid [0..argc); each = bulk-string body
+
+    pub fn arg(self: *const Command, buf: []const u8, i: usize) []const u8 {
+        return buf[self.args[i].start..self.args[i].end];
+    }
+};
+
+/// Parse a complete leading RESP array of bulk strings. Returns null if the
+/// command is incomplete, malformed, not an array, or has > MAX_ARGS args
+/// (caller forwards those verbatim — never our concern to rewrite).
+pub fn parseCommand(buf: []const u8) ?Command {
+    if (buf.len == 0 or buf[0] != '*') return null;
+    var p: usize = 0;
+    const argc = switch (readLenLine(buf, &p, '*')) {
+        .ok => |n| n,
+        else => return null,
+    };
+    if (argc <= 0 or argc > MAX_ARGS) return null;
+    var cmd = Command{ .consumed = 0, .argc = @intCast(argc) };
+    var i: usize = 0;
+    while (i < cmd.argc) : (i += 1) {
+        if (p >= buf.len or buf[p] != '$') return null;
+        const len = switch (readLenLine(buf, &p, '$')) {
+            .ok => |n| n,
+            else => return null,
+        };
+        if (len < 0) return null;
+        const ulen: usize = @intCast(len);
+        if (p + ulen + 2 > buf.len) return null; // body + CRLF not all here
+        cmd.args[i] = .{ .start = p, .end = p + ulen };
+        p += ulen + 2;
+    }
+    cmd.consumed = p;
+    return cmd;
+}
+
 const LenLine = union(enum) {
     ok: i64,
     /// Header line not fully present yet — wait for more bytes.
@@ -199,6 +247,33 @@ test "mightBeEmbed holds EMBED prefixes, releases others" {
     try std.testing.expect(mightBeEmbed("*2\r\n$5\r\nembe"));
     try std.testing.expect(!mightBeEmbed("*2\r\n$3\r\nGET"));
     try std.testing.expect(!mightBeEmbed("+OK\r\n"));
+}
+
+test "parseCommand: args + boundaries for a multi-arg command" {
+    const cmd = "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n";
+    const c = parseCommand(cmd).?;
+    try std.testing.expectEqual(@as(usize, 3), c.argc);
+    try std.testing.expectEqual(cmd.len, c.consumed);
+    try std.testing.expectEqualStrings("SET", c.arg(cmd, 0));
+    try std.testing.expectEqualStrings("key", c.arg(cmd, 1));
+    try std.testing.expectEqualStrings("value", c.arg(cmd, 2));
+}
+
+test "parseCommand: locates a TEXT marker + its value" {
+    // GRAPH.VECSEARCH field TEXT "hi there" K 5
+    const cmd = "*6\r\n$15\r\nGRAPH.VECSEARCH\r\n$5\r\nfield\r\n$4\r\nTEXT\r\n$8\r\nhi there\r\n$1\r\nK\r\n$1\r\n5\r\n";
+    const c = parseCommand(cmd).?;
+    try std.testing.expectEqual(@as(usize, 6), c.argc);
+    try std.testing.expectEqualStrings("TEXT", c.arg(cmd, 2));
+    try std.testing.expectEqualStrings("hi there", c.arg(cmd, 3));
+    try std.testing.expectEqualStrings("5", c.arg(cmd, 5));
+}
+
+test "parseCommand: incomplete + malformed return null" {
+    const full = "*2\r\n$3\r\nGET\r\n$1\r\nk\r\n";
+    try std.testing.expect(parseCommand(full[0 .. full.len - 3]) == null); // body short
+    try std.testing.expect(parseCommand("+OK\r\n") == null); // not an array
+    try std.testing.expect(parseCommand("") == null);
 }
 
 test "two commands: only the head is consumed at a time" {

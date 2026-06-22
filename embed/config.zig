@@ -37,6 +37,10 @@ pub const Config = struct {
     embed_key: []const u8 = "",
     provider: Provider = .ollama,
     log_level: vex_log.Level = .info,
+    /// When true, rewrite allowlisted commands carrying a `TEXT "<string>"`
+    /// marker: embed the string inline and substitute raw f32 bytes before
+    /// forwarding to vex. Off = the proxy stays byte-transparent (EMBED only).
+    auto_rewrite: bool = false,
 };
 
 /// Parse argv into a Config. Unknown flags are ignored (forward-compatible);
@@ -66,6 +70,8 @@ pub fn parseArgs(init: std.process.Init) Config {
             if (nextVal(&it)) |v| out.provider = Provider.parse(v) orelse out.provider;
         } else if (std.mem.eql(u8, arg, "--log-level")) {
             if (nextVal(&it)) |v| out.log_level = vex_log.Level.parse(v);
+        } else if (std.mem.eql(u8, arg, "--auto-rewrite")) {
+            out.auto_rewrite = true;
         }
     }
     return out;

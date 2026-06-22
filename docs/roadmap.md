@@ -70,9 +70,10 @@ and an MCP tool surface.** Items 1–2 below are the 0.9 core; 3–4 are the imm
 follow-on.
 
 **Roadmap (priority order):**
-1. **Finish embeddings** — `vex-embed` per-command auto-rewrite (so clients can
-   pass text to `CACHE`/`MEMORY`/`SETVEC`) + a live integration test against a
-   local embedder. Prerequisite for MCP.
+1. **Finish embeddings** — per-command auto-rewrite **done** (`vex-embed
+   --auto-rewrite` + a `TEXT "<s>"` marker on the vector commands; see
+   [embedding.md](embedding.md)). Remaining: a live integration test against a
+   local embedder + HTTPS transport. Prerequisite for MCP.
 2. **MCP server** — the flagship LLM-native surface: Claude / Cursor / agents use
    vex's primitives as tools directly (tools map 1:1 to RESP commands, so it
    stays primitives-only).

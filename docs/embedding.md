@@ -84,15 +84,31 @@ The command name is matched case-insensitively. On any failure (endpoint down,
 non-2xx response, unparseable JSON) the proxy replies with a `-ERR vex-embed:
 <reason>` RESP error rather than silently forwarding.
 
-## Future: per-command auto-rewrite
+## Per-command auto-rewrite (`--auto-rewrite`)
 
-Today the client does the two-step `EMBED` → `GRAPH.SETVEC` dance explicitly.
-A planned next step is **transparent auto-rewrite**: the proxy would recognize
-higher-level commands (e.g. `CACHE.SET`, `MEMORY.*`) whose argument is text,
-embed it inline, and rewrite the command into its vector form before forwarding
-to vex — so the client never sees a vector at all. The hook point is marked
-with a `TODO(auto-rewrite)` comment in `embed/proxy.zig`. It is intentionally
-out of scope for the current scaffold.
+Beyond the explicit two-step `EMBED` → `GRAPH.SETVEC` dance, the proxy can embed
+text **inline**: start it with `--auto-rewrite` and a client passes a
+`TEXT "<string>"` marker wherever a vector arg would go. The proxy embeds the
+string and substitutes raw f32 bytes before forwarding — the client never builds
+a vector itself.
+
+```
+# with --auto-rewrite:
+GRAPH.VECSEARCH emb TEXT "what is vex" K 5     → GRAPH.VECSEARCH emb <f32> K 5
+CACHE.SEMGET TEXT "how do I reset my password" → CACHE.SEMGET <f32>
+MEMORY.STORE agent "likes Python" VEC TEXT "likes Python"
+                                               → MEMORY.STORE agent "likes Python" VEC <f32>
+```
+
+- **Marker:** a `TEXT` arg followed by its string value; the pair is replaced by
+  one bulk-string arg of little-endian f32 bytes. Multiple markers per command
+  are each embedded. The `TEXT` match is case-insensitive.
+- **Allowlist:** only `CACHE.SEMGET`/`SEMSET`, `GRAPH.VECSEARCH`/`RAG`/`SETVEC`,
+  and `MEMORY.RECALL`/`STORE` are rewritten — so a literal `TEXT` argument in an
+  ordinary command (e.g. `SET k TEXT`) is never mistaken for a marker.
+- **Default off:** without `--auto-rewrite` the proxy stays byte-transparent
+  (only `EMBED` is intercepted). On an embedding failure the client gets a
+  `-ERR vex-embed: <reason>` and the command is not forwarded.
 
 ## Source layout
 

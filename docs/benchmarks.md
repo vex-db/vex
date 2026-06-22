@@ -130,6 +130,76 @@ honest caveats: the 23× is for *read-hot* large hashes (every mutation
 forces one re-serialization), and any fully-parsing client will measure
 far lower numbers — because of its own parse cost, not the server's.
 
+### Per-core ceiling & latency anatomy (AWS `c6in.8xlarge`, single pinned core)
+
+The grid above measures vex's *multi-worker* advantage. This section isolates the
+**single-core** question — is one vex worker faster than one Redis thread? — and
+decomposes where an unpipelined request's time actually goes.
+
+**Setup:** AWS `c6in.8xlarge` (32 vCPU), Linux 6.17 io_uring backend, vex
+`-Doptimize=ReleaseFast`. The vex worker (`--workers 1`) and `redis-server` are each
+pinned to **one** core (`taskset -c`), driven by a **separate** `c6in.8xlarge` client
+box over the ENA NIC (never loopback), with multiple parallel `redis-benchmark`
+processes to saturate the core. Redis 8.0.3, June 2026.
+
+**The caveat that bit us first: you must saturate the core.** A single
+`redis-benchmark` process caps ~180k ops/s unpipelined, at which point vex and Redis
+look *identical* (both idle, client-bound). Only at ≥200 concurrent connections does
+the core become the bottleneck and the real per-core ceiling appear.
+
+#### Per-core SET/GET ceiling, by connection count (P=1, rps)
+
+| conns | vex SET | Redis SET | vex GET | Redis GET |
+|---|---|---|---|---|
+| 200 | **334k** | 272k | **336k** | 288k |
+| 800 | **323k** | 264k | **324k** | 270k |
+| 1600 | **317k** | 255k | **317k** | 262k |
+| 3200 | **322k** | 253k | **331k** | 258k |
+| 6400 | **320k** | 243k | — | 247k |
+
+vex sustains ~320k across the whole range; Redis peaks ~280k and **declines** under
+connection load. vex wins per-core at every depth, the margin widening to **1.32×**
+at 6400 conns. (Note: one vex worker also beats *four* on a single hot key — 4 workers
+fight over one stripe lock — so prefer few workers for hot-key, many for spread.)
+
+> The flat-vs-declining curve needed a fix first. vex previously had **no fd-limit
+> raise**, so past the OS default (1024) `accept()` spun on `EMFILE` and SET collapsed
+> to ~105k at 1600 conns. Raising `RLIMIT_NOFILE` to `maxclients` at startup (as Redis
+> does) + an accept-loop backoff fixed it (commit `294fb0a`).
+
+#### Latency vs connections (SET, ms) — it's queueing, and vex's tail is tighter
+
+| conns | vex p50 | Redis p50 | vex p99 | Redis p99 | vex max | Redis max |
+|---|---|---|---|---|---|---|
+| 50 | 0.263 | 0.271 | 0.327 | 0.343 | **0.63** | 0.74 |
+| 200 | 0.727 | 0.743 | 0.815 | 0.855 | **1.22** | 1.67 |
+| 800 | 3.01 | 2.82 | 3.41 | 3.09 | **4.30** | 6.14 |
+| 1600 | 6.17 | 6.30 | 7.17 | 7.06 | **8.10** | 12.67 |
+
+Latency grows **linearly** with connections — past the core's ceiling, added
+connections add *queueing*, not work (Little's Law). p50/p99 track Redis closely;
+vex's **worst-case tail is consistently tighter** (8.1 ms vs 12.7 ms at 1600 conns).
+
+#### Where an unpipelined request's time goes (vex, `DEBUG PROBES`, under SET load)
+
+| stage | avg | |
+|---|---|---|
+| recv + RESP parse (`recv_batch`) | 601 ns | |
+| command dispatch | 409 ns | |
+| storage op (the SET) | 268 ns | stripe-lock 32 + hashmap 33 + copy 21 + seqlock 25 = **~110 ns** |
+| queue reply (`io_submit`) | 41 ns | |
+| **total vex CPU / request** | **~1.3 µs** | |
+| blocked in `io_uring_enter` (waiting on the NIC) | ~117 µs | per wake, ~40 requests/wake |
+
+Against the ~260µs base round-trip, **vex's compute is ~1.3µs (~0.5%) and the SET
+itself is ~110 nanoseconds** — the worker spends the rest (~99.5%) in the
+network/kernel path, literally blocked ~117µs in `io_uring_enter` waiting for the
+NIC. So unpipelined latency is a **kernel problem, not an engine problem**: the levers
+are NAPI busy-poll / kernel-bypass (see [AF_XDP](af-xdp-design.md)) for the network and
+more cores for the queueing — not the data structures. This is also why vex's
+throughput edge (lower CPU/request → more req/s per core) shows up as a **throughput**
+win but a near-tie on **latency**, which the shared kernel path dominates.
+
 ---
 
 ## Vex vs Redis 8.0 (`redis-benchmark`, P=50, c=16)

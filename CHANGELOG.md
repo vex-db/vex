@@ -1,5 +1,21 @@
 # Changelog
 
+### Unreleased — v0.9 (LLM-native surface)
+
+**Goal:** make the `vector → graph → KV` fusion usable by LLMs. 0.8 proved the engine
+is fast and stable; 0.9 ships the surface that turns that substrate into the pitch.
+
+- **Finish embeddings** — `vex-embed` per-command text→vector auto-rewrite + a live
+  integration test against a local embedder. Prerequisite for MCP.
+- **MCP server** — flagship LLM-native surface: primitives-as-tools for Claude /
+  Cursor / agents (tools map 1:1 to RESP commands, so it stays primitives-only).
+- **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges) and
+  hybrid filtered `VECSEARCH` (nearest vectors among nodes of type X reachable from Y).
+- **Pub/sub for LLM events** — `PUBSUB CHANNELS`/`NUMSUB` + change/invalidation events
+  on `MEMORY` / `CACHE` / graph mutations (keyspace-notification style).
+
+See [docs/roadmap.md](docs/roadmap.md) for the full priority order.
+
 ### v0.8.0 — Production Hardening (Observability + Stability)
 
 **Observability (Redis-compatible operator surface):**

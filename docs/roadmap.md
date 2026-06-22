@@ -61,7 +61,15 @@ Legend: **shipped** · _experimental_ · `roadmap`
   command today; per-command text→vector auto-rewrite is WIP, and it's
   plain-HTTP only so far.
 
-### Roadmap (priority order)
+### v0.9 — LLM-native surface
+
+**Goal:** turn the proven `vector → graph → KV` substrate into something LLMs use
+*directly*. 0.8 made the engine fast and operationally hardened (the "substrate as
+credibility" half); **0.9 makes the fusion usable — text-native inputs (embeddings)
+and an MCP tool surface.** Items 1–2 below are the 0.9 core; 3–4 are the immediate
+follow-on.
+
+**Roadmap (priority order):**
 1. **Finish embeddings** — `vex-embed` per-command auto-rewrite (so clients can
    pass text to `CACHE`/`MEMORY`/`SETVEC`) + a live integration test against a
    local embedder. Prerequisite for MCP.

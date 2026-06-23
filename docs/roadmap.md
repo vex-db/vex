@@ -75,9 +75,10 @@ follow-on.
    [embedding.md](embedding.md)) with an end-to-end integration test
    (`tests/integration/vex-embed-autorewrite.sh`). Remaining: HTTPS transport.
    Prerequisite for MCP — **effectively complete.**
-2. **MCP server** — the flagship LLM-native surface: Claude / Cursor / agents use
-   vex's primitives as tools directly (tools map 1:1 to RESP commands, so it
-   stays primitives-only).
+2. **MCP server** — flagship LLM-native surface. **MVP landed** as the standalone
+   `vex-mcp` sibling project: MCP/JSON-RPC over stdio, 11 tools mapped **1:1 to RESP
+   commands** (primitives-only), vector/memory/cache tools take natural text via the
+   `vex-embed` `TEXT` marker. Remaining: SSE/HTTP transport, more tools.
 3. **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges
    returns) and **hybrid filtered `VECSEARCH`** ("nearest vectors among nodes of
    type X reachable from Y") — the single most differentiated primitive.

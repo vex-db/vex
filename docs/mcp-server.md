@@ -4,12 +4,15 @@
 
 ---
 
-> **Status: design proposal — NOT yet implemented.** There is no MCP server in
-> the codebase today: the `--mcp*` flags, the `vex --mcp` quick-start, and the
-> `MEMORY.*` / `CACHE.SEM*` commands referenced below do not exist. This page
-> describes the intended design. (The `GRAPH.*`, KV, and vector commands it
-> references *are* real — see [Commands](commands.md).) Track status in
-> [LLM Ecosystem](llm-ecosystem.md).
+> **Status: an MVP ships in the standalone `vex-mcp` project — with a different
+> design than this page.** The implemented server is a **separate process** (not
+> in-process `vex --mcp`) exposing **primitives-only tools mapped 1:1 to RESP
+> commands** (`kv_get`, `vecsearch`, `memory_store`, …) over **stdio** — not the
+> high-level semantic tools (`remember`/`recall`) sketched below. That follows
+> the [roadmap](roadmap.md) principles (primitives, lean core); the semantic-tool
+> layer here stays a possible future direction. See the `vex-mcp` project README
+> for the real tool list. The sections below are kept as the original design
+> exploration.
 
 ---
 

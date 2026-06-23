@@ -11,8 +11,10 @@ is fast and stable; 0.9 ships the surface that turns that substrate into the pit
   raw f32 bytes before forwarding. End-to-end integration test added
   (`tests/integration/vex-embed-autorewrite.sh`, built-in mock embedder, CI-friendly).
   Remaining: HTTPS transport (plain HTTP only today). Prerequisite for MCP.
-- **MCP server** — flagship LLM-native surface: primitives-as-tools for Claude /
-  Cursor / agents (tools map 1:1 to RESP commands, so it stays primitives-only).
+- **MCP server** — flagship LLM-native surface. **MVP done** in the standalone
+  `vex-mcp` project (sibling repo): MCP/JSON-RPC over stdio, 11 tools mapped 1:1 to
+  RESP commands (primitives-only); vector/memory/cache tools accept natural text via
+  the `vex-embed` `TEXT` marker. Remaining: SSE/HTTP transport, more tools.
 - **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges) and
   hybrid filtered `VECSEARCH` (nearest vectors among nodes of type X reachable from Y).
 - **Pub/sub for LLM events** — `PUBSUB CHANNELS`/`NUMSUB` + change/invalidation events

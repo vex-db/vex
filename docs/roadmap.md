@@ -78,7 +78,7 @@ follow-on.
 2. **MCP server** — flagship LLM-native surface. **MVP landed** as the standalone
    `vex-mcp` sibling project: MCP/JSON-RPC over stdio, 11 tools mapped **1:1 to RESP
    commands** (primitives-only), vector/memory/cache tools take natural text via the
-   `vex-embed` `TEXT` marker. Remaining: SSE/HTTP transport, more tools.
+   `vex-embed` `TEXT` marker. stdio + Streamable HTTP transports done; remaining: more tools, optional SSE streaming.
 3. **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges
    returns) and **hybrid filtered `VECSEARCH`** ("nearest vectors among nodes of
    type X reachable from Y") — the single most differentiated primitive.

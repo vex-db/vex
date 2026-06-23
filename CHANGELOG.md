@@ -14,7 +14,7 @@ is fast and stable; 0.9 ships the surface that turns that substrate into the pit
 - **MCP server** — flagship LLM-native surface. **MVP done** in the standalone
   `vex-mcp` project (sibling repo): MCP/JSON-RPC over stdio, 11 tools mapped 1:1 to
   RESP commands (primitives-only); vector/memory/cache tools accept natural text via
-  the `vex-embed` `TEXT` marker. Remaining: SSE/HTTP transport, more tools.
+  the `vex-embed` `TEXT` marker. stdio + Streamable HTTP transports done; remaining: more tools, optional SSE streaming.
 - **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges) and
   hybrid filtered `VECSEARCH` (nearest vectors among nodes of type X reachable from Y).
 - **Pub/sub for LLM events** — `PUBSUB CHANNELS`/`NUMSUB` + change/invalidation events

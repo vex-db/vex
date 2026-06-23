@@ -72,8 +72,9 @@ follow-on.
 **Roadmap (priority order):**
 1. **Finish embeddings** — per-command auto-rewrite **done** (`vex-embed
    --auto-rewrite` + a `TEXT "<s>"` marker on the vector commands; see
-   [embedding.md](embedding.md)). Remaining: a live integration test against a
-   local embedder + HTTPS transport. Prerequisite for MCP.
+   [embedding.md](embedding.md)) with an end-to-end integration test
+   (`tests/integration/vex-embed-autorewrite.sh`). Remaining: HTTPS transport.
+   Prerequisite for MCP — **effectively complete.**
 2. **MCP server** — the flagship LLM-native surface: Claude / Cursor / agents use
    vex's primitives as tools directly (tools map 1:1 to RESP commands, so it
    stays primitives-only).

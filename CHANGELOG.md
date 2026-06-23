@@ -8,8 +8,9 @@ is fast and stable; 0.9 ships the surface that turns that substrate into the pit
 - **Embeddings** — `vex-embed` per-command auto-rewrite **landed**: `--auto-rewrite`
   + a `TEXT "<string>"` marker on the vector commands (`CACHE.SEMGET/SEMSET`,
   `GRAPH.VECSEARCH/RAG/SETVEC`, `MEMORY.RECALL/STORE`) embeds inline and substitutes
-  raw f32 bytes before forwarding. Remaining: a live integration test against a local
-  embedder, and HTTPS transport (plain HTTP only today). Prerequisite for MCP.
+  raw f32 bytes before forwarding. End-to-end integration test added
+  (`tests/integration/vex-embed-autorewrite.sh`, built-in mock embedder, CI-friendly).
+  Remaining: HTTPS transport (plain HTTP only today). Prerequisite for MCP.
 - **MCP server** — flagship LLM-native surface: primitives-as-tools for Claude /
   Cursor / agents (tools map 1:1 to RESP commands, so it stays primitives-only).
 - **Deepen the fused path** — `GRAPH.RAG FORMAT subgraph` (rich nodes+edges) and

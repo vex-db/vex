@@ -125,6 +125,9 @@ pub fn main(_: std.process.Init) !void {
     std.debug.print("\n--- Hashes ---\n", .{});
     {
         var hs = HashStore.init(allocator);
+        hs.initStripes(); // required after init() so the 32 stripe rwlocks are
+        // real (macOS rwlocks don't survive the init()+return struct copy);
+        // without it deinit() tears down uninitialized locks → SIGKILL.
         defer hs.deinit();
 
         // HSET: add N fields to one hash

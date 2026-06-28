@@ -155,7 +155,7 @@ Also has a `BENCH_PROFILE=1` mode that attempts `perf record`. Blocked by
 EKS kernel's `perf_event_paranoid` setting even with `privileged: true`.
 Left in place for non-EKS use.
 
-### 3. K8s Job manifest at `deploy/k8s/vex-compare-bench.yaml`
+### 3. K8s Job manifest at `tests/k8s/vex-compare-bench.yaml`
 
 Targets the `scrum6` namespace, pins to `c5a.2xlarge` via nodeAffinity,
 reserves 4-6 CPU cores. Image pushed to `jarvis/vex:compare-bench` in ECR.
@@ -565,7 +565,7 @@ A complete list of files touched this session:
 | `tests/unit/command/handler_test.zig` | Same — `initStripes()` after `HashStore.init()` (2 sites) |
 | `Dockerfile.compare` | **New file** — single-image bench container |
 | `docker-compose.compare-tcp.yml` | **New file** — TCP-only variant (macOS bind-mount issue with unix sockets) |
-| `deploy/k8s/vex-compare-bench.yaml` | **New file** — EKS bench job manifest |
+| `tests/k8s/vex-compare-bench.yaml` | **New file** — EKS bench job manifest |
 | `scripts/run-bench-in-container.sh` | **New file** — bench/matrix/probe driver |
 | `tools/compare-client/main.go` | Unix-socket support via `unix:` prefix |
 | `docs/perf-handover.md` | This document |
@@ -643,7 +643,7 @@ methodology.
   - Linked from the project's `MEMORY.md`.
 - **Image in ECR:** `208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex:compare-bench`
 - **K8s namespace:** `scrum6`
-- **Bench job manifest:** `deploy/k8s/vex-compare-bench.yaml`
+- **Bench job manifest:** `tests/k8s/vex-compare-bench.yaml`
 - **Bench driver script:** `scripts/run-bench-in-container.sh`
 - **Probe command:** `redis-cli -p 6380 DEBUG PROBES [ON|OFF|RESET]`
 - **Existing benchmark docs:** `docs/benchmarks.md` (pipelined-favored;
@@ -662,8 +662,8 @@ docker buildx build --platform linux/amd64 -f Dockerfile.compare \
     -t 208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex:compare-bench \
     --push .
 
-# 3. Set BENCH_MATRIX=1 in deploy/k8s/vex-compare-bench.yaml then apply
-kubectl apply -f deploy/k8s/vex-compare-bench.yaml
+# 3. Set BENCH_MATRIX=1 in tests/k8s/vex-compare-bench.yaml then apply
+kubectl apply -f tests/k8s/vex-compare-bench.yaml
 
 # 4. Watch
 kubectl -n scrum6 logs -f job/vex-compare-bench
@@ -672,6 +672,6 @@ kubectl -n scrum6 logs -f job/vex-compare-bench
 To re-run probes:
 
 ```
-# Set BENCH_PROBES=1 in deploy/k8s/vex-compare-bench.yaml then apply.
+# Set BENCH_PROBES=1 in tests/k8s/vex-compare-bench.yaml then apply.
 # Output: per-worker DEBUG PROBES breakdown after SET / GET / HSET load.
 ```

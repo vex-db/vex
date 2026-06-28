@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
     const sentinel_imports = [_]std.Build.Module.Import{
         .{ .name = "vex_log", .module = simpleModule(b, target, optimize, "src/log.zig") },
         .{ .name = "vex_atomic_io", .module = simpleModule(b, target, optimize, "src/storage/atomic_io.zig") },
-        .{ .name = "vex_resp", .module = simpleModule(b, target, optimize, "src/server/resp.zig") },
+        .{ .name = "vex_resp", .module = simpleModule(b, target, optimize, "src/protocol/resp.zig") },
         .{ .name = "vex_cluster_config", .module = simpleModule(b, target, optimize, "src/cluster/config.zig") },
     };
 
@@ -243,9 +243,10 @@ pub fn build(b: *std.Build) void {
     });
     addBench(b, target, optimize, .{
         .name = "ds_bench",
-        .source = "src/engine/ds_bench.zig",
+        .source = "src/bench/ds_bench.zig",
         .step = "bench-ds",
         .desc = "Benchmark data structures (list/hash/set/zset)",
+        .imports = &.{.{ .name = "app", .module = app_mod }},
     });
     addBench(b, target, optimize, .{
         .name = "graph_bench",

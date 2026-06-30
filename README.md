@@ -1,12 +1,22 @@
 # Vex
 
-**The memory database for AI agents.** Vector search, a knowledge graph, and
-key-value state in one Redis-compatible binary — so an agent's long-term memory,
-semantic cache, and session state live in *one* place instead of a vector DB +
-a graph DB + Redis and the glue between them.
+**The memory engine for agents that operate.** AI agents are moving from
+chatting to *operating* — incident response, on-call, infrastructure. An
+operating agent has to remember what it did and why: what it believed at 3am,
+which hypothesis it ruled out, what changed since. Today that memory is bolted
+together from a vector DB + a graph DB + Redis + glue code, and still falls back
+on lossy similarity search to reconstruct the thread.
+
+Vex is one Redis-compatible binary that fuses **vector search, a causal
+knowledge graph, and live state** — so an agent recalls *what* happened, *when*,
+and *why* in a single call, instead of four systems and four network hops. New
+agent-memory benchmarks out of ICML and IBM formalized this gap and showed
+causal-graph + hybrid retrieval beating plain vector search by double digits —
+which is exactly the path Vex makes a primitive. We start where the pain is
+sharpest: **memory for incident-response agents**.
 
 One process. One protocol (RESP — works with every Redis client). And on
-identical hardware it's faster than both Redis *and* Dragonfly.
+identical hardware the substrate is faster than both Redis *and* Dragonfly.
 
 ```bash
 docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest --reactor
@@ -15,10 +25,10 @@ docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest --reactor
 ```
 redis-cli -p 6380
 
-# Give an agent a memory, then recall it by meaning — not exact text
-> MEMORY.STORE agent:7 "user prefers dark mode and terse replies" IMPORTANCE 0.8
-> MEMORY.RECALL agent:7 "what are the UI preferences?" K 3
-1) "user prefers dark mode and terse replies"   # ranked by similarity·recency·importance
+# An on-call agent records what it saw mid-incident, then recalls it by meaning
+> MEMORY.STORE agent:oncall "ruled out DB failover — replica lag flat at 02:50" IMPORTANCE 0.9
+> MEMORY.RECALL agent:oncall "did we already check the database?" K 3
+1) "ruled out DB failover — replica lag flat at 02:50"   # ranked by similarity·recency·importance
 
 # Cache an LLM answer by what the question MEANS
 > CACHE.SEMSET "how do I reset my password?" "Settings → Security → Reset."
@@ -31,14 +41,14 @@ you assemble.
 
 ---
 
-## Why agents need this
+## Why operating agents need this
 
-An agent that remembers — past conversations, user preferences, a knowledge
-base — needs three capabilities working *together*:
+An agent working an incident — or any agent that remembers conversations,
+preferences, a knowledge base — needs three capabilities working *together*:
 
 - **Semantic recall** — "what do I know that's *relevant* to this?" (vectors)
-- **Relationships** — "what's connected to this?" (a knowledge graph)
-- **State** — sessions, counters, flags (key-value)
+- **Causal relationships** — "what led to this, and what did it rule out?" (a knowledge graph)
+- **State** — sessions, counters, live signals (key-value)
 
 The usual answer is a vector DB *and* Neo4j *and* Redis, kept in sync by code on
 every request. Vex collapses that into one engine where they share memory:

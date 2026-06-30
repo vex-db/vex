@@ -6,11 +6,15 @@
 
 ## The goal
 
-**Vex is the in-process database for LLM applications.** One binary where vector
-search, knowledge-graph traversal, and key-value state share memory and the
-Redis protocol — so the **vector → graph → KV** path behind GraphRAG and agent
-memory runs in a single process with zero network hops, instead of stitching
-together Redis + a vector DB + a graph DB + glue code.
+**Vex is the memory engine for agents that operate.** As agents move from
+chatting to operating — incident response, on-call, infrastructure — they need
+to remember what they did and *why*, not just retrieve similar text. Vex is one
+binary where vector search, causal-graph traversal, and key-value state share
+memory and the Redis protocol — so the **vector → graph → KV** path behind agent
+memory and GraphRAG runs in a single process with zero network hops, instead of
+stitching together Redis + a vector DB + a graph DB + glue code. The wedge:
+**memory for incident-response agents**, where recalling *what happened, when,
+and why* is the whole job.
 
 ```
 GRAPH.VECSEARCH  →  GRAPH.TRAVERSE  →  GET

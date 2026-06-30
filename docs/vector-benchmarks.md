@@ -140,7 +140,7 @@ PUT /collections/docs/points  # batch of 100
 ```yaml
 services:
   vex:
-    image: ghcr.io/pratyush-sngh/vex:latest
+    image: ghcr.io/vex-db/vex:latest
     cpuset: "0-3"
     mem_limit: 4g
     command: ["--reactor", "--workers", "4", "--no-persistence"]

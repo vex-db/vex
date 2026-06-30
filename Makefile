@@ -46,7 +46,7 @@ version:
 	@echo "$(VERSION)"
 
 # In-place rewrite. Touches:
-#   - "ghcr.io/pratyush-sngh/vex:X.Y.Z" specific-tag lines
+#   - "ghcr.io/vex-db/vex:X.Y.Z" specific-tag lines
 #   - "vex_version:X.Y.Z" INFO-output examples
 #   - "vex vX.Y.Z ready" startup-log examples
 # These are the only "current example" patterns documented today. Add new
@@ -57,7 +57,7 @@ sync-docs:
 	fi
 	@for f in $(VERSIONED_DOCS); do \
 		sed -i.bak -E \
-			-e 's@(ghcr\.io/pratyush-sngh/vex:)[0-9]+\.[0-9]+\.[0-9]+@\1$(VERSION)@g' \
+			-e 's@(ghcr\.io/vex-db/vex:)[0-9]+\.[0-9]+\.[0-9]+@\1$(VERSION)@g' \
 			-e 's@(vex_version:)[0-9]+\.[0-9]+\.[0-9]+@\1$(VERSION)@g' \
 			-e 's@(vex v)[0-9]+\.[0-9]+\.[0-9]+( ready)@\1$(VERSION)\2@g' \
 			"$$f" && rm "$$f.bak"; \
@@ -73,7 +73,7 @@ check-docs:
 	@stale=0; \
 	for f in $(VERSIONED_DOCS); do \
 		bad=$$(grep -nE \
-			-e "ghcr\.io/pratyush-sngh/vex:[0-9]+\.[0-9]+\.[0-9]+" \
+			-e "ghcr\.io/vex-db/vex:[0-9]+\.[0-9]+\.[0-9]+" \
 			-e "vex_version:[0-9]+\.[0-9]+\.[0-9]+" \
 			-e "vex v[0-9]+\.[0-9]+\.[0-9]+ ready" "$$f" \
 			| grep -vE "(:$(VERSION)|v$(VERSION) )" || true); \
@@ -97,7 +97,7 @@ check-docs-strict: check-docs
 	@for f in $(VERSIONED_DOCS); do \
 		others=$$(grep -nE "[0-9]+\.[0-9]+\.[0-9]+" "$$f" \
 			| grep -vE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" \
-			| grep -vE "(ghcr\.io/pratyush-sngh/vex:[0-9]+|vex_version:[0-9]+|vex v[0-9]+)" \
+			| grep -vE "(ghcr\.io/vex-db/vex:[0-9]+|vex_version:[0-9]+|vex v[0-9]+)" \
 			| grep -vE "minimum_zig_version|zig 0\." || true); \
 		if [ -n "$$others" ]; then \
 			echo "WARN: $$f has other version-like strings not covered by sync-docs:"; \

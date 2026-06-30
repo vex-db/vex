@@ -30,7 +30,7 @@ serverMemory: 2Gi
 servers:
   vex:
     enabled: true
-    image: ghcr.io/pratyush-sngh/vex:latest
+    image: ghcr.io/vex-db/vex:latest
     port: 6380
     # {{ serverCores }} is templated in at render time.
     args:

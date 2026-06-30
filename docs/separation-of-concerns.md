@@ -59,7 +59,7 @@ These can be external because they observe vex from outside via the RESP admin p
 
 Same monorepo (`sentinel/`), separate binary, same toolchain (Zig). Shared code (RESP client, Logger, Config) lives in `src/` as named modules consumed by both targets.
 
-See the [stability plan](https://github.com/pratyush-sngh/vex/blob/main/.claude/plans/cozy-riding-quail.md) for the work breakdown.
+See the [stability plan](https://github.com/vex-db/vex/blob/main/.claude/plans/cozy-riding-quail.md) for the work breakdown.
 
 ---
 

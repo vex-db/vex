@@ -102,24 +102,24 @@ sudo journalctl -u vex -f
 Pre-built images for `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/pratyush-sngh/vex:latest
+docker pull ghcr.io/vex-db/vex:latest
 ```
 
 Available tags:
-- `ghcr.io/pratyush-sngh/vex:latest` -- latest release
-- `ghcr.io/pratyush-sngh/vex:0.7.5` -- specific version
-- `ghcr.io/pratyush-sngh/vex:0.7` -- latest patch in 0.7.x
-- `ghcr.io/pratyush-sngh/vex:0` -- latest in 0.x
+- `ghcr.io/vex-db/vex:latest` -- latest release
+- `ghcr.io/vex-db/vex:0.7.5` -- specific version
+- `ghcr.io/vex-db/vex:0.7` -- latest patch in 0.7.x
+- `ghcr.io/vex-db/vex:0` -- latest in 0.x
 
 ### Run (Quick Start)
 
 ```bash
 # Minimal — ephemeral, no persistence
-docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex --reactor
+docker run -p 6380:6380 ghcr.io/vex-db/vex --reactor
 
 # With persistence volume
 docker run -p 6380:6380 -v vex-data:/data \
-  ghcr.io/pratyush-sngh/vex --reactor --data-dir /data
+  ghcr.io/vex-db/vex --reactor --data-dir /data
 
 # Connect
 redis-cli -p 6380
@@ -147,7 +147,7 @@ EOF
 docker run -p 6380:6380 \
   -v ./vex.conf:/etc/vex/vex.conf:ro \
   -v vex-data:/data \
-  ghcr.io/pratyush-sngh/vex --config /etc/vex/vex.conf
+  ghcr.io/vex-db/vex --config /etc/vex/vex.conf
 ```
 
 ### Run with TLS
@@ -157,7 +157,7 @@ docker run -p 6380:6380 \
   -v ./cert.pem:/etc/vex/cert.pem:ro \
   -v ./key.pem:/etc/vex/key.pem:ro \
   -v vex-data:/data \
-  ghcr.io/pratyush-sngh/vex --reactor --data-dir /data \
+  ghcr.io/vex-db/vex --reactor --data-dir /data \
     --tls-cert /etc/vex/cert.pem --tls-key /etc/vex/key.pem
 ```
 
@@ -170,21 +170,21 @@ Same image, different config per node:
 docker run -p 6380:6380 -p 16380:16380 \
   -v ./leader.conf:/etc/vex/cluster.conf:ro \
   -v leader-data:/data \
-  ghcr.io/pratyush-sngh/vex --reactor --data-dir /data \
+  ghcr.io/vex-db/vex --reactor --data-dir /data \
     --cluster-config /etc/vex/cluster.conf
 
 # Follower 1
 docker run -p 6381:6380 -p 16381:16380 \
   -v ./follower1.conf:/etc/vex/cluster.conf:ro \
   -v follower1-data:/data \
-  ghcr.io/pratyush-sngh/vex --reactor --data-dir /data \
+  ghcr.io/vex-db/vex --reactor --data-dir /data \
     --cluster-config /etc/vex/cluster.conf
 
 # Follower 2
 docker run -p 6382:6380 -p 16382:16380 \
   -v ./follower2.conf:/etc/vex/cluster.conf:ro \
   -v follower2-data:/data \
-  ghcr.io/pratyush-sngh/vex --reactor --data-dir /data \
+  ghcr.io/vex-db/vex --reactor --data-dir /data \
     --cluster-config /etc/vex/cluster.conf
 ```
 
@@ -200,7 +200,7 @@ See [Clustering](clustering.md) for cluster config file format.
 ```yaml
 services:
   vex:
-    image: ghcr.io/pratyush-sngh/vex:latest
+    image: ghcr.io/vex-db/vex:latest
     ports:
       - "6380:6380"
     volumes:

@@ -10,6 +10,6 @@ keywords:
   - redis
   - dragonfly
   - memtier
-home: https://github.com/pratyush-sngh/vex
+home: https://github.com/vex-db/vex
 maintainers:
   - name: vex

@@ -51,7 +51,7 @@ spec:
       containers:
       - name: vex
         # ECR image built locally with -Dcpu=x86_64_v3 so the binary runs
-        # on AMD Zen 1/3 EKS nodes. ghcr.io/pratyush-sngh/vex:0.7.3 SIGILLs
+        # on AMD Zen 1/3 EKS nodes. ghcr.io/vex-db/vex:0.7.3 SIGILLs
         # on those nodes — the CI image uses native CPU target on an
         # Intel runner. Switch back once docker-publish.yml is updated to
         # pass -Dcpu=x86_64_v3 (Dockerfile.vex already has it).

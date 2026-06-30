@@ -22,7 +22,7 @@ dnf install -y docker >/dev/null 2>&1
 systemctl start docker
 docker pull redis:8.0.3 >/dev/null 2>&1
 docker pull docker.dragonflydb.io/dragonflydb/dragonfly:latest >/dev/null 2>&1
-docker pull ghcr.io/pratyush-sngh/vex:latest >/dev/null 2>&1
+docker pull ghcr.io/vex-db/vex:latest >/dev/null 2>&1
 
 # Wait for every client: SSH reachable + memtier image present.
 for cip in $CLIENT_IPS; do
@@ -82,7 +82,7 @@ bench(){ # name port n cmd pipeline
   echo "done $name cores=$n $cmd P=$p -> ops=${ops:-ERR} server_cpu=${cpu:-?}%" > /dev/console
 }
 
-start_vex(){ docker run -d --name srv --network host --cpuset-cpus="0-$(($1-1))" ghcr.io/pratyush-sngh/vex:latest --reactor --workers "$1" --no-persistence --port 6380 >/dev/null 2>&1; }
+start_vex(){ docker run -d --name srv --network host --cpuset-cpus="0-$(($1-1))" ghcr.io/vex-db/vex:latest --reactor --workers "$1" --no-persistence --port 6380 >/dev/null 2>&1; }
 start_df(){  docker run -d --name srv --network host --cpuset-cpus="0-$(($1-1))" docker.dragonflydb.io/dragonflydb/dragonfly:latest --proactor_threads="$1" --port 6379 >/dev/null 2>&1; }
 
 for N in 4 8 16 32 48; do

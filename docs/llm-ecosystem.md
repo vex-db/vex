@@ -135,8 +135,8 @@ Vex is a database engine. It stores, indexes, and queries. It does not run neura
 
 | Adapter | Purpose | Why It Can't Be Avoided |
 |---------|---------|------------------------|
-| [langchain-vex](https://github.com/pratyush-sngh/langchain-vex) | `VexVectorStore`, `VexGraphStore`, `VexSemanticCache`, `VexMemory` | LangChain defines the interfaces; someone must implement them for Vex |
-| [llama-index-vex](https://github.com/pratyush-sngh/llama-index-vex) | `VexVectorStore`, `VexPropertyGraphStore` | Same -- LlamaIndex interface adapters |
+| [langchain-vex](https://github.com/vex-db/langchain-vex) | `VexVectorStore`, `VexGraphStore`, `VexSemanticCache`, `VexMemory` | LangChain defines the interfaces; someone must implement them for Vex |
+| [llama-index-vex](https://github.com/vex-db/llama-index-vex) | `VexVectorStore`, `VexPropertyGraphStore` | Same -- LlamaIndex interface adapters |
 | MS GraphRAG output adapter | Redirect entity/relationship writes to `GRAPH.INGEST` | GraphRAG assumes Neo4j; needs ~200 lines to target Vex instead |
 | Mem0 storage adapter | Custom `VectorStore` implementation pointing at Vex | Mem0 supports pluggable stores; adapter maps to `MEMORY.*` commands |
 

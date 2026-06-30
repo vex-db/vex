@@ -19,7 +19,7 @@ One process. One protocol (RESP — works with every Redis client). And on
 identical hardware the substrate is faster than both Redis *and* Dragonfly.
 
 ```bash
-docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest --reactor
+docker run -p 6380:6380 ghcr.io/vex-db/vex:latest --reactor
 ```
 
 ```
@@ -109,7 +109,7 @@ best for a personal project or single-machine agent) or **networked over TCP**
 
 ```bash
 # Docker
-docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest --reactor
+docker run -p 6380:6380 ghcr.io/vex-db/vex:latest --reactor
 
 # Or build from source (Zig 0.17)
 zig build run -- --reactor

@@ -24,7 +24,7 @@ and the socket never leaves the box, so there's nothing to secure.
 
 ```bash
 # run it (Docker, or `zig build run -- ...`)
-docker run -v /tmp/vex:/sock ghcr.io/pratyush-sngh/vex:latest \
+docker run -v /tmp/vex:/sock ghcr.io/vex-db/vex:latest \
   --reactor --unixsocket /sock/vex.sock --no-persistence
 ```
 
@@ -63,7 +63,7 @@ Now multiple app instances connect to one Vex over the network, so the concerns
 shift to **availability, security, and scale**.
 
 ```bash
-docker run -p 6380:6380 ghcr.io/pratyush-sngh/vex:latest \
+docker run -p 6380:6380 ghcr.io/vex-db/vex:latest \
   --reactor --workers 16 \
   --requirepass "$VEX_PASSWORD" \
   --tls-cert /certs/vex.crt --tls-key /certs/vex.key \

@@ -512,7 +512,10 @@ pub const ConcurrentKV = struct {
     }
 
     pub fn stripeIndex(key: []const u8) usize {
-        return @as(usize, std.hash.Wyhash.hash(0, key)) & STRIPE_MASK;
+        // StringHashMap uses Wyhash seed 0 and its low bits for the bucket.
+        // An independent seed avoids forcing every key in a stripe into the
+        // same subset of buckets, especially when its table is still small.
+        return @as(usize, std.hash.Wyhash.hash(1, key)) & STRIPE_MASK;
     }
 
     fn getStripe(self: *ConcurrentKV, key: []const u8) *Stripe {

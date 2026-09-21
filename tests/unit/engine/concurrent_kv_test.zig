@@ -106,15 +106,16 @@ test "concurrent_kv maxmemory + allkeys_lru evicts on overflow" {
     defer store.deinit();
 
     const target_stripe: usize = ConcurrentKV.stripeIndex("a");
-    var second_key: [1]u8 = .{'b'};
-    var b: u8 = 'b';
-    while (b <= 'z') : (b += 1) {
-        second_key[0] = b;
-        if (ConcurrentKV.stripeIndex(&second_key) == target_stripe) break;
+    var key_buf: [32]u8 = undefined;
+    var second_key: []const u8 = undefined;
+    var candidate: usize = 0;
+    while (candidate < 100000) : (candidate += 1) {
+        second_key = try std.fmt.bufPrint(&key_buf, "eviction-{d}", .{candidate});
+        if (ConcurrentKV.stripeIndex(second_key) == target_stripe) break;
     }
-    if (b > 'z') return error.SkipZigTest; // unable to find a same-stripe pair
+    try std.testing.expect(candidate < 100000);
 
-    store.maxmemory = 3; // fits one 2-byte entry; second triggers eviction
+    store.maxmemory = second_key.len + 1; // fits either entry; both require eviction
     store.eviction_policy = .allkeys_lru;
 
     const before = obs_stats.evicted_keys.load(.monotonic);
@@ -122,10 +123,10 @@ test "concurrent_kv maxmemory + allkeys_lru evicts on overflow" {
     store.cached_now_ms = 1000;
     try store.set("a", "x");
     store.cached_now_ms = 2000;
-    try store.set(&second_key, "y"); // triggers eviction of "a"
+    try store.set(second_key, "y"); // triggers eviction of "a"
 
     try std.testing.expect(store.get("a") == null);
-    const v = store.get(&second_key) orelse return error.TestUnexpectedResult;
+    const v = store.get(second_key) orelse return error.TestUnexpectedResult;
     defer v.deinit();
     try std.testing.expectEqualStrings("y", v.data);
 
@@ -307,4 +308,26 @@ test "concurrent_kv compact inline and heap values survive table growth" {
     const value = store.get("after") orelse return error.TestUnexpectedResult;
     defer value.deinit();
     try std.testing.expectEqualStrings("flush", value.data);
+}
+
+// Stripe selection must not consume the hash bits used by table buckets or
+// fingerprints; otherwise compact tables degenerate into long probe chains.
+test "concurrent_kv stripe keys retain bucket and fingerprint diversity" {
+    const target = ConcurrentKV.stripeIndex("distribution");
+    var buckets = [_]bool{false} ** 256;
+    var fingerprints = [_]bool{false} ** 128;
+    var found: usize = 0;
+    var candidate: usize = 0;
+    var key_buf: [32]u8 = undefined;
+    while (found < 64 and candidate < 100000) : (candidate += 1) {
+        const key = try std.fmt.bufPrint(&key_buf, "distribution-{d}", .{candidate});
+        if (ConcurrentKV.stripeIndex(key) != target) continue;
+        const hash = std.hash_map.hashString(key);
+        buckets[@intCast(hash & 255)] = true;
+        fingerprints[@intCast(hash >> 57)] = true;
+        found += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 64), found);
+    try std.testing.expect(std.mem.count(bool, &buckets, &.{true}) >= 32);
+    try std.testing.expect(std.mem.count(bool, &fingerprints, &.{true}) >= 24);
 }

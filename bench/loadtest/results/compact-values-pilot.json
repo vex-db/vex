@@ -1,5 +1,5 @@
 {
-  "status": "pilot complete; full dataset sweep pending renewed AWS authentication",
+  "status": "pilot complete; full dataset sweep recorded separately",
   "baseline_commit": "bbb52591465e445323769f7186a2acdd73a17376",
   "candidate_commit": "54ea1fc",
   "compiler": "0.17.0-dev.314+eae06cf5c",

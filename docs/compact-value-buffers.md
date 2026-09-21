@@ -1,6 +1,6 @@
 # Compact reactor values: memory and performance acceptance
 
-Status: **draft — full size-sweep acceptance is not complete**. The selected pilot passed; AWS session expiry interrupted the subsequent sweep. No results from incomplete or invalid runs are used below.
+Status: **draft — complete size sweep recorded; longer performance checks pending**. The sweep resumed after AWS access was restored. No results from incomplete or invalid runs are used below.
 
 ## Change
 
@@ -26,16 +26,32 @@ A dedicated c6a.2xlarge server allocated six vCPUs and 4 GiB to the database. A 
 
 The pilot shows about 25% lower loaded RAM with throughput essentially unchanged. Small point-estimate differences do not establish a universal improvement or a guarantee for untested workloads. Payloads are compressible repeated ASCII bytes, not representative of arbitrary application data. RSS excludes sidecars and whole-node memory.
 
-## Required sweep before acceptance
+## Complete size sweep
 
-Compare baseline and candidate with fresh processes, alternating version order:
+Baseline and candidate ran with fresh processes on the same server node, alternating version order:
 
 - 100K, 500K, 1M, and 2M keys at 256-byte values.
 - 1M keys at 32-, 128-, 256-, 257-, and 1024-byte values (the 256-byte case overlaps).
 - Three 10-second mixed runs per case after a five-second warmup; 80% GET / 20% SET, 128 connections, pipeline 1.
-- Check loaded and peak process RSS, throughput, p99, client CPU, and errors/misses. Investigate material regressions before marking the PR ready.
+- Loaded and peak process RSS, throughput, p99, client CPU, and errors/misses recorded. All 48 timed runs had zero misses and connection errors; the client recorded zero throttled periods.
 
-The first 100K-key baseline attempt reported one GET miss despite a successful preload-count check. It is excluded and its raw artifacts are retained. The fresh rerun was interrupted by expired AWS authentication. There are no accepted full-sweep groups yet.
+| Keys | Value bytes | Loaded RSS, MiB (before → after) | RAM saved | Throughput change | p99, ms (before → after) |
+|---:|---:|---:|---:|---:|---:|
+| 100,000 | 256 | 290.6 → 49.6 | 82.9% | -0.9% | 0.663 → 0.623 |
+| 500,000 | 256 | 434.1 → 226.6 | 47.8% | -1.5% | 0.631 → 0.615 |
+| 1,000,000 | 256 | 598.0 → 446.4 | 25.3% | -1.2% | 0.655 → 0.623 |
+| 2,000,000 | 256 | 926.1 → 886.2 | 4.3% | -1.6% | 0.615 → 0.639 |
+| 1,000,000 | 32 | 597.8 → 191.5 | 68.0% | +3.1% | 0.647 → 0.599 |
+| 1,000,000 | 128 | 597.9 → 324.2 | 45.8% | -3.1% | 0.607 → 0.607 |
+| 1,000,000 | 257 | 857.3 → 446.5 | 47.9% | -0.8% | 0.631 → 0.703 |
+| 1,000,000 | 1024 | 1590.5 → 1179.7 | 25.8% | -2.5% | 0.679 → 0.687 |
+
+The memory saving is workload-dependent. At 256 bytes per value it decreases from 83% at 100K keys to 4% at 2M keys; this is not a fixed percentage or evidence of a flat scaling curve. Values above the old 256-byte inline boundary also benefit from removing unused inline storage.
+
+The 128-byte throughput decrease and the 257-byte tail-latency increase are being checked with longer runs in both version orders before acceptance. The table preserves the original sweep rather than replacing its less favorable results.
+
+The first 100K-key baseline attempt reported one GET miss despite a successful preload-count check. It is excluded and its raw artifacts are retained. A subsequent attempt was interrupted by expired AWS authentication. After access was restored, that case ran from a fresh process and passed. Neither excluded attempt contributes to the table.
+
 
 To reproduce each dataset, start a fresh server (`--reactor --workers 6 --no-persistence --port 6379`), preload with:
 
@@ -58,4 +74,6 @@ Use `0:1` for GET and `1:0` for SET. Preserve each repetition separately. Sample
 - The normal reactor dispatch's pre-existing COPY/PTTL gaps are outside this change; preallocated COPY buffer ownership is covered directly by the unit test.
 - No GitHub check results had been attached when the draft was opened. Local isolated Linux build/test results are retained with the benchmark artifacts.
 
-Pilot data: [`compact-values-pilot.json`](../bench/loadtest/results/compact-values-pilot.json).
+Results: [`compact-values-pilot.json`](../bench/loadtest/results/compact-values-pilot.json), [`compact-values-sweep.json`](../bench/loadtest/results/compact-values-sweep.json). Sweep data includes per-run measurements, process lifetime peak RSS, binary hashes, and validation results.
+
+These tests measure steady-state uniform reads and overwrites after preload. They do not establish performance for every insertion/churn pattern, key skew, persistence mode, or machine size.

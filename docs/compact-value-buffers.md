@@ -1,14 +1,14 @@
 # Compact reactor values: memory and performance acceptance
 
-Status: **draft — complete size sweep recorded; longer performance checks pending**. The sweep resumed after AWS access was restored. No results from incomplete or invalid runs are used below.
+Status: **draft — final 64-byte-entry build is undergoing the matched sweep**. The earlier measurements below apply to code `54ea1fc`, before the direct GET copy, independent stripe hash, and overlapping value storage. They are retained for traceability, not presented as results for the current build.
 
 ## Change
 
-`ConcurrentKV` uses its own compact entry with a 32-byte inline buffer. Larger values use owned allocations that are reused for equal-size or modestly smaller overwrites. Growing beyond capacity allocates before releasing the old value, so allocation failure preserves the old data. Shrinking below half capacity, or back into the inline range, releases excess storage. Frees use the original allocation length.
+`ConcurrentKV` uses a 64-byte entry with a 32-byte inline buffer sharing storage with heap-buffer metadata. Larger values use owned allocations that are reused for equal-size or modestly smaller overwrites. Growing beyond capacity allocates before releasing the old value, so allocation failure preserves the old data. Shrinking below half capacity, or back into the inline range, releases excess storage. Frees use the original allocation length.
 
-Stripe tables grow under the existing exclusive stripe lock instead of reserving 16,384 entries per stripe. Inline reads resolve the entry's current address after rehashing. String writes now consistently use the exclusive stripe lock, allowing GET/MGET to copy under the read lock without the former shared-lock seqlock write shortcut. The plain KVStore layout and wire formats do not change.
+Stripe tables grow under the existing exclusive stripe lock instead of reserving 16,384 entries per stripe. Inline reads resolve the entry's current address after rehashing. String writes now consistently use the exclusive stripe lock, allowing GET/MGET to copy under the read lock without the former shared-lock seqlock write shortcut. The plain KVStore layout and wire formats do not change. GET copies directly into its response under the read lock. Stripe selection uses a different Wyhash seed from StringHashMap so stripe keys retain independent bucket positions and fingerprints; a regression test fails with the old mapping and passes with this one.
 
-## Same-machine pilot
+## Initial layout pilot
 
 Baseline is main commit `bbb52591465e445323769f7186a2acdd73a17376`; candidate code is `54ea1fc`. Both used Zig `0.17.0-dev.314+eae06cf5c`, ReleaseFast, x86_64_v3. Binaries and hashes are recorded in the adjacent JSON result file.
 
@@ -26,7 +26,7 @@ A dedicated c6a.2xlarge server allocated six vCPUs and 4 GiB to the database. A 
 
 The pilot shows about 25% lower loaded RAM with throughput essentially unchanged. Small point-estimate differences do not establish a universal improvement or a guarantee for untested workloads. Payloads are compressible repeated ASCII bytes, not representative of arbitrary application data. RSS excludes sidecars and whole-node memory.
 
-## Complete size sweep
+## Initial layout size sweep
 
 Baseline and candidate ran with fresh processes on the same server node, alternating version order:
 
@@ -48,7 +48,7 @@ Baseline and candidate ran with fresh processes on the same server node, alterna
 
 The memory saving is workload-dependent. At 256 bytes per value it decreases from 83% at 100K keys to 4% at 2M keys; this is not a fixed percentage or evidence of a flat scaling curve. Values above the old 256-byte inline boundary also benefit from removing unused inline storage.
 
-The 128-byte throughput decrease and the 257-byte tail-latency increase are being checked with longer runs in both version orders before acceptance. The table preserves the original sweep rather than replacing its less favorable results.
+The 128-byte throughput decrease and the 257-byte tail-latency increase were checked with fresh processes in candidate/baseline/baseline/candidate order, ten-second warmups, and 60-second timed runs. The 128-byte case measured -0.4% throughput and +0.6% p99; the 257-byte case measured -1.9% throughput and equal p99. All eight runs had zero misses and connection errors, and zero client throttling. These remaining throughput differences kept the PR in draft while the final layout and hash changes were developed. The original measurements remain above.
 
 The first 100K-key baseline attempt reported one GET miss despite a successful preload-count check. It is excluded and its raw artifacts are retained. A subsequent attempt was interrupted by expired AWS authentication. After access was restored, that case ran from a fresh process and passed. Neither excluded attempt contributes to the table.
 
@@ -69,11 +69,11 @@ Use `0:1` for GET and `1:0` for SET. Preserve each repetition separately. Sample
 
 ## Correctness validation
 
-- 255 ReleaseSafe unit tests passed, covering buffer reuse/shrinks, allocation failure preserving data and TTL, preallocated replacement ownership, mixed-size contention, inline/heap values across table growth, and flush/reuse.
-- `tests/integration/compact_values.py` passed against the release binary: eight clients each perform 1,000 contended varying-size updates, followed by binary GET/MGET, DEL, INCR, and TTL transitions.
+- 256 ReleaseSafe unit tests passed for the final build, covering buffer reuse/shrinks, allocation failure preserving data and TTL, preallocated replacement ownership, mixed-size contention, inline/heap values across table growth, flush/reuse, and independent stripe/bucket distribution.
+- `tests/integration/compact_values.py` passed against the release binary: eight clients each perform 1,000 contended varying-size updates, followed by binary GET/MGET, DEL, INCR, TTL transitions, SCANGET, and binary values up to 64 KiB.
 - The normal reactor dispatch's pre-existing COPY/PTTL gaps are outside this change; preallocated COPY buffer ownership is covered directly by the unit test.
 - No GitHub check results had been attached when the draft was opened. Local isolated Linux build/test results are retained with the benchmark artifacts.
 
-Results: [`compact-values-pilot.json`](../bench/loadtest/results/compact-values-pilot.json), [`compact-values-sweep.json`](../bench/loadtest/results/compact-values-sweep.json). Sweep data includes per-run measurements, process lifetime peak RSS, binary hashes, and validation results.
+Results: [`compact-values-pilot.json`](../bench/loadtest/results/compact-values-pilot.json), [`compact-values-sweep.json`](../bench/loadtest/results/compact-values-sweep.json). [`compact-values-confirmation.json`](../bench/loadtest/results/compact-values-confirmation.json) records the initial longer checks. Sweep data includes per-run measurements, process lifetime peak RSS, binary hashes, and validation results.
 
 These tests measure steady-state uniform reads and overwrites after preload. They do not establish performance for every insertion/churn pattern, key skew, persistence mode, or machine size.

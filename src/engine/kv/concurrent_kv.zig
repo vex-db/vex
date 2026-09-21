@@ -39,22 +39,28 @@ pub const ConcurrentKV = struct {
     /// Reactor entries keep tiny values inline and larger values in reusable,
     /// owned buffers. The plain KVStore layout is independent of this hot path.
     pub const Entry = struct {
-        value: []const u8,
-        value_capacity: usize = 0,
+        // Inline bytes and heap metadata are mutually exclusive. Sharing their
+        // storage keeps the complete entry within one 64-byte cache line.
+        storage: extern union {
+            inline_buf: [INLINE_BUF_SIZE]u8,
+            heap: extern struct { ptr: [*]const u8, len: usize, capacity: usize },
+        } = .{ .heap = .{ .ptr = "", .len = 0, .capacity = 0 } },
         expires_at: i64 = 0,
         last_access: i64 = 0,
         int_value: i64 = 0,
-        inline_buf: [INLINE_BUF_SIZE]u8 = undefined,
         inline_len: u16 = 0,
         flags: KVStore.EntryFlags = .{},
 
         pub fn bytes(self: *const Entry) []const u8 {
-            return if (self.flags.is_inline) self.inline_buf[0..self.inline_len] else self.value;
+            return if (self.flags.is_inline)
+                self.storage.inline_buf[0..self.inline_len]
+            else
+                self.storage.heap.ptr[0..self.storage.heap.len];
         }
 
         /// Free the original allocation length, including retained spare capacity.
         fn allocation(self: *const Entry) []const u8 {
-            return self.value.ptr[0..@max(self.value_capacity, self.value.len)];
+            return self.storage.heap.ptr[0..self.storage.heap.capacity];
         }
 
         fn freeValue(self: *const Entry, allocator: Allocator) void {
@@ -68,25 +74,24 @@ pub const ConcurrentKV = struct {
                 var copy: [INLINE_BUF_SIZE]u8 = undefined;
                 @memcpy(copy[0..value.len], value);
                 self.freeValue(allocator);
-                @memcpy(self.inline_buf[0..value.len], copy[0..value.len]);
+                self.storage = .{ .inline_buf = copy };
                 self.inline_len = @intCast(value.len);
-                self.value = self.inline_buf[0..value.len];
-                self.value_capacity = 0;
                 self.flags.is_inline = true;
-            } else if (!self.flags.is_inline and self.allocation().len >= value.len and
-                self.allocation().len / 2 <= value.len)
+            } else if (!self.flags.is_inline and self.storage.heap.capacity >= value.len and
+                self.storage.heap.capacity / 2 <= value.len)
             {
                 // Equal-size overwrites and modest size changes allocate nothing.
-                const capacity = self.allocation().len;
-                const dest = @constCast(self.value.ptr)[0..value.len];
+                const dest = @constCast(self.storage.heap.ptr)[0..value.len];
                 std.mem.copyForwards(u8, dest, value);
-                self.value = dest;
-                self.value_capacity = capacity;
+                self.storage.heap.len = value.len;
             } else {
                 const replacement = try allocator.dupe(u8, value);
                 self.freeValue(allocator);
-                self.value = replacement;
-                self.value_capacity = replacement.len;
+                self.storage = .{ .heap = .{
+                    .ptr = replacement.ptr,
+                    .len = replacement.len,
+                    .capacity = replacement.len,
+                } };
                 self.flags.is_inline = false;
             }
         }
@@ -158,7 +163,7 @@ pub const ConcurrentKV = struct {
             var flags = entry.value_ptr.flags;
             flags.is_inline = false; // imported values are heap-allocated, not inline
             try s.map.put(owned_key, .{
-                .value = owned_val,
+                .storage = .{ .heap = .{ .ptr = owned_val.ptr, .len = owned_val.len, .capacity = owned_val.len } },
                 .expires_at = entry.value_ptr.expires_at,
                 .flags = flags,
             });
@@ -210,15 +215,14 @@ pub const ConcurrentKV = struct {
         const gop = s.map.getOrPut(owned_key) catch {
             return .{ .stale_val = owned_value, .stale_key = owned_key };
         };
-        const old_len = if (gop.found_existing) gop.value_ptr.value.len else 0;
+        const old_len = if (gop.found_existing) gop.value_ptr.bytes().len else 0;
         const old_val = if (gop.found_existing and !gop.value_ptr.flags.is_inline)
             gop.value_ptr.allocation()
         else
             null;
         gop.key_ptr.* = if (gop.found_existing) gop.key_ptr.* else owned_key;
         gop.value_ptr.* = .{
-            .value = owned_value,
-            .value_capacity = owned_value.len,
+            .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
             .expires_at = expires_at,
             .flags = .{ .has_ttl = expires_at != 0 },
         };
@@ -246,7 +250,7 @@ pub const ConcurrentKV = struct {
         if (result) |kv| {
             // Inline values point into the entry's inline_buf (not heap-allocated) — don't free
             const stale_val = if (!kv.value.flags.is_inline) kv.value.allocation() else null;
-            const removed_bytes = kv.key.len + kv.value.value.len;
+            const removed_bytes = kv.key.len + kv.value.bytes().len;
             _ = self.total_bytes.fetchSub(removed_bytes, .monotonic);
             return .{ .found = true, .stale_key = kv.key, .stale_val = stale_val };
         }
@@ -382,7 +386,6 @@ pub const ConcurrentKV = struct {
             return error.OutOfMemory;
         };
         s.map.put(owned_key, .{
-            .value = &[_]u8{},
             .int_value = delta,
             .last_access = self.cached_now_ms,
             .flags = .{ .is_integer = true },
@@ -428,7 +431,7 @@ pub const ConcurrentKV = struct {
             var old_value_bytes: usize = 0;
             var key_already_present: bool = false;
             if (s.map.getPtr(key)) |existing| {
-                old_value_bytes = existing.value.len;
+                old_value_bytes = existing.bytes().len;
                 key_already_present = true;
             }
 
@@ -446,7 +449,7 @@ pub const ConcurrentKV = struct {
 
         const now = self.cached_now_ms;
         if (s.map.getPtr(key)) |existing| {
-            const old_value_len = existing.value.len;
+            const old_value_len = existing.bytes().len;
             try existing.replaceValue(alloc, value);
             existing.flags = .{ .has_ttl = expires_at != 0, .is_inline = existing.flags.is_inline };
             existing.expires_at = expires_at;
@@ -456,7 +459,7 @@ pub const ConcurrentKV = struct {
         } else {
             const owned_key = try alloc.dupe(u8, key);
             errdefer alloc.free(owned_key);
-            var entry: Entry = .{ .value = &.{}, .expires_at = expires_at, .last_access = now };
+            var entry: Entry = .{ .expires_at = expires_at, .last_access = now };
             try entry.replaceValue(alloc, value);
             errdefer entry.freeValue(alloc);
             entry.flags.has_ttl = expires_at != 0;
@@ -499,7 +502,7 @@ pub const ConcurrentKV = struct {
 
             // Remove victim — this stripe is already write-locked, safe to mutate map.
             const removed = s.map.fetchRemove(victim_key) orelse return;
-            const freed_bytes: usize = removed.key.len + removed.value.value.len;
+            const freed_bytes: usize = removed.key.len + removed.value.bytes().len;
             removed.value.freeValue(alloc);
             alloc.free(removed.key);
 

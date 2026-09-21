@@ -67,6 +67,8 @@ for n in (32, 33, 256, 257, 1024, 4096, 4097, 65536, 768, 16):
     assert c.call('SET', key('src'), value) == b'OK'
     assert c.call('SET', key('dst'), value) == b'OK'
     assert c.call('GET', key('src')) == value
+    if n <= 1024:
+        assert c.call('SCANGET', 0, key('src')) == [b'0', [key('src').encode(), value]]
     assert c.call('MGET', key('src'), key('dst')) == [value, value]
     assert c.call('DEL', key('dst')) == 1
 assert c.call('SET', key('integer'), '42') == b'OK'

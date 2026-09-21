@@ -2653,7 +2653,7 @@ pub const Worker = struct {
                         if (entry.flags.is_inline) {
                             var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
                             const vlen = entry.inline_len;
-                            @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
+                            @memcpy(val_copy[0..vlen], entry.bytes());
                             ckv.readUnlockStripePublic(stripe);
                             const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
                             pos += vh.len;
@@ -2663,7 +2663,8 @@ pub const Worker = struct {
                             continue;
                         }
 
-                        const vlen = entry.value.len;
+                        const value = entry.bytes();
+                        const vlen = value.len;
                         if (pos + vlen + 32 > resp_buf.len) {
                             resp_buf = self.allocator.realloc(resp_buf, pos + vlen + 64) catch {
                                 ckv.readUnlockStripePublic(stripe);
@@ -2675,7 +2676,7 @@ pub const Worker = struct {
                             continue;
                         };
                         pos += vh.len;
-                        @memcpy(resp_buf[pos .. pos + vlen], entry.value);
+                        @memcpy(resp_buf[pos .. pos + vlen], value);
                         pos += vlen;
                         resp_buf[pos] = '\r'; resp_buf[pos + 1] = '\n'; pos += 2;
                         ckv.readUnlockStripePublic(stripe);
@@ -3191,7 +3192,7 @@ pub const Worker = struct {
                             pos += user_key.len;
                             stack_buf[pos] = '\r'; stack_buf[pos + 1] = '\n'; pos += 2;
                             // Write value
-                            const val = if (e.flags.is_inline) e.inline_buf[0..e.inline_len] else e.value;
+                            const val = e.bytes();
                             const vh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{val.len}) catch break;
                             pos += vh.len;
                             if (pos + val.len + 2 > stack_buf.len) break;

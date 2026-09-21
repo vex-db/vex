@@ -169,7 +169,7 @@ test "concurrent_kv total_bytes decrements on delete" {
 // The compact layout must retain ownership of the full allocation even when
 // its logical value shrinks. std.testing.allocator checks every free and leak.
 test "concurrent_kv compact buffers reuse capacity and release large shrinks" {
-    try std.testing.expect(@sizeOf(ConcurrentKV.Entry) <= 104);
+    try std.testing.expect(@sizeOf(ConcurrentKV.Entry) == 64);
     var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
     store.initStripes();
     defer store.deinit();
@@ -181,14 +181,14 @@ test "concurrent_kv compact buffers reuse capacity and release large shrinks" {
     @memset(&small, 'c');
     try store.set("k", &large);
     const stripe = store.getStripePublic("k");
-    const original = stripe.map.getPtr("k").?.value.ptr;
+    const original = stripe.map.getPtr("k").?.bytes().ptr;
     try store.set("k", &medium);
-    try std.testing.expectEqual(original, stripe.map.getPtr("k").?.value.ptr);
-    try std.testing.expectEqual(@as(usize, 1024), stripe.map.getPtr("k").?.value_capacity);
+    try std.testing.expectEqual(original, stripe.map.getPtr("k").?.bytes().ptr);
+    try std.testing.expectEqual(@as(usize, 1024), stripe.map.getPtr("k").?.storage.heap.capacity);
     try store.set("k", &large);
-    try std.testing.expectEqual(original, stripe.map.getPtr("k").?.value.ptr);
+    try std.testing.expectEqual(original, stripe.map.getPtr("k").?.bytes().ptr);
     try store.set("k", &small);
-    try std.testing.expectEqual(@as(usize, 256), stripe.map.getPtr("k").?.value_capacity);
+    try std.testing.expectEqual(@as(usize, 256), stripe.map.getPtr("k").?.storage.heap.capacity);
     try store.set("k", "42");
     try std.testing.expect(stripe.map.getPtr("k").?.flags.is_inline);
     try std.testing.expectEqual(@as(i64, 43), try store.incrBy("k", 1));
@@ -314,8 +314,8 @@ test "concurrent_kv compact inline and heap values survive table growth" {
 // fingerprints; otherwise compact tables degenerate into long probe chains.
 test "concurrent_kv stripe keys retain bucket and fingerprint diversity" {
     const target = ConcurrentKV.stripeIndex("distribution");
-    var buckets = [_]bool{false} ** 256;
-    var fingerprints = [_]bool{false} ** 128;
+    var buckets: [256]bool = @splat(false);
+    var fingerprints: [128]bool = @splat(false);
     var found: usize = 0;
     var candidate: usize = 0;
     var key_buf: [32]u8 = undefined;

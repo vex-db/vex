@@ -2482,7 +2482,7 @@ pub const Worker = struct {
                     // ConcurrentKV.setInternal can free during a rehash.
                     // Take the stripe rdlock for the duration of the entry
                     // access so writers (who take wrlock) are excluded.
-                    const KVS = @import("../engine/kv/kv.zig").KVStore;
+                    const KVS = ConcurrentKV;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
 
                     const lock_t0: u64 = if (probe_on) probes.start() else 0;
@@ -2524,25 +2524,12 @@ pub const Worker = struct {
                     }
 
                     if (entry.flags.is_inline) {
-                        // SeqLock still useful: another rdlock-holding thread
-                        // may be doing an in-place SET via the SeqLock fast
-                        // path, since both paths share the rdlock.
+                        // All writers hold the exclusive stripe lock; the
+                        // read lock keeps this copy stable without a seqlock.
                         const copy_t0: u64 = if (probe_on) probes.start() else 0;
                         var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                        var vlen: u16 = undefined;
-                        var attempts: u32 = 0;
-                        while (attempts < 64) : (attempts += 1) {
-                            const s1 = entry.seq.load(.acquire);
-                            if (s1 & 1 != 0) {
-                                std.atomic.spinLoopHint();
-                                continue;
-                            }
-                            vlen = entry.inline_len;
-                            @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
-                            const s2 = entry.seq.load(.acquire);
-                            if (s1 == s2) break;
-                            std.atomic.spinLoopHint();
-                        }
+                        const vlen = entry.inline_len;
+                        @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
                         if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
 
                         const fmt_t0: u64 = if (probe_on) probes.start() else 0;
@@ -2582,7 +2569,6 @@ pub const Worker = struct {
                     if (args.len >= 4 and args[3].len == 2) {
                         if (equalsAsciiUpper(args[3], "NX") or equalsAsciiUpper(args[3], "XX")) return false;
                     }
-                    const KVS = @import("../engine/kv/kv.zig").KVStore;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
                     const value = args[2];
 
@@ -2595,53 +2581,8 @@ pub const Worker = struct {
                         expires = ckv.nowMillis() + t;
                     }
 
-                    // Fast path: in-place SeqLock update of an existing inline
-                    // entry. Holds rdlock so a concurrent setInternal (which
-                    // takes wrlock and can rehash) cannot free the bucket
-                    // array out from under getPtr. The rdlock must be
-                    // released before any fallthrough that calls setInternal
-                    // — wrlock can't be acquired while we still hold rdlock.
-                    if (value.len <= KVS.INLINE_BUF_SIZE and expires == 0) {
-                        const lock_t0: u64 = if (probe_on) probes.start() else 0;
-                        const stripe = ckv.getStripePublic(ns_key);
-                        ckv.readLockStripePublic(stripe);
-                        if (probe_on) probes.finish(&self.probes.set_stripe_lock, lock_t0);
-
-                        var fast_path_hit = false;
-                        const map_t0: u64 = if (probe_on) probes.start() else 0;
-                        const got = stripe.map.getPtr(ns_key);
-                        if (probe_on) probes.finish(&self.probes.set_hashmap_op, map_t0);
-
-                        if (got) |entry| {
-                            if (!entry.flags.deleted) {
-                                const seq_t0: u64 = if (probe_on) probes.start() else 0;
-                                _ = entry.seq.fetchAdd(1, .release);
-                                if (probe_on) probes.finish(&self.probes.set_seqlock, seq_t0);
-
-                                const copy_t0: u64 = if (probe_on) probes.start() else 0;
-                                @memcpy(entry.inline_buf[0..value.len], value);
-                                entry.inline_len = @intCast(value.len);
-                                entry.value = entry.inline_buf[0..value.len];
-                                entry.flags = .{ .is_inline = true };
-                                entry.expires_at = 0;
-                                if (probe_on) probes.finish(&self.probes.set_value_copy, copy_t0);
-
-                                _ = entry.seq.fetchAdd(1, .release);
-                                fast_path_hit = true;
-                            }
-                        }
-                        ckv.readUnlockStripePublic(stripe);
-                        if (fast_path_hit) {
-                            if (self.aof) |a| a.logCommand(args);
-                            self.bumpWatchVersion(conn.selected_db, args[1]);
-                            conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                            return true;
-                        }
-                    }
-
-                    // Fallback: new key or non-inline value — setInternal
-                    // takes its own wrlock, so we must NOT be holding rdlock
-                    // here.
+                    // The stripe write lock protects both inline writes and
+                    // reusable heap buffers, including ownership transitions.
                     ckv.setInternal(ns_key, value, expires) catch return false;
                     if (self.aof) |a| a.logCommand(args);
                     self.bumpWatchVersion(conn.selected_db, args[1]);
@@ -2690,7 +2631,7 @@ pub const Worker = struct {
                 } else if (args.len >= 2 and equalsAsciiUpper(cmd, "MGET")) {
                     // MGET: build response in staging buffer, single write_buf append
                     // One alloc+free per call beats 300 appendSlice calls (1 memcpy vs 300)
-                    const KVS = @import("../engine/kv/kv.zig").KVStore;
+                    const KVS = ConcurrentKV;
                     const key_count = args.len - 1;
                     const est = 32 + key_count * 80;
                     var resp_buf = self.allocator.alloc(u8, est) catch return false;
@@ -2737,17 +2678,8 @@ pub const Worker = struct {
 
                         if (entry.flags.is_inline) {
                             var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                            var vlen: u16 = undefined;
-                            var attempts: u32 = 0;
-                            while (attempts < 64) : (attempts += 1) {
-                                const s1 = entry.seq.load(.acquire);
-                                if (s1 & 1 != 0) { std.atomic.spinLoopHint(); continue; }
-                                vlen = entry.inline_len;
-                                @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
-                                const s2 = entry.seq.load(.acquire);
-                                if (s1 == s2) break;
-                                std.atomic.spinLoopHint();
-                            }
+                            const vlen = entry.inline_len;
+                            @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
                             ckv.readUnlockStripePublic(stripe);
                             const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
                             pos += vh.len;

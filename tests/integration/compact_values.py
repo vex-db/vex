@@ -62,10 +62,11 @@ def stress(i):
 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
     list(pool.map(stress, range(8)))
 c = Client()
-for n in (32, 33, 256, 257, 1024, 768, 16):
+for n in (32, 33, 256, 257, 1024, 4096, 4097, 65536, 768, 16):
     value = bytes((j % 256 for j in range(n)))
     assert c.call('SET', key('src'), value) == b'OK'
     assert c.call('SET', key('dst'), value) == b'OK'
+    assert c.call('GET', key('src')) == value
     assert c.call('MGET', key('src'), key('dst')) == [value, value]
     assert c.call('DEL', key('dst')) == 1
 assert c.call('SET', key('integer'), '42') == b'OK'

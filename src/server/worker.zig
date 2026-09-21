@@ -2482,7 +2482,6 @@ pub const Worker = struct {
                     // ConcurrentKV.setInternal can free during a rehash.
                     // Take the stripe rdlock for the duration of the entry
                     // access so writers (who take wrlock) are excluded.
-                    const KVS = ConcurrentKV;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
 
                     const lock_t0: u64 = if (probe_on) probes.start() else 0;
@@ -2523,45 +2522,20 @@ pub const Worker = struct {
                         return true;
                     }
 
-                    if (entry.flags.is_inline) {
-                        // All writers hold the exclusive stripe lock; the
-                        // read lock keeps this copy stable without a seqlock.
-                        const copy_t0: u64 = if (probe_on) probes.start() else 0;
-                        var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                        const vlen = entry.inline_len;
-                        @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
-                        if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
+                    // The stripe read lock keeps the value stable while it is
+                    // copied directly into the response, including inline values.
+                    const value = entry.bytes();
+                    const fmt_t0: u64 = if (probe_on) probes.start() else 0;
+                    var hdr_buf: [32]u8 = undefined;
+                    const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{value.len}) catch return false;
+                    conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + value.len + 2) catch {};
+                    conn.write_buf.appendSliceAssumeCapacity(hdr);
+                    if (probe_on) probes.finish(&self.probes.get_resp_format, fmt_t0);
 
-                        const fmt_t0: u64 = if (probe_on) probes.start() else 0;
-                        var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
-                        conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + vlen + 2) catch {};
-                        conn.write_buf.appendSliceAssumeCapacity(hdr);
-                        conn.write_buf.appendSliceAssumeCapacity(val_copy[0..vlen]);
-                        conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                        if (probe_on) probes.finish(&self.probes.get_resp_format, fmt_t0);
-                        return true;
-                    }
-
-                    // Large value (>INLINE_BUF_SIZE): copy out under rdlock.
-                    const vlen = entry.value.len;
-                    var val_stack: [4096]u8 = undefined;
-                    if (vlen <= val_stack.len) {
-                        @memcpy(val_stack[0..vlen], entry.value);
-                        var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
-                        conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + vlen + 2) catch {};
-                        conn.write_buf.appendSliceAssumeCapacity(hdr);
-                        conn.write_buf.appendSliceAssumeCapacity(val_stack[0..vlen]);
-                        conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                    } else {
-                        conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + vlen + 40) catch {};
-                        var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
-                        conn.write_buf.appendSliceAssumeCapacity(hdr);
-                        conn.write_buf.appendSliceAssumeCapacity(entry.value);
-                        conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                    }
+                    const copy_t0: u64 = if (probe_on) probes.start() else 0;
+                    conn.write_buf.appendSliceAssumeCapacity(value);
+                    if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
+                    conn.write_buf.appendSliceAssumeCapacity("\r\n");
                     return true;
                 },
                 'S' => if (args.len >= 3 and equalsAsciiUpper(cmd, "SET")) {

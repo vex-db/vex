@@ -12,6 +12,16 @@ const resetForTest = stats.resetForTest;
 const aggregateCmdCalls = stats.aggregateCmdCalls;
 const totalCommands = stats.totalCommands;
 
+test "RSS reporting reads current residency on supported platforms" {
+    const os = @import("builtin").os.tag;
+    if (os != .linux and os != .macos) return error.SkipZigTest;
+    const resident = stats.currentRssBytes(std.testing.io) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(resident > 0);
+    var usage: std.c.rusage = std.mem.zeroes(std.c.rusage);
+    usage.maxrss = 123;
+    try std.testing.expectEqual(@as(u64, if (os == .macos) 123 else 123 * 1024), stats.peakRssBytes(usage));
+}
+
 test "register and aggregate" {
     resetForTest();
     var s1 = WorkerStats.init();

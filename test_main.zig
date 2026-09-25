@@ -45,4 +45,6 @@ test {
     _ = @import("tests/unit/storage/aof_test.zig");
     _ = @import("tests/unit/storage/atomic_io_test.zig");
     _ = @import("tests/unit/storage/snapshot_test.zig");
+    _ = @import("tests/fractional_map_test.zig");
+    _ = @import("tests/packed_growth_test.zig");
 }

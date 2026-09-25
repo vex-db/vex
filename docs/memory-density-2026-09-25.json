@@ -1,0 +1,326 @@
+{
+  "measurement": "local native allocation diagnostic, not server throughput",
+  "key_bytes": 16,
+  "value_bytes": 256,
+  "points": [
+    {
+      "keys": 200000,
+      "control_rss_bytes": 86687744,
+      "candidate_rss_bytes": 73572352,
+      "rss_saved_fraction": 0.15129465129465125,
+      "control_requested_bytes": 77796352,
+      "candidate_requested_bytes": 67903488,
+      "candidate_capacities": [
+        {
+          "capacity": 1024,
+          "stripes": 230
+        },
+        {
+          "capacity": 1536,
+          "stripes": 26
+        }
+      ]
+    },
+    {
+      "keys": 400000,
+      "control_rss_bytes": 167436288,
+      "candidate_rss_bytes": 143532032,
+      "rss_saved_fraction": 0.14276628015069226,
+      "control_requested_bytes": 152268800,
+      "candidate_requested_bytes": 134797312,
+      "candidate_capacities": [
+        {
+          "capacity": 2048,
+          "stripes": 250
+        },
+        {
+          "capacity": 3072,
+          "stripes": 6
+        }
+      ]
+    },
+    {
+      "keys": 600000,
+      "control_rss_bytes": 269967360,
+      "candidate_rss_bytes": 213938176,
+      "rss_saved_fraction": 0.20754058564709454,
+      "control_requested_bytes": 248140800,
+      "candidate_requested_bytes": 201791488,
+      "candidate_capacities": [
+        {
+          "capacity": 3072,
+          "stripes": 255
+        },
+        {
+          "capacity": 4096,
+          "stripes": 1
+        }
+      ]
+    },
+    {
+      "keys": 750000,
+      "control_rss_bytes": 315711488,
+      "candidate_rss_bytes": 270675968,
+      "rss_saved_fraction": 0.14264770751706068,
+      "control_requested_bytes": 288940800,
+      "candidate_requested_bytes": 255386368,
+      "candidate_capacities": [
+        {
+          "capacity": 4096,
+          "stripes": 256
+        }
+      ]
+    },
+    {
+      "keys": 800000,
+      "control_rss_bytes": 330969088,
+      "candidate_rss_bytes": 285097984,
+      "rss_saved_fraction": 0.13859633924483006,
+      "control_requested_bytes": 302540800,
+      "candidate_requested_bytes": 268986368,
+      "candidate_capacities": [
+        {
+          "capacity": 4096,
+          "stripes": 256
+        }
+      ]
+    },
+    {
+      "keys": 825000,
+      "control_rss_bytes": 353112064,
+      "candidate_rss_bytes": 296632320,
+      "rss_saved_fraction": 0.15994849725666693,
+      "control_requested_bytes": 323938944,
+      "candidate_requested_bytes": 280201856,
+      "candidate_capacities": [
+        {
+          "capacity": 4096,
+          "stripes": 212
+        },
+        {
+          "capacity": 6144,
+          "stripes": 44
+        }
+      ]
+    },
+    {
+      "keys": 850000,
+      "control_rss_bytes": 411877376,
+      "candidate_rss_bytes": 319135744,
+      "rss_saved_fraction": 0.2251680655555114,
+      "control_requested_bytes": 382164224,
+      "candidate_requested_bytes": 302556416,
+      "candidate_capacities": [
+        {
+          "capacity": 4096,
+          "stripes": 57
+        },
+        {
+          "capacity": 6144,
+          "stripes": 199
+        }
+      ]
+    },
+    {
+      "keys": 900000,
+      "control_rss_bytes": 445931520,
+      "candidate_rss_bytes": 339140608,
+      "rss_saved_fraction": 0.2394782768439423,
+      "control_requested_bytes": 414675456,
+      "candidate_requested_bytes": 321876480,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 256
+        }
+      ]
+    },
+    {
+      "keys": 1000000,
+      "control_rss_bytes": 476356608,
+      "candidate_rss_bytes": 367943680,
+      "rss_saved_fraction": 0.22758774871450926,
+      "control_requested_bytes": 441875456,
+      "candidate_requested_bytes": 349076480,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 256
+        }
+      ]
+    },
+    {
+      "keys": 1200000,
+      "control_rss_bytes": 537243648,
+      "candidate_rss_bytes": 425541632,
+      "rss_saved_fraction": 0.20791686679932608,
+      "control_requested_bytes": 496275456,
+      "candidate_requested_bytes": 403476480,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 256
+        }
+      ]
+    },
+    {
+      "keys": 1225000,
+      "control_rss_bytes": 544849920,
+      "candidate_rss_bytes": 433143808,
+      "rss_saved_fraction": 0.20502180123289726,
+      "control_requested_bytes": 503075456,
+      "candidate_requested_bytes": 410677888,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 252
+        },
+        {
+          "capacity": 8192,
+          "stripes": 4
+        }
+      ]
+    },
+    {
+      "keys": 1250000,
+      "control_rss_bytes": 552456192,
+      "candidate_rss_bytes": 447434752,
+      "rss_saved_fraction": 0.19009912735306989,
+      "control_requested_bytes": 509875456,
+      "candidate_requested_bytes": 424502528,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 182
+        },
+        {
+          "capacity": 8192,
+          "stripes": 74
+        }
+      ]
+    },
+    {
+      "keys": 1275000,
+      "control_rss_bytes": 560062464,
+      "candidate_rss_bytes": 469372928,
+      "rss_saved_fraction": 0.1619275381397458,
+      "control_requested_bytes": 516675456,
+      "candidate_requested_bytes": 445853568,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 37
+        },
+        {
+          "capacity": 8192,
+          "stripes": 219
+        }
+      ]
+    },
+    {
+      "keys": 1300000,
+      "control_rss_bytes": 567668736,
+      "candidate_rss_bytes": 480022528,
+      "rss_saved_fraction": 0.1543967501497211,
+      "control_requested_bytes": 523475456,
+      "candidate_requested_bytes": 456065536,
+      "candidate_capacities": [
+        {
+          "capacity": 6144,
+          "stripes": 3
+        },
+        {
+          "capacity": 8192,
+          "stripes": 253
+        }
+      ]
+    },
+    {
+      "keys": 1500000,
+      "control_rss_bytes": 628588544,
+      "candidate_rss_bytes": 538001408,
+      "rss_saved_fraction": 0.14411197414377308,
+      "control_requested_bytes": 577875456,
+      "candidate_requested_bytes": 510766592,
+      "candidate_capacities": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ]
+    },
+    {
+      "keys": 1600000,
+      "control_rss_bytes": 659058688,
+      "candidate_rss_bytes": 566820864,
+      "rss_saved_fraction": 0.13995388526006347,
+      "control_requested_bytes": 605075456,
+      "candidate_requested_bytes": 537966592,
+      "candidate_capacities": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ]
+    }
+  ],
+  "small_values": [
+    {
+      "keys": 800000,
+      "value_bytes": 24,
+      "release_rss_bytes": 113942528,
+      "release_requested_bytes": 97740800,
+      "packed_rss_bytes": 87195648,
+      "packed_requested_bytes": 64186368
+    },
+    {
+      "keys": 800000,
+      "value_bytes": 25,
+      "release_rss_bytes": 113954816,
+      "release_requested_bytes": 97740800,
+      "packed_rss_bytes": 105472000,
+      "packed_requested_bytes": 84186368
+    },
+    {
+      "keys": 800000,
+      "value_bytes": 32,
+      "release_rss_bytes": 113950720,
+      "release_requested_bytes": 97740800,
+      "packed_rss_bytes": 105467904,
+      "packed_requested_bytes": 89786368
+    },
+    {
+      "keys": 800000,
+      "value_bytes": 33,
+      "release_rss_bytes": 151764992,
+      "release_requested_bytes": 124140800,
+      "packed_rss_bytes": 105447424,
+      "packed_requested_bytes": 90586368
+    },
+    {
+      "keys": 800000,
+      "value_bytes": 256,
+      "release_rss_bytes": 330964992,
+      "release_requested_bytes": 302540800,
+      "packed_rss_bytes": 285065216,
+      "packed_requested_bytes": 268986368
+    }
+  ],
+  "control_commit": "7ede9f1",
+  "candidate_commit": "e79ea49",
+  "compiler": "0.17.0-dev.314+eae06cf5c",
+  "allocator": "glibc c_allocator",
+  "throughput_verified": false,
+  "ci_images": {
+    "control": {
+      "tag": "ghcr.io/vex-db/vex:0.8.1-rc.2",
+      "index_digest": "sha256:a330105585bf294dfac252db5bb4d36eb29213a22180581618288d2a235cebe7",
+      "workflow": "https://github.com/vex-db/vex/actions/runs/36114325304"
+    },
+    "candidate": {
+      "tag": "ghcr.io/vex-db/vex:0.8.1-rc.3",
+      "index_digest": "sha256:ca2ffef924b48bb3b0b18208ad0b33c43856800404aeb2167b4e1b4a48996752",
+      "workflow": "https://github.com/vex-db/vex/actions/runs/36114800956"
+    }
+  }
+}

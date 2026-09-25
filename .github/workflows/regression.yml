@@ -145,6 +145,8 @@ jobs:
   # ── Nightly: ThreadSanitizer unit tests ──────────────────────────────
   tsan:
     name: ThreadSanitizer unit tests
+    # A stalled sanitizer build previously consumed GitHub's six-hour limit.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:

@@ -1882,17 +1882,10 @@ pub const CommandHandler = struct {
 
         // Memory section
         try aw.writer.writeAll("\r\n# Memory\r\n");
-        if (ru_ok) {
-            // On Linux ru_maxrss is in KiB; on macOS it's in bytes. Normalize to bytes.
-            const is_darwin_target = @import("builtin").os.tag == .macos;
-            const rss_bytes: u64 = if (is_darwin_target)
-                @intCast(@max(@as(i64, ru.maxrss), 0))
-            else
-                @as(u64, @intCast(@max(@as(i64, ru.maxrss), 0))) * 1024;
-            try aw.writer.print("used_memory_rss:{d}\r\n", .{rss_bytes});
-        } else {
-            try aw.writer.writeAll("used_memory_rss:0\r\n");
-        }
+        const current_rss = obs_stats.currentRssBytes(self.io);
+        try aw.writer.print("used_memory_rss:{d}\r\n", .{current_rss orelse 0});
+        try aw.writer.print("used_memory_rss_available:{d}\r\n", .{@intFromBool(current_rss != null)});
+        try aw.writer.print("used_memory_rss_peak:{d}\r\n", .{if (ru_ok) obs_stats.peakRssBytes(ru) else 0});
         try aw.writer.print("maxmemory:{d}\r\n", .{self.kv.maxmemory});
         const policy_str: []const u8 = switch (self.kv.eviction_policy) {
             .noeviction => "noeviction",
@@ -2355,18 +2348,14 @@ pub const CommandHandler = struct {
             // Returned as a flat RESP array of alternating key/value bulk strings.
             var ru: std.c.rusage = undefined;
             const ru_ok = std.c.getrusage(std.c.rusage.SELF, &ru) == 0;
-            const is_darwin_target = @import("builtin").os.tag == .macos;
-            const rss_bytes: u64 = if (!ru_ok) 0 else if (is_darwin_target)
-                @intCast(@max(@as(i64, ru.maxrss), 0))
-            else
-                @as(u64, @intCast(@max(@as(i64, ru.maxrss), 0))) * 1024;
+            const rss_bytes = obs_stats.currentRssBytes(self.io) orelse 0;
 
             const start_ms = obs_stats.start_time_ms;
             const uptime_ms: i64 = if (start_ms == 0) 0 else obsNowMillis() - start_ms;
 
             const Pair = struct { k: []const u8, v: u64 };
             const pairs = [_]Pair{
-                .{ .k = "peak.allocated", .v = rss_bytes },
+                .{ .k = "peak.allocated", .v = if (ru_ok) obs_stats.peakRssBytes(ru) else 0 },
                 .{ .k = "total.allocated", .v = rss_bytes },
                 .{ .k = "startup.allocated", .v = 0 },
                 .{ .k = "replication.backlog", .v = 0 },
@@ -4651,4 +4640,3 @@ fn globMatch(pattern: []const u8, string: []const u8) bool {
     while (pi < pattern.len and pattern[pi] == '*') pi += 1;
     return pi == pattern.len;
 }
-

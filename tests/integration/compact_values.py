@@ -52,17 +52,17 @@ def stress(i):
     c = Client()
     try:
         for j in range(1000):
-            n = (16, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192)[j % 11]
+            n = (16, 24, 25, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192)[j % 13]
             assert c.call('SET', key('contended'), bytes([65 + i]) * n) == b'OK'
             data = c.call('GET', key('contended'))
-            assert data and len(data) in (16, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192)
+            assert data and len(data) in (16, 24, 25, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192)
             assert data == data[:1] * len(data), 'torn value'
     finally:
         c.close()
 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
     list(pool.map(stress, range(8)))
 c = Client()
-for n in (32, 33, 256, 257, 1024, 4096, 4097, 65536, 768, 16):
+for n in (24, 25, 32, 33, 256, 257, 1024, 4096, 4097, 65536, 768, 16):
     value = bytes((j % 256 for j in range(n)))
     assert c.call('SET', key('src'), value) == b'OK'
     assert c.call('SET', key('dst'), value) == b'OK'

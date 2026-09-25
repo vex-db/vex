@@ -1,7 +1,10 @@
 # Memory reclamation
 
-The reactor stores small values inline and reuses larger value buffers for
-equal-size writes. Independent stripe hashing avoids concentrating every
+The reactor stores each table entry in 32 bytes, with values up to 24 bytes
+inline. Larger strings share one allocation with their key and reuse that
+allocation for equal-size writes. TTL, integer and LRU metadata is allocated
+only when needed. Tables keep the 80% load limit but grow through intermediate
+capacities (for example, 4,096 → 6,144 → 8,192 slots) to reduce resize jumps. Independent stripe hashing avoids concentrating every
 stripe's keys in the same subset of its table buckets. GET copies values into
 the response while holding the stripe read lock.
 

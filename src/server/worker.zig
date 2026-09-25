@@ -2509,15 +2509,14 @@ pub const Worker = struct {
                     }
                     const entry = entry_opt.?;
 
-                    if (entry.flags.deleted or
-                        (entry.flags.has_ttl and ckv.nowMillis() > entry.expires_at))
+                    if (entry.hasTtl() and ckv.nowMillis() > entry.expiresAt())
                     {
                         writeNullTo(&conn.write_buf, conn.protocol_version);
                         return true;
                     }
 
-                    if (entry.flags.is_integer) {
-                        const int_val = entry.int_value;
+                    if (entry.isInteger()) {
+                        const int_val = entry.integerValue();
                         var int_buf: [24]u8 = undefined;
                         const int_str = std.fmt.bufPrint(&int_buf, "{d}", .{int_val}) catch return false;
                         var hdr_buf: [32]u8 = undefined;
@@ -2639,16 +2638,15 @@ pub const Worker = struct {
                             continue;
                         }
                         const entry = entry_opt.?;
-                        if (entry.flags.deleted or
-                            (entry.flags.has_ttl and ckv.nowMillis() > entry.expires_at))
+                        if (entry.hasTtl() and ckv.nowMillis() > entry.expiresAt())
                         {
                             ckv.readUnlockStripePublic(stripe);
                             pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
                             continue;
                         }
 
-                        if (entry.flags.is_integer) {
-                            const int_val = entry.int_value;
+                        if (entry.isInteger()) {
+                            const int_val = entry.integerValue();
                             ckv.readUnlockStripePublic(stripe);
                             const s = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n{d}\r\n", .{
                                 std.fmt.count("{d}", .{int_val}), int_val,
@@ -2657,9 +2655,9 @@ pub const Worker = struct {
                             continue;
                         }
 
-                        if (entry.flags.is_inline) {
+                        if (entry.isInline()) {
                             var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                            const vlen = entry.inline_len;
+                            const vlen = entry.bytes().len;
                             @memcpy(val_copy[0..vlen], entry.bytes());
                             ckv.readUnlockStripePublic(stripe);
                             const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
@@ -2718,8 +2716,8 @@ pub const Worker = struct {
                     ckv.readLockStripePublic(stripe);
                     var fast_new_val: ?i64 = null;
                     if (stripe.map.getPtr(ns_key)) |entry| {
-                        if (entry.flags.is_integer and !entry.flags.deleted) {
-                            const int_ptr: *i64 = &entry.int_value;
+                        if (entry.isInteger()) {
+                            const int_ptr = entry.integerPtr().?;
                             fast_new_val = @atomicRmw(i64, int_ptr, .Add, 1, .monotonic) + 1;
                         }
                     }
@@ -3190,8 +3188,7 @@ pub const Worker = struct {
                                 if (!std.mem.startsWith(u8, user_key, pattern[0 .. pattern.len - 1])) continue;
                             } else if (!std.mem.eql(u8, user_key, pattern)) continue;
                             const e = entry.value_ptr;
-                            if (e.flags.deleted) continue;
-                            if (e.flags.has_ttl and ckv.nowMillis() > e.expires_at) continue;
+                            if (e.hasTtl() and ckv.nowMillis() > e.expiresAt()) continue;
                             // Write key
                             const kh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{user_key.len}) catch break;
                             pos += kh.len;

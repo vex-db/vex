@@ -181,10 +181,7 @@ test "concurrent_kv bounded sweep reclaims expired heap and inline entries once"
     var removed: [512]ConcurrentKV.Expired = undefined;
     const count = store.sweepExpired(2000, &cursor, &removed);
     try std.testing.expectEqual(@as(usize, 2), count);
-    for (removed[0..count]) |stale| {
-        std.testing.allocator.free(stale.key);
-        if (stale.value) |value| std.testing.allocator.free(value);
-    }
+    for (removed[0..count]) |stale| store.freeExpired(stale);
     try std.testing.expect(store.get("expired-heap") == null);
     try std.testing.expect(store.get("expired-inline") == null);
     const future = store.get("future") orelse return error.TestUnexpectedResult;
@@ -234,10 +231,7 @@ test "concurrent_kv preallocated TTL enables a fresh store sweep" {
     var removed: [512]ConcurrentKV.Expired = undefined;
     const count = store.sweepExpired(2000, &cursor, &removed);
     try std.testing.expectEqual(@as(usize, 1), count);
-    for (removed[0..count]) |item| {
-        alloc.free(item.key);
-        if (item.value) |bytes| alloc.free(bytes);
-    }
+    for (removed[0..count]) |item| store.freeExpired(item);
 }
 
 test "concurrent_kv INCR-created TTL reconciles bytes after expiry" {
@@ -251,10 +245,7 @@ test "concurrent_kv INCR-created TTL reconciles bytes after expiry" {
     var cursor: ConcurrentKV.SweepCursor = .{};
     var removed: [512]ConcurrentKV.Expired = undefined;
     const count = store.sweepExpired(2000, &cursor, &removed);
-    for (removed[0..count]) |item| {
-        std.testing.allocator.free(item.key);
-        if (item.value) |value| std.testing.allocator.free(value);
-    }
+    for (removed[0..count]) |item| store.freeExpired(item);
     try std.testing.expectEqual(@as(u64, 0), store.total_bytes.load(.monotonic));
 }
 
@@ -286,10 +277,7 @@ test "concurrent_kv expiry cursor crosses sparse prefix after growth and frees e
         const count = store.sweepExpired(2000, &cursor, &removed);
         try std.testing.expect(count <= removed.len);
         reclaimed += count;
-        for (removed[0..count]) |item| {
-            std.testing.allocator.free(item.key);
-            if (item.value) |value| std.testing.allocator.free(value);
-        }
+        for (removed[0..count]) |item| store.freeExpired(item);
     }
     // Rehash between cursor passes; the saved physical cursor must clamp and
     // continue rather than repeatedly scanning the first sparse prefix.
@@ -304,10 +292,7 @@ test "concurrent_kv expiry cursor crosses sparse prefix after growth and frees e
         const count = store.sweepExpired(2000, &cursor, &removed);
         try std.testing.expect(count <= removed.len);
         reclaimed += count;
-        for (removed[0..count]) |item| {
-            std.testing.allocator.free(item.key);
-            if (item.value) |value| std.testing.allocator.free(value);
-        }
+        for (removed[0..count]) |item| store.freeExpired(item);
     }
     try std.testing.expectEqual(expired, reclaimed);
     try std.testing.expectEqual(permanent, store.dbsize());
@@ -320,17 +305,14 @@ test "concurrent_kv expiry cursor crosses sparse prefix after growth and frees e
     var empty_cursor: ConcurrentKV.SweepCursor = .{};
     var empty_removed: [512]ConcurrentKV.Expired = undefined;
     const count = empty.sweepExpired(2000, &empty_cursor, &empty_removed);
-    for (empty_removed[0..count]) |item| {
-        std.testing.allocator.free(item.key);
-        if (item.value) |value| std.testing.allocator.free(value);
-    }
+    for (empty_removed[0..count]) |item| empty.freeExpired(item);
     try std.testing.expectEqual(@as(u32, 0), empty.getStripePublic("empty-stripe").map.capacity());
 }
 
 // The compact layout must retain ownership of the full allocation even when
 // its logical value shrinks. std.testing.allocator checks every free and leak.
 test "concurrent_kv compact buffers reuse capacity and release large shrinks" {
-    try std.testing.expect(@sizeOf(ConcurrentKV.Entry) == 64);
+    try std.testing.expect(@sizeOf(ConcurrentKV.Entry) == 32);
     var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
     store.initStripes();
     defer store.deinit();
@@ -351,7 +333,7 @@ test "concurrent_kv compact buffers reuse capacity and release large shrinks" {
     try store.set("k", &small);
     try std.testing.expectEqual(@as(usize, 256), stripe.map.getPtr("k").?.storage.heap.capacity);
     try store.set("k", "42");
-    try std.testing.expect(stripe.map.getPtr("k").?.flags.is_inline);
+    try std.testing.expect(stripe.map.getPtr("k").?.isInline());
     try std.testing.expectEqual(@as(i64, 43), try store.incrBy("k", 1));
     try store.set("k", &medium);
     const got = store.get("k") orelse return error.TestUnexpectedResult;
@@ -363,6 +345,26 @@ test "concurrent_kv compact buffers reuse capacity and release large shrinks" {
     try store.set("flush", &large);
     try store.set("flush", &medium);
     store.flushdb();
+}
+
+test "concurrent_kv entry32 inline boundary is 24 bytes" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    var at_24: [24]u8 = @splat('a');
+    var at_25: [25]u8 = @splat('b');
+    var at_32: [32]u8 = @splat('c');
+    try store.set("boundary", &at_24);
+    try std.testing.expect(store.getStripePublic("boundary").map.getPtr("boundary").?.isInline());
+    try store.set("boundary", &at_25);
+    try std.testing.expect(!store.getStripePublic("boundary").map.getPtr("boundary").?.isInline());
+    try std.testing.expect(store.getStripePublic("boundary").map.getPtr("boundary").?.isCombined());
+    try store.set("boundary", &at_32);
+    try std.testing.expect(!store.getStripePublic("boundary").map.getPtr("boundary").?.isInline());
+    try std.testing.expect(store.getStripePublic("boundary").map.getPtr("boundary").?.isCombined());
+    try store.set("boundary", &at_24);
+    try std.testing.expect(store.getStripePublic("boundary").map.getPtr("boundary").?.isInline());
+    try std.testing.expect(!store.getStripePublic("boundary").map.getPtr("boundary").?.isCombined());
 }
 
 test "concurrent_kv failed buffer growth preserves existing value and TTL" {
@@ -401,9 +403,9 @@ test "concurrent_kv preallocated replacement returns old allocation" {
     const key = try alloc.dupe(u8, "k");
     const replacement = try alloc.dupe(u8, "new");
     const stale = store.setPrealloc("k", key, replacement, 0);
-    try std.testing.expectEqual(@as(usize, 1024), stale.stale_val.?.len);
+    try std.testing.expect(stale.stale_key == null);
+    try std.testing.expectEqual(@as(usize, 1 + 1024), stale.stale_val.?.len);
     alloc.free(stale.stale_val.?);
-    alloc.free(stale.stale_key.?);
     const value = store.get("k") orelse return error.TestUnexpectedResult;
     defer value.deinit();
     try std.testing.expectEqualStrings("new", value.data);
@@ -420,7 +422,7 @@ test "concurrent_kv mixed buffer sizes remain intact under contention" {
             var bytes: [8192]u8 = undefined;
             @memset(&bytes, @intCast('a' + id));
             for (0..500) |iteration| {
-                const sizes = [_]usize{ 16, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192 };
+                const sizes = [_]usize{ 16, 24, 25, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192 };
                 const size = sizes[iteration % sizes.len];
                 s.set("contended", bytes[0..size]) catch @panic("SET failed");
                 const value = s.get("contended") orelse @panic("value lost");

@@ -1140,8 +1140,7 @@ pub const Server = struct {
                     const count = store.sweepExpired(now, &cursor, &removed);
                     for (removed[0..count]) |stale| {
                         watches.bumpVersion(stale.key);
-                        store.allocator.free(stale.key);
-                        if (stale.value) |value| store.allocator.free(value);
+                        store.freeExpired(stale);
                     }
                     mutex.unlock();
                 }

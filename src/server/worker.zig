@@ -632,10 +632,11 @@ pub const Worker = struct {
         var event_buf: [128]EventLoop.Event = undefined;
 
         while (true) {
-            // Update cached clocks once per event loop tick
-            if (self.ckv) |ckv| ckv.updateClock();
-
             const events = self.loop.poll(&event_buf, 100) catch continue;
+            // Publish a fresh clock after poll returns. io_uring can sleep
+            // indefinitely when idle, so updating before poll leaves the first
+            // command after idle observing stale expiry time.
+            if (self.ckv) |ckv| ckv.updateClock();
 
             for (events) |ev| {
                 if (self.loop.isNotifyFd(ev.fd)) {
@@ -1381,7 +1382,7 @@ pub const Worker = struct {
 
         // ── Fast path: common case (authenticated, no pubsub, no transaction) ──
         // Skips ~15 branch comparisons for the hot path.
-        if (conn.authenticated and !conn.pubsub_mode and conn.tx_queue == null) {
+        if (conn.authenticated and !conn.pubsub_mode and conn.tx_queue == null) fast_path: {
             if (self.handleRepl(conn, args)) return;
             if (self.tryForwardToLeader(conn, args)) return;
 
@@ -1392,6 +1393,12 @@ pub const Worker = struct {
                     return;
                 }
             }
+
+            // These commands have worker-owned state below. The generic
+            // fallback would bypass that state for authenticated clients.
+            if ((args[0].len == 5 and (equalsAsciiUpper(args[0], "WATCH") or equalsAsciiUpper(args[0], "MULTI"))) or
+                (args[0].len == 7 and (equalsAsciiUpper(args[0], "UNWATCH") or equalsAsciiUpper(args[0], "DISCARD"))) or
+                (args[0].len == 4 and equalsAsciiUpper(args[0], "EXEC"))) break :fast_path;
 
             // SELECT (connection-level, not in CommandHandler)
             if (isSelect(args)) {
@@ -1709,9 +1716,10 @@ pub const Worker = struct {
         // graph nodes/edges/properties intact and the next ADDNODE would surface
         // DuplicateNode errors.
         _ = std.c.pthread_rwlock_wrlock(self.graph_rwlock);
-        defer _ = std.c.pthread_rwlock_unlock(self.graph_rwlock);
         self.graph.deinit();
         self.graph.* = GraphEngine.init(self.allocator);
+        _ = std.c.pthread_rwlock_unlock(self.graph_rwlock);
+        ckv.trimAfterFlush();
     }
 
     // ── WATCH/UNWATCH ─────────────────────────────────────────────────
@@ -2392,6 +2400,15 @@ pub const Worker = struct {
             return;
         };
 
+        // Serialize WATCH validation with expiry maintenance before emitting a
+        // response header; otherwise a sweep could invalidate the watch between
+        // this check and queued execution.
+        if (!acquireKvMutexWithBackoff(self.kv_mutex)) {
+            vex_log.err("worker {d}: kv_mutex acquire timed out after 5s — aborting command", .{self.id});
+            return;
+        }
+        defer self.kv_mutex.unlock();
+
         // WATCH check: if any watched key was modified, abort the transaction
         if (self.isWatchDirty(conn)) {
             // Abort: return nil array (Redis convention for WATCH failure)
@@ -2410,13 +2427,6 @@ pub const Worker = struct {
             return;
         };
         conn.write_buf.appendSlice(h) catch {};
-
-        // Execute all commands under engine lock
-        if (!acquireKvMutexWithBackoff(self.kv_mutex)) {
-            vex_log.err("worker {d}: kv_mutex acquire timed out after 5s — aborting command", .{self.id});
-            return;
-        }
-        defer self.kv_mutex.unlock();
 
         for (q.items) |cmd| {
             // Cast [][]u8 to []const []const u8
@@ -2482,7 +2492,6 @@ pub const Worker = struct {
                     // ConcurrentKV.setInternal can free during a rehash.
                     // Take the stripe rdlock for the duration of the entry
                     // access so writers (who take wrlock) are excluded.
-                    const KVS = @import("../engine/kv/kv.zig").KVStore;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
 
                     const lock_t0: u64 = if (probe_on) probes.start() else 0;
@@ -2501,11 +2510,8 @@ pub const Worker = struct {
                     const entry = entry_opt.?;
 
                     if (entry.flags.deleted or
-                        (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
+                        (entry.flags.has_ttl and ckv.nowMillis() > entry.expires_at))
                     {
-                        if (entry.flags.has_ttl and !entry.flags.deleted) {
-                            _ = stats_mod.expired_keys.fetchAdd(1, .monotonic);
-                        }
                         writeNullTo(&conn.write_buf, conn.protocol_version);
                         return true;
                     }
@@ -2523,58 +2529,20 @@ pub const Worker = struct {
                         return true;
                     }
 
-                    if (entry.flags.is_inline) {
-                        // SeqLock still useful: another rdlock-holding thread
-                        // may be doing an in-place SET via the SeqLock fast
-                        // path, since both paths share the rdlock.
-                        const copy_t0: u64 = if (probe_on) probes.start() else 0;
-                        var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                        var vlen: u16 = undefined;
-                        var attempts: u32 = 0;
-                        while (attempts < 64) : (attempts += 1) {
-                            const s1 = entry.seq.load(.acquire);
-                            if (s1 & 1 != 0) {
-                                std.atomic.spinLoopHint();
-                                continue;
-                            }
-                            vlen = entry.inline_len;
-                            @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
-                            const s2 = entry.seq.load(.acquire);
-                            if (s1 == s2) break;
-                            std.atomic.spinLoopHint();
-                        }
-                        if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
+                    // The stripe read lock keeps the value stable while it is
+                    // copied directly into the response, including inline values.
+                    const value = entry.bytes();
+                    const fmt_t0: u64 = if (probe_on) probes.start() else 0;
+                    var hdr_buf: [32]u8 = undefined;
+                    const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{value.len}) catch return false;
+                    conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + value.len + 2) catch {};
+                    conn.write_buf.appendSliceAssumeCapacity(hdr);
+                    if (probe_on) probes.finish(&self.probes.get_resp_format, fmt_t0);
 
-                        const fmt_t0: u64 = if (probe_on) probes.start() else 0;
-                        var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
-                        conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + vlen + 2) catch {};
-                        conn.write_buf.appendSliceAssumeCapacity(hdr);
-                        conn.write_buf.appendSliceAssumeCapacity(val_copy[0..vlen]);
-                        conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                        if (probe_on) probes.finish(&self.probes.get_resp_format, fmt_t0);
-                        return true;
-                    }
-
-                    // Large value (>INLINE_BUF_SIZE): copy out under rdlock.
-                    const vlen = entry.value.len;
-                    var val_stack: [4096]u8 = undefined;
-                    if (vlen <= val_stack.len) {
-                        @memcpy(val_stack[0..vlen], entry.value);
-                        var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
-                        conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + hdr.len + vlen + 2) catch {};
-                        conn.write_buf.appendSliceAssumeCapacity(hdr);
-                        conn.write_buf.appendSliceAssumeCapacity(val_stack[0..vlen]);
-                        conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                    } else {
-                        conn.write_buf.ensureTotalCapacity(conn.write_buf.items.len + vlen + 40) catch {};
-                        var hdr_buf: [32]u8 = undefined;
-                        const hdr = std.fmt.bufPrint(&hdr_buf, "${d}\r\n", .{vlen}) catch return false;
-                        conn.write_buf.appendSliceAssumeCapacity(hdr);
-                        conn.write_buf.appendSliceAssumeCapacity(entry.value);
-                        conn.write_buf.appendSliceAssumeCapacity("\r\n");
-                    }
+                    const copy_t0: u64 = if (probe_on) probes.start() else 0;
+                    conn.write_buf.appendSliceAssumeCapacity(value);
+                    if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
+                    conn.write_buf.appendSliceAssumeCapacity("\r\n");
                     return true;
                 },
                 'S' => if (args.len >= 3 and equalsAsciiUpper(cmd, "SET")) {
@@ -2582,7 +2550,6 @@ pub const Worker = struct {
                     if (args.len >= 4 and args[3].len == 2) {
                         if (equalsAsciiUpper(args[3], "NX") or equalsAsciiUpper(args[3], "XX")) return false;
                     }
-                    const KVS = @import("../engine/kv/kv.zig").KVStore;
                     const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
                     const value = args[2];
 
@@ -2595,53 +2562,8 @@ pub const Worker = struct {
                         expires = ckv.nowMillis() + t;
                     }
 
-                    // Fast path: in-place SeqLock update of an existing inline
-                    // entry. Holds rdlock so a concurrent setInternal (which
-                    // takes wrlock and can rehash) cannot free the bucket
-                    // array out from under getPtr. The rdlock must be
-                    // released before any fallthrough that calls setInternal
-                    // — wrlock can't be acquired while we still hold rdlock.
-                    if (value.len <= KVS.INLINE_BUF_SIZE and expires == 0) {
-                        const lock_t0: u64 = if (probe_on) probes.start() else 0;
-                        const stripe = ckv.getStripePublic(ns_key);
-                        ckv.readLockStripePublic(stripe);
-                        if (probe_on) probes.finish(&self.probes.set_stripe_lock, lock_t0);
-
-                        var fast_path_hit = false;
-                        const map_t0: u64 = if (probe_on) probes.start() else 0;
-                        const got = stripe.map.getPtr(ns_key);
-                        if (probe_on) probes.finish(&self.probes.set_hashmap_op, map_t0);
-
-                        if (got) |entry| {
-                            if (!entry.flags.deleted) {
-                                const seq_t0: u64 = if (probe_on) probes.start() else 0;
-                                _ = entry.seq.fetchAdd(1, .release);
-                                if (probe_on) probes.finish(&self.probes.set_seqlock, seq_t0);
-
-                                const copy_t0: u64 = if (probe_on) probes.start() else 0;
-                                @memcpy(entry.inline_buf[0..value.len], value);
-                                entry.inline_len = @intCast(value.len);
-                                entry.value = entry.inline_buf[0..value.len];
-                                entry.flags = .{ .is_inline = true };
-                                entry.expires_at = 0;
-                                if (probe_on) probes.finish(&self.probes.set_value_copy, copy_t0);
-
-                                _ = entry.seq.fetchAdd(1, .release);
-                                fast_path_hit = true;
-                            }
-                        }
-                        ckv.readUnlockStripePublic(stripe);
-                        if (fast_path_hit) {
-                            if (self.aof) |a| a.logCommand(args);
-                            self.bumpWatchVersion(conn.selected_db, args[1]);
-                            conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                            return true;
-                        }
-                    }
-
-                    // Fallback: new key or non-inline value — setInternal
-                    // takes its own wrlock, so we must NOT be holding rdlock
-                    // here.
+                    // The stripe write lock protects both inline writes and
+                    // reusable heap buffers, including ownership transitions.
                     ckv.setInternal(ns_key, value, expires) catch return false;
                     if (self.aof) |a| a.logCommand(args);
                     self.bumpWatchVersion(conn.selected_db, args[1]);
@@ -2690,7 +2612,7 @@ pub const Worker = struct {
                 } else if (args.len >= 2 and equalsAsciiUpper(cmd, "MGET")) {
                     // MGET: build response in staging buffer, single write_buf append
                     // One alloc+free per call beats 300 appendSlice calls (1 memcpy vs 300)
-                    const KVS = @import("../engine/kv/kv.zig").KVStore;
+                    const KVS = ConcurrentKV;
                     const key_count = args.len - 1;
                     const est = 32 + key_count * 80;
                     var resp_buf = self.allocator.alloc(u8, est) catch return false;
@@ -2718,7 +2640,7 @@ pub const Worker = struct {
                         }
                         const entry = entry_opt.?;
                         if (entry.flags.deleted or
-                            (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
+                            (entry.flags.has_ttl and ckv.nowMillis() > entry.expires_at))
                         {
                             ckv.readUnlockStripePublic(stripe);
                             pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
@@ -2737,17 +2659,8 @@ pub const Worker = struct {
 
                         if (entry.flags.is_inline) {
                             var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                            var vlen: u16 = undefined;
-                            var attempts: u32 = 0;
-                            while (attempts < 64) : (attempts += 1) {
-                                const s1 = entry.seq.load(.acquire);
-                                if (s1 & 1 != 0) { std.atomic.spinLoopHint(); continue; }
-                                vlen = entry.inline_len;
-                                @memcpy(val_copy[0..vlen], entry.inline_buf[0..vlen]);
-                                const s2 = entry.seq.load(.acquire);
-                                if (s1 == s2) break;
-                                std.atomic.spinLoopHint();
-                            }
+                            const vlen = entry.inline_len;
+                            @memcpy(val_copy[0..vlen], entry.bytes());
                             ckv.readUnlockStripePublic(stripe);
                             const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
                             pos += vh.len;
@@ -2757,7 +2670,8 @@ pub const Worker = struct {
                             continue;
                         }
 
-                        const vlen = entry.value.len;
+                        const value = entry.bytes();
+                        const vlen = value.len;
                         if (pos + vlen + 32 > resp_buf.len) {
                             resp_buf = self.allocator.realloc(resp_buf, pos + vlen + 64) catch {
                                 ckv.readUnlockStripePublic(stripe);
@@ -2769,7 +2683,7 @@ pub const Worker = struct {
                             continue;
                         };
                         pos += vh.len;
-                        @memcpy(resp_buf[pos .. pos + vlen], entry.value);
+                        @memcpy(resp_buf[pos .. pos + vlen], value);
                         pos += vlen;
                         resp_buf[pos] = '\r'; resp_buf[pos + 1] = '\n'; pos += 2;
                         ckv.readUnlockStripePublic(stripe);
@@ -3277,7 +3191,7 @@ pub const Worker = struct {
                             } else if (!std.mem.eql(u8, user_key, pattern)) continue;
                             const e = entry.value_ptr;
                             if (e.flags.deleted) continue;
-                            if (e.flags.has_ttl and ckv.cached_now_ms > e.expires_at) continue;
+                            if (e.flags.has_ttl and ckv.nowMillis() > e.expires_at) continue;
                             // Write key
                             const kh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{user_key.len}) catch break;
                             pos += kh.len;
@@ -3285,7 +3199,7 @@ pub const Worker = struct {
                             pos += user_key.len;
                             stack_buf[pos] = '\r'; stack_buf[pos + 1] = '\n'; pos += 2;
                             // Write value
-                            const val = if (e.flags.is_inline) e.inline_buf[0..e.inline_len] else e.value;
+                            const val = e.bytes();
                             const vh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{val.len}) catch break;
                             pos += vh.len;
                             if (pos + val.len + 2 > stack_buf.len) break;
@@ -3791,4 +3705,3 @@ fn constantTimeEql(a: []const u8, b: []const u8) bool {
 fn log(comptime fmt: []const u8, args: anytype) void {
     vex_log.info(fmt, args);
 }
-

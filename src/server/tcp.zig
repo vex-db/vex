@@ -1124,6 +1124,35 @@ pub const Server = struct {
             probes_mod.register(&w.probes);
         }
 
+        // io_uring can block indefinitely while idle, so expiry maintenance is
+        // a joined thread rather than work piggybacked on worker-0's poll loop.
+        // It owns the cursors and takes the same mutex as EXEC before touching
+        // WATCH state or a stripe.
+        const Maintenance = struct {
+            fn run(store: *ConcurrentKV, mutex: *std.atomic.Mutex, watches: *WM, stop_flag: *std.atomic.Value(bool)) void {
+                var cursor: ConcurrentKV.SweepCursor = .{};
+                var removed: [512]ConcurrentKV.Expired = undefined;
+                while (!stop_flag.load(.acquire)) {
+                    var delay: std.c.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+                    _ = std.c.nanosleep(&delay, null);
+                    if (!store.has_expiry.load(.acquire) or !mutex.tryLock()) continue;
+                    const now = std.Io.Timestamp.now(store.io, .real).toMilliseconds();
+                    const count = store.sweepExpired(now, &cursor, &removed);
+                    for (removed[0..count]) |stale| {
+                        watches.bumpVersion(stale.key);
+                        store.allocator.free(stale.key);
+                        if (stale.value) |value| store.allocator.free(value);
+                    }
+                    mutex.unlock();
+                }
+            }
+        };
+        const maintenance_thread = try std.Thread.spawn(.{}, Maintenance.run, .{ &ckv, &kv_mutex, &watch_map, shutdown });
+        defer {
+            shutdown.store(true, .release);
+            maintenance_thread.join();
+        }
+
         // Spawn worker threads.
         for (workers) |*w| {
             const t = try std.Thread.spawn(.{}, Worker.run, .{w});

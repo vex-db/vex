@@ -1,8 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const KVStore = @import("kv.zig").KVStore;
 const EvictionPolicy = @import("kv.zig").EvictionPolicy;
 const obs_stats = @import("../../observability/stats.zig");
+
+extern fn malloc_trim(pad: usize) c_int;
 
 const STRIPE_COUNT = 256;
 const STRIPE_MASK = STRIPE_COUNT - 1;
@@ -22,7 +25,10 @@ pub const ConcurrentKV = struct {
     stripes: [STRIPE_COUNT]Stripe,
     allocator: Allocator,
     io: std.Io,
-    cached_now_ms: i64 = 0,
+    cached_now_ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    /// Sticky after the first TTL is accepted. Keeping it sticky avoids mutation
+    /// bookkeeping on the hot path; idle maintenance then has bounded scan cost.
+    has_expiry: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     /// Maxmemory budget in bytes. 0 = unlimited (hot path becomes byte-identical
     /// to pre-maxmemory behavior). Wire from server construction.
@@ -34,7 +40,68 @@ pub const ConcurrentKV = struct {
     /// Uses `.monotonic` — this is a budget heuristic, not a synchronization point.
     total_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
-    pub const Entry = KVStore.Entry;
+    pub const INLINE_BUF_SIZE = 32;
+
+    /// Reactor entries keep tiny values inline and larger values in reusable,
+    /// owned buffers. The plain KVStore layout is independent of this hot path.
+    pub const Entry = struct {
+        // Inline bytes and heap metadata are mutually exclusive. Sharing their
+        // storage keeps the complete entry within one 64-byte cache line.
+        storage: extern union {
+            inline_buf: [INLINE_BUF_SIZE]u8,
+            heap: extern struct { ptr: [*]const u8, len: usize, capacity: usize },
+        } = .{ .heap = .{ .ptr = "", .len = 0, .capacity = 0 } },
+        expires_at: i64 = 0,
+        last_access: i64 = 0,
+        int_value: i64 = 0,
+        inline_len: u16 = 0,
+        flags: KVStore.EntryFlags = .{},
+
+        pub fn bytes(self: *const Entry) []const u8 {
+            return if (self.flags.is_inline)
+                self.storage.inline_buf[0..self.inline_len]
+            else
+                self.storage.heap.ptr[0..self.storage.heap.len];
+        }
+
+        /// Free the original allocation length, including retained spare capacity.
+        fn allocation(self: *const Entry) []const u8 {
+            return self.storage.heap.ptr[0..self.storage.heap.capacity];
+        }
+
+        fn freeValue(self: *const Entry, allocator: Allocator) void {
+            if (!self.flags.is_inline) allocator.free(self.allocation());
+        }
+
+        /// Caller holds the stripe write lock. Allocation failure leaves the old
+        /// value untouched. Shrinking below half capacity releases excess memory.
+        fn replaceValue(self: *Entry, allocator: Allocator, value: []const u8) !void {
+            if (value.len <= INLINE_BUF_SIZE) {
+                var copy: [INLINE_BUF_SIZE]u8 = undefined;
+                @memcpy(copy[0..value.len], value);
+                self.freeValue(allocator);
+                self.storage = .{ .inline_buf = copy };
+                self.inline_len = @intCast(value.len);
+                self.flags.is_inline = true;
+            } else if (!self.flags.is_inline and self.storage.heap.capacity >= value.len and
+                self.storage.heap.capacity / 2 <= value.len)
+            {
+                // Equal-size overwrites and modest size changes allocate nothing.
+                const dest = @constCast(self.storage.heap.ptr)[0..value.len];
+                std.mem.copyForwards(u8, dest, value);
+                self.storage.heap.len = value.len;
+            } else {
+                const replacement = try allocator.dupe(u8, value);
+                self.freeValue(allocator);
+                self.storage = .{ .heap = .{
+                    .ptr = replacement.ptr,
+                    .len = replacement.len,
+                    .capacity = replacement.len,
+                } };
+                self.flags.is_inline = false;
+            }
+        }
+    };
 
     /// Cache-line aligned to prevent false sharing between workers.
     /// Uses pthread_rwlock: GETs take read-lock (parallel), SETs take write-lock (exclusive).
@@ -44,6 +111,9 @@ pub const ConcurrentKV = struct {
         ttl_count: u32 = 0,
         tombstone_count: u32 = 0,
     };
+
+    pub const Expired = struct { key: []const u8, value: ?[]const u8 };
+    pub const SweepCursor = struct { next_stripe: usize = 0, buckets: [STRIPE_COUNT]usize = @splat(0) };
 
     /// Owned value returned by get(). Caller must call deinit() to free.
     pub const OwnedValue = struct {
@@ -65,18 +135,16 @@ pub const ConcurrentKV = struct {
             s.map = std.StringHashMap(Entry).init(allocator);
             // Zero-init rwlock — works on Linux. macOS needs initStripes() after placement.
         }
+        self.cached_now_ms.store(std.Io.Timestamp.now(io, .real).toMilliseconds(), .release);
         return self;
     }
 
-    /// Initialize rwlocks and pre-allocate stripe capacity. Must be called AFTER the
-    /// ConcurrentKV is at its final memory address for macOS compatibility.
-    /// Pre-allocation avoids HashMap resize under concurrent writes (which causes crashes
-    /// due to Zig HashMap's non-thread-safe grow path).
+    /// Initialize rwlocks after placement for macOS compatibility. Maps grow
+    /// under their stripe's exclusive lock instead of reserving millions of slots.
     pub fn initStripes(self: *ConcurrentKV) void {
         const init_fn = @extern(*const fn (*std.c.pthread_rwlock_t, ?*const anyopaque) callconv(.c) c_int, .{ .name = "pthread_rwlock_init" });
         for (&self.stripes) |*s| {
             _ = init_fn(&s.rwlock, null);
-            s.map.ensureTotalCapacity(16384) catch {};
         }
     }
 
@@ -85,9 +153,7 @@ pub const ConcurrentKV = struct {
             var iter = s.map.iterator();
             while (iter.next()) |entry| {
                 self.allocator.free(entry.key_ptr.*);
-                if (!entry.value_ptr.flags.is_inline) {
-                    self.allocator.free(entry.value_ptr.value);
-                }
+                entry.value_ptr.freeValue(self.allocator);
             }
             s.map.deinit();
         }
@@ -97,21 +163,22 @@ pub const ConcurrentKV = struct {
     pub fn importFrom(self: *ConcurrentKV, source: *KVStore) !void {
         var iter = source.map.iterator();
         while (iter.next()) |entry| {
+            if (entry.value_ptr.flags.deleted) continue; // do not allocate tombstone copies
             const idx = stripeIndex(entry.key_ptr.*);
             const s = &self.stripes[idx];
             const owned_key = try self.allocator.dupe(u8, entry.key_ptr.*);
             errdefer self.allocator.free(owned_key);
             const owned_val = try self.allocator.dupe(u8, entry.value_ptr.value);
             errdefer self.allocator.free(owned_val);
-            if (entry.value_ptr.flags.deleted) continue; // skip tombstones
             var flags = entry.value_ptr.flags;
             flags.is_inline = false; // imported values are heap-allocated, not inline
             try s.map.put(owned_key, .{
-                .value = owned_val,
+                .storage = .{ .heap = .{ .ptr = owned_val.ptr, .len = owned_val.len, .capacity = owned_val.len } },
                 .expires_at = entry.value_ptr.expires_at,
                 .flags = flags,
             });
             _ = self.total_bytes.fetchAdd(owned_key.len + owned_val.len, .monotonic);
+            if (flags.has_ttl) self.has_expiry.store(true, .release);
         }
     }
 
@@ -131,7 +198,7 @@ pub const ConcurrentKV = struct {
             const copy = self.allocator.dupe(u8, str) catch return null;
             return .{ .data = copy, .allocator = self.allocator };
         }
-        const copy = self.allocator.dupe(u8, entry.value) catch return null;
+        const copy = self.allocator.dupe(u8, entry.bytes()) catch return null;
         return .{ .data = copy, .allocator = self.allocator };
     }
 
@@ -153,61 +220,28 @@ pub const ConcurrentKV = struct {
         const s = self.getStripe(key);
         writeLockStripe(s);
 
-        const has_ttl = expires_at != 0;
-        const result = s.map.getPtr(key);
-        if (result) |existing| {
-            // SeqLock: bump to odd (write in progress)
-            _ = existing.seq.fetchAdd(1, .release);
-
-            if (owned_value.len <= KVStore.INLINE_BUF_SIZE) {
-                // Small value: copy into inline buffer (in-place, no alloc)
-                @memcpy(existing.inline_buf[0..owned_value.len], owned_value);
-                existing.inline_len = @intCast(owned_value.len);
-                existing.value = existing.inline_buf[0..owned_value.len];
-                existing.flags = .{ .has_ttl = has_ttl, .is_inline = true };
-            } else {
-                existing.value = owned_value;
-                existing.flags = .{ .has_ttl = has_ttl };
-            }
-            existing.expires_at = expires_at;
-            existing.flags.is_integer = false;
-
-            // SeqLock: bump to even (write complete)
-            _ = existing.seq.fetchAdd(1, .release);
-
-            const old_val = if (!existing.flags.is_inline) existing.value else null;
-            writeUnlockStripe(s);
-            // For inline: free the pre-allocated value (not needed, stored inline)
-            // For non-inline: free the OLD value
-            if (owned_value.len <= KVStore.INLINE_BUF_SIZE) {
-                return .{ .stale_val = owned_value, .stale_key = owned_key };
-            }
-            return .{ .stale_val = old_val, .stale_key = owned_key };
-        } else {
-            const gop = s.map.getOrPut(owned_key) catch {
-                writeUnlockStripe(s);
-                return .{ .stale_val = owned_value, .stale_key = owned_key };
-            };
-            gop.key_ptr.* = owned_key;
-            gop.value_ptr.* = .{
-                .expires_at = expires_at,
-                .flags = .{ .has_ttl = has_ttl },
-                .value = undefined,
-            };
-            if (owned_value.len <= KVStore.INLINE_BUF_SIZE) {
-                @memcpy(gop.value_ptr.inline_buf[0..owned_value.len], owned_value);
-                gop.value_ptr.inline_len = @intCast(owned_value.len);
-                gop.value_ptr.value = gop.value_ptr.inline_buf[0..owned_value.len];
-                gop.value_ptr.flags.is_inline = true;
-            } else {
-                gop.value_ptr.value = owned_value;
-            }
-            writeUnlockStripe(s);
-            if (owned_value.len <= KVStore.INLINE_BUF_SIZE) {
-                return .{ .stale_val = owned_value, .stale_key = null };
-            }
-            return .{ .stale_val = null, .stale_key = null };
-        }
+        defer writeUnlockStripe(s);
+        // Adopt the supplied allocation even for short values. This path already
+        // owns a buffer (COPY), so allocating or copying it again gains nothing.
+        const gop = s.map.getOrPut(owned_key) catch {
+            return .{ .stale_val = owned_value, .stale_key = owned_key };
+        };
+        const old_len = if (gop.found_existing) gop.value_ptr.bytes().len else 0;
+        const old_val = if (gop.found_existing and !gop.value_ptr.flags.is_inline)
+            gop.value_ptr.allocation()
+        else
+            null;
+        gop.key_ptr.* = if (gop.found_existing) gop.key_ptr.* else owned_key;
+        gop.value_ptr.* = .{
+            .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
+            .expires_at = expires_at,
+            .flags = .{ .has_ttl = expires_at != 0 },
+        };
+        if (expires_at != 0) self.has_expiry.store(true, .release);
+        const added = owned_value.len + (if (gop.found_existing) @as(usize, 0) else owned_key.len);
+        if (added > old_len) _ = self.total_bytes.fetchAdd(added - old_len, .monotonic);
+        if (added < old_len) _ = self.total_bytes.fetchSub(old_len - added, .monotonic);
+        return .{ .stale_val = old_val, .stale_key = if (gop.found_existing) owned_key else null };
     }
 
     pub fn setEx(self: *ConcurrentKV, key: []const u8, value: []const u8, ttl_seconds: i64) !void {
@@ -227,8 +261,8 @@ pub const ConcurrentKV = struct {
         writeUnlockStripe(s);
         if (result) |kv| {
             // Inline values point into the entry's inline_buf (not heap-allocated) — don't free
-            const stale_val = if (!kv.value.flags.is_inline) kv.value.value else null;
-            const removed_bytes = kv.key.len + kv.value.value.len;
+            const stale_val = if (!kv.value.flags.is_inline) kv.value.allocation() else null;
+            const removed_bytes = kv.key.len + kv.value.bytes().len;
             _ = self.total_bytes.fetchSub(removed_bytes, .monotonic);
             return .{ .found = true, .stale_key = kv.key, .stale_val = stale_val };
         }
@@ -269,27 +303,34 @@ pub const ConcurrentKV = struct {
 
     // ── Bulk operations ──
 
-    /// Lazy FLUSHALL: swap stripe maps to fresh empty ones, push old entries
-    /// to garbage queue for async free. Returns instantly (~500ns for 256 stripes).
+    /// FLUSHDB swaps each stripe to an empty map, then frees its old entries
+    /// outside that stripe lock.
     pub fn flushdb(self: *ConcurrentKV) void {
         const alloc = self.allocator;
         for (&self.stripes) |*s| {
             writeLockStripe(s);
             var old_map = s.map;
             s.map = std.StringHashMap(Entry).init(alloc);
-            s.map.ensureTotalCapacity(16384) catch {};
             writeUnlockStripe(s);
 
             var iter = old_map.iterator();
             while (iter.next()) |entry| {
                 alloc.free(entry.key_ptr.*);
-                if (!entry.value_ptr.flags.is_inline and entry.value_ptr.value.len > 0) {
-                    alloc.free(entry.value_ptr.value);
-                }
+                entry.value_ptr.freeValue(alloc);
             }
             old_map.deinit();
         }
         self.total_bytes.store(0, .monotonic);
+    }
+
+    /// Call once after FLUSHDB has also released the non-KV stores.
+    pub fn trimAfterFlush(self: *ConcurrentKV) void {
+        // FLUSHDB is the explicit bulk-reclamation boundary. On Linux glibc
+        // with the process c allocator, return fully freed heap pages now;
+        // never trim in a request or maintenance hot path.
+        if (comptime builtin.os.tag == .linux and builtin.abi == .gnu and builtin.link_libc) {
+            if (self.allocator.vtable == std.heap.c_allocator.vtable) _ = malloc_trim(0);
+        }
     }
 
     pub fn dbsize(self: *ConcurrentKV) usize {
@@ -333,8 +374,8 @@ pub const ConcurrentKV = struct {
             if (self.isExpired(existing)) {
                 // Treat expired as 0
                 existing.int_value = delta;
-                existing.flags = .{ .is_integer = true };
-                existing.last_access = self.cached_now_ms;
+                existing.flags = .{ .is_integer = true, .is_inline = existing.flags.is_inline };
+                existing.last_access = self.nowMillis();
                 writeUnlockStripe(s);
                 return delta;
             }
@@ -342,20 +383,20 @@ pub const ConcurrentKV = struct {
             // If already marked as integer, use cached int_value directly (~1ns)
             if (existing.flags.is_integer) {
                 existing.int_value += delta;
-                existing.last_access = self.cached_now_ms;
+                existing.last_access = self.nowMillis();
                 const new_val = existing.int_value;
                 writeUnlockStripe(s);
                 return new_val;
             }
 
             // First INCR on a string value — parse once, then use native from here on
-            const current = std.fmt.parseInt(i64, existing.value, 10) catch {
+            const current = std.fmt.parseInt(i64, existing.bytes(), 10) catch {
                 writeUnlockStripe(s);
                 return error.NotAnInteger;
             };
             existing.int_value = current + delta;
-            existing.flags = .{ .is_integer = true };
-            existing.last_access = self.cached_now_ms;
+            existing.flags = .{ .is_integer = true, .is_inline = existing.flags.is_inline };
+            existing.last_access = self.nowMillis();
             const new_val = existing.int_value;
             writeUnlockStripe(s);
             return new_val;
@@ -367,15 +408,15 @@ pub const ConcurrentKV = struct {
             return error.OutOfMemory;
         };
         s.map.put(owned_key, .{
-            .value = &[_]u8{},
             .int_value = delta,
-            .last_access = self.cached_now_ms,
+            .last_access = self.nowMillis(),
             .flags = .{ .is_integer = true },
         }) catch {
             alloc.free(owned_key);
             writeUnlockStripe(s);
             return error.OutOfMemory;
         };
+        _ = self.total_bytes.fetchAdd(owned_key.len, .monotonic);
 
         writeUnlockStripe(s);
         return delta;
@@ -413,7 +454,7 @@ pub const ConcurrentKV = struct {
             var old_value_bytes: usize = 0;
             var key_already_present: bool = false;
             if (s.map.getPtr(key)) |existing| {
-                old_value_bytes = existing.value.len;
+                old_value_bytes = existing.bytes().len;
                 key_already_present = true;
             }
 
@@ -429,58 +470,26 @@ pub const ConcurrentKV = struct {
             }
         }
 
-        const has_ttl = expires_at != 0;
-        const now = self.cached_now_ms;
-        const is_inline = value.len <= KVStore.INLINE_BUF_SIZE;
-
-        const result = s.map.getPtr(key);
-        if (result) |existing| {
-            const old_value_len = existing.value.len;
-            _ = existing.seq.fetchAdd(1, .release);
-            if (is_inline) {
-                @memcpy(existing.inline_buf[0..value.len], value);
-                existing.inline_len = @intCast(value.len);
-                existing.value = existing.inline_buf[0..value.len];
-                existing.flags = .{ .has_ttl = has_ttl, .is_inline = true };
-            } else {
-                if (!existing.flags.is_inline and existing.value.len > 0)
-                    alloc.free(existing.value);
-                existing.value = try alloc.dupe(u8, value);
-                existing.flags = .{ .has_ttl = has_ttl };
-            }
+        const now = self.nowMillis();
+        if (s.map.getPtr(key)) |existing| {
+            const old_value_len = existing.bytes().len;
+            try existing.replaceValue(alloc, value);
+            existing.flags = .{ .has_ttl = expires_at != 0, .is_inline = existing.flags.is_inline };
+            if (expires_at != 0) self.has_expiry.store(true, .release);
             existing.expires_at = expires_at;
             existing.last_access = now;
-            existing.flags.is_integer = false;
-            _ = existing.seq.fetchAdd(1, .release);
-            // Net delta on update is only the value-length difference; key bytes unchanged.
-            if (value.len >= old_value_len) {
-                _ = self.total_bytes.fetchAdd(value.len - old_value_len, .monotonic);
-            } else {
-                _ = self.total_bytes.fetchSub(old_value_len - value.len, .monotonic);
-            }
+            if (value.len > old_value_len) _ = self.total_bytes.fetchAdd(value.len - old_value_len, .monotonic);
+            if (value.len < old_value_len) _ = self.total_bytes.fetchSub(old_value_len - value.len, .monotonic);
         } else {
             const owned_key = try alloc.dupe(u8, key);
             errdefer alloc.free(owned_key);
-            const gop = try s.map.getOrPut(owned_key);
-            if (!gop.found_existing) {
-                gop.key_ptr.* = owned_key;
-            } else {
-                alloc.free(owned_key);
-            }
-            gop.value_ptr.* = .{
-                .expires_at = expires_at,
-                .last_access = now,
-                .flags = .{ .has_ttl = has_ttl },
-                .value = undefined,
-            };
-            if (is_inline) {
-                @memcpy(gop.value_ptr.inline_buf[0..value.len], value);
-                gop.value_ptr.inline_len = @intCast(value.len);
-                gop.value_ptr.value = gop.value_ptr.inline_buf[0..value.len];
-                gop.value_ptr.flags.is_inline = true;
-            } else {
-                gop.value_ptr.value = try alloc.dupe(u8, value);
-            }
+            var entry: Entry = .{ .expires_at = expires_at, .last_access = now };
+            try entry.replaceValue(alloc, value);
+            errdefer entry.freeValue(alloc);
+            entry.flags.has_ttl = expires_at != 0;
+            if (expires_at != 0) self.has_expiry.store(true, .release);
+            // bytes() resolves inline storage at its current address after a move.
+            try s.map.put(owned_key, entry);
             _ = self.total_bytes.fetchAdd(owned_key.len + value.len, .monotonic);
         }
     }
@@ -518,10 +527,8 @@ pub const ConcurrentKV = struct {
 
             // Remove victim — this stripe is already write-locked, safe to mutate map.
             const removed = s.map.fetchRemove(victim_key) orelse return;
-            const freed_bytes: usize = removed.key.len + removed.value.value.len;
-            if (!removed.value.flags.is_inline and removed.value.value.len > 0) {
-                alloc.free(removed.value.value);
-            }
+            const freed_bytes: usize = removed.key.len + removed.value.bytes().len;
+            removed.value.freeValue(alloc);
             alloc.free(removed.key);
 
             _ = self.total_bytes.fetchSub(freed_bytes, .monotonic);
@@ -533,7 +540,59 @@ pub const ConcurrentKV = struct {
     }
 
     pub fn stripeIndex(key: []const u8) usize {
-        return @as(usize, std.hash.Wyhash.hash(0, key)) & STRIPE_MASK;
+        // StringHashMap uses Wyhash seed 0 and its low bits for the bucket.
+        // An independent seed avoids forcing every key in a stripe into the
+        // same subset of buckets, especially when its table is still small.
+        return @as(usize, std.hash.Wyhash.hash(1, key)) & STRIPE_MASK;
+    }
+
+    /// Remove a bounded number of expired entries. The maintenance owner holds
+    /// the global KV mutex and frees returned allocations after WATCH versions
+    /// are bumped. Cursors address physical HashMap buckets, not entries, so a
+    /// sparse table cannot make an idle pass scan an unbounded prefix.
+    pub fn sweepExpired(self: *ConcurrentKV, now_ms: i64, cursor: *SweepCursor, removed: *[512]Expired) usize {
+        if (!self.has_expiry.load(.acquire)) return 0;
+        self.cached_now_ms.store(now_ms, .release);
+        var count: usize = 0;
+        var visited: usize = 0;
+        while (visited < STRIPE_COUNT and count < removed.len) : (visited += 1) {
+            const stripe_index = cursor.next_stripe;
+            cursor.next_stripe = (cursor.next_stripe + 1) & STRIPE_MASK;
+            const s = &self.stripes[stripe_index];
+            if (std.c.pthread_rwlock_trywrlock(&s.rwlock) != .SUCCESS) continue;
+            var detached: ?std.StringHashMap(Entry) = null;
+            defer {
+                writeUnlockStripe(s);
+                if (detached) |*map| map.deinit();
+            }
+            const capacity: usize = @intCast(s.map.capacity());
+            if (capacity == 0) continue;
+            cursor.buckets[stripe_index] %= capacity;
+            var scanned: usize = 0;
+            var victims: usize = 0;
+            while (scanned < @min(@as(usize, 32), capacity) and victims < 64 and count < removed.len) : (scanned += 1) {
+                const bucket = cursor.buckets[stripe_index];
+                cursor.buckets[stripe_index] = (bucket + 1) % capacity;
+                const metadata = s.map.unmanaged.metadata orelse continue;
+                if (!metadata[bucket].isUsed()) continue;
+                var it = s.map.iterator();
+                it.index = @intCast(bucket);
+                const entry = it.next() orelse continue;
+                if (!entry.value_ptr.flags.has_ttl or now_ms <= entry.value_ptr.expires_at) continue;
+                const stale = s.map.fetchRemove(entry.key_ptr.*) orelse continue;
+                removed[count] = .{ .key = stale.key, .value = if (stale.value.flags.is_inline) null else stale.value.allocation() };
+                _ = self.total_bytes.fetchSub(stale.key.len + stale.value.bytes().len, .monotonic);
+                _ = obs_stats.expired_keys.fetchAdd(1, .monotonic);
+                count += 1;
+                victims += 1;
+            }
+            if (s.map.count() == 0 and s.map.capacity() != 0) {
+                detached = s.map;
+                s.map = std.StringHashMap(Entry).init(self.allocator);
+                cursor.buckets[stripe_index] = 0;
+            }
+        }
+        return count;
     }
 
     fn getStripe(self: *ConcurrentKV, key: []const u8) *Stripe {
@@ -567,18 +626,17 @@ pub const ConcurrentKV = struct {
 
     /// Update cached clock. Call once per event loop tick.
     pub fn updateClock(self: *ConcurrentKV) void {
-        self.cached_now_ms = std.Io.Timestamp.now(self.io, .real).toMilliseconds();
+        self.cached_now_ms.store(std.Io.Timestamp.now(self.io, .real).toMilliseconds(), .release);
     }
 
     pub fn nowMillis(self: *const ConcurrentKV) i64 {
-        return self.cached_now_ms;
+        return self.cached_now_ms.load(.acquire);
     }
 
     fn isExpired(self: *const ConcurrentKV, entry: *const Entry) bool {
         if (!entry.flags.has_ttl) return false;
-        return self.cached_now_ms > entry.expires_at;
+        return self.nowMillis() > entry.expires_at;
     }
-
 };
 
 /// Minimal glob matcher supporting '*' (match any) and '?' (match one).
@@ -608,4 +666,3 @@ fn globMatch(pattern: []const u8, string: []const u8) bool {
     while (pi < pattern.len and pattern[pi] == '*') pi += 1;
     return pi == pattern.len;
 }
-

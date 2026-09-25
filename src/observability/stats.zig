@@ -12,6 +12,40 @@
 const std = @import("std");
 const cmd_table = @import("cmd_table.zig");
 
+/// Current process residency, not getrusage's lifetime high-water mark.
+/// Read only when a memory-reporting command is requested.
+pub fn currentRssBytes(io: std.Io) ?u64 {
+    switch (@import("builtin").os.tag) {
+        .linux => {
+            const file = std.Io.Dir.cwd().openFile(io, "/proc/self/status", .{}) catch return null;
+            defer file.close(io);
+            var buffer: [8192]u8 = undefined;
+            const n = file.readPositionalAll(io, &buffer, 0) catch return null;
+            var lines = std.mem.splitScalar(u8, buffer[0..n], '\n');
+            while (lines.next()) |line| {
+                if (!std.mem.startsWith(u8, line, "VmRSS:")) continue;
+                var fields = std.mem.tokenizeAny(u8, line[6..], " \t");
+                const kib = std.fmt.parseInt(u64, fields.next() orelse return null, 10) catch return null;
+                if (!std.mem.eql(u8, fields.next() orelse return null, "kB")) return null;
+                return std.math.mul(u64, kib, 1024) catch null;
+            }
+            return null;
+        },
+        .macos => {
+            var info: std.c.mach_task_basic_info = undefined;
+            var count: std.c.mach_msg_type_number_t = std.c.MACH.TASK.BASIC.INFO_COUNT;
+            if (std.c.task_info(std.c.mach_task_self(), std.c.MACH.TASK.BASIC.INFO, @ptrCast(&info), &count) != 0) return null;
+            return info.resident_size;
+        },
+        else => return null,
+    }
+}
+
+pub fn peakRssBytes(usage: std.c.rusage) u64 {
+    const raw: u64 = @intCast(@max(@as(i64, usage.maxrss), 0));
+    return if (@import("builtin").os.tag == .macos) raw else raw * 1024;
+}
+
 pub const N_CMDS = cmd_table.N_CMDS;
 
 /// Per-worker slowlog ring capacity. Compile-time constant so each
@@ -344,4 +378,3 @@ pub fn aggregateScalars() AggregateScalars {
     }
     return out;
 }
-

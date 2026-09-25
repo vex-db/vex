@@ -107,7 +107,7 @@ docker pull ghcr.io/pratyush-sngh/vex:latest
 
 Available tags:
 - `ghcr.io/pratyush-sngh/vex:latest` -- latest release
-- `ghcr.io/pratyush-sngh/vex:0.8.1-rc.1` -- specific version
+- `ghcr.io/pratyush-sngh/vex:0.8.1-rc.2` -- specific version
 - `ghcr.io/pratyush-sngh/vex:0.7` -- latest patch in 0.7.x
 - `ghcr.io/pratyush-sngh/vex:0` -- latest in 0.x
 

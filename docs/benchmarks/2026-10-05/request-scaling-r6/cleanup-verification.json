@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-10-05T07:05:19.362379+00:00",
+  "instances": [
+    {
+      "id": "i-0ce6e0e74a82efe56",
+      "state": "terminated"
+    },
+    {
+      "id": "i-0b909188927ac2b11",
+      "state": "terminated"
+    }
+  ],
+  "namespaces": [],
+  "nodepools": [],
+  "nodes": [],
+  "nodeclaims": [],
+  "verified": true
+}

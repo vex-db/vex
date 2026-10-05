@@ -1,9 +1,29 @@
 # Vex load-test harness
 
-## Current published comparison
+## Latest request benchmarks
+
+The [October 5 report](../../docs/benchmarks/2026-10-05/request-scaling/comparison.md)
+contains all 15 confirmed GET/hash/sorted-set CPU combinations. The 2/4/8-CPU
+cohort has 27 validated confirmations on the same hosts; the full 1–16 CPU
+inventory spans cohorts and must not be plotted as one same-host scaling curve.
+
+From the repository root, reproduce the consolidated report and offline guards:
+
+```sh
+python3 bench/loadtest/scripts/summarize_current_request_scaling.py
+python3 bench/loadtest/scripts/test_current_request_scaling.py
+python3 bench/loadtest/scripts/test_request_accounting.py
+```
+
+The consolidator uses versioned summaries. `analyze_request_accounting.py RUN OUTPUT`
+uses retained raw evidence and excludes delayed accounting brackets without
+inventing CPU costs or discarding separately validated throughput. All run-owned
+October 5 AWS resources were verified removed.
+
+## Historical three-engine comparison
 
 Use the [September 29 sorted-set benchmark package](../../docs/benchmarks/2026-09-29/README.md)
-for the current pitch, data, charts and reproduction instructions. The active AWS
+for the historical matched three-engine data, charts and reproduction instructions. Its AWS
 runner is `scripts/compare_adaptive_aws.py`; offline validation is
 `scripts/test_adaptive_aws.py`; summaries use `scripts/summarize_adaptive_aws.py`.
 Superseded public claims and charts were deleted; raw runs and shared helpers remain.
@@ -18,7 +38,7 @@ and load-generator headroom checks, see [CPU scaling](SCALING.md).
 
 The older tools below cover other protocols. Pinning, offered load, latency
 measurement and saturation checks vary; use each run’s recorded protocol.
-The current adaptive comparison uses unpinned workers and fixed concurrency.
+The historical adaptive comparison uses unpinned workers and fixed concurrency.
 
 Two packagings:
 - `terraform/` — big-node "autorun" on dedicated EC2 (the 4→48-core *scaling*

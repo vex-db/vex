@@ -31,7 +31,7 @@ def main():
                          marker='o', capsize=3, color=COLORS[workload], label=LABELS[workload])
         axes[1].plot(xs, [r['cpu_us_per_op'] for r in data], marker='o', color=COLORS[workload])
     for ax in axes:
-        ax.set_xticks([1,2,4,8,16]); ax.set_xlabel('CPU quota / worker count'); ax.grid(alpha=.2)
+        ax.set_xticks(sorted(report['protocol']['cpus'])); ax.set_xlabel('CPU quota / worker count'); ax.grid(alpha=.2)
         ax.spines[['top','right']].set_visible(False)
     axes[0].set_ylim(bottom=0); axes[0].set_ylabel('Operations / second')
     axes[0].yaxis.set_major_formatter(FuncFormatter(lambda v,p: f'{v/1e6:g}M' if v >= 1e6 else f'{v/1000:g}k'))

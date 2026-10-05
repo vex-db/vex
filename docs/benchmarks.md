@@ -1,6 +1,44 @@
-# Sorted-set benchmarks: Vex, Redis and Dragonfly
+# Vex benchmarks
 
 [Back to README](../README.md) · [Pitch and benchmark package](benchmarks/2026-09-29/README.md)
+
+## Latest request benchmarks — updated October 5
+
+**All 15 planned CPU/workload combinations now have confirmed measurements.**
+The October 5 run added nine validated cells, filling six gaps and repeating
+three comparison points on one host pair. Pipeline 1; three 60-second
+confirmations per cell, all below 5 ms p99; adaptive ownership disabled.
+
+| CPU quota | GET ops/s | Hash ops/s | Sorted-set ops/s | Host cohort |
+|---:|---:|---:|---:|---|
+| 1 | 136,023 | 122,305 | 115,649 | r5 |
+| 2 | 258,949 | 230,273 | 217,530 | r6 |
+| 4 | 494,517 | 432,031 | 406,620 | r6 |
+| 8 | 856,465 | 740,773 | 706,987 | r6 |
+| 16 | 1,523,294 | 1,290,356 | 1,192,853 | r4 |
+
+New same-host scaling, at each allocation’s selected connection count:
+
+| Workload | 2 → 4 throughput gain | 4 → 8 throughput gain |
+|---|---:|---:|
+| GET | +91.0% | +73.2% |
+| Hash | +87.6% | +71.5% |
+| Sorted set | +86.9% | +73.9% |
+
+These are CPU-scaling results, not code-optimization gains. Cohorts r4/r5/r6
+used different hosts; the full 1–16 CPU table is not one continuous same-host
+scaling curve. All 27 October 5 confirmations passed validation and the CPU
+accounting delay audit. Both r6 instances are confirmed terminated.
+
+[Updated latency, per-CPU throughput, trial ranges and formulas](benchmarks/2026-10-05/request-scaling/comparison.md)
+· [New same-host charts](benchmarks/2026-10-05/request-scaling-r6/cpu-scaling.png)
+· [CPU accounting audit](benchmarks/2026-10-05/request-accounting-r6/accounting.md)
+
+## September 29 three-engine comparison
+
+The historical comparison below uses a different build, adaptive configuration
+and pipeline depth. It does not establish current-build Redis/Dragonfly ratios
+for the pipeline-1 results above.
 
 **3.66 million sorted-set operations per second with an eight-CPU allocation.**
 Vex's experimental adaptive configuration led mixed hot/cold and uniform

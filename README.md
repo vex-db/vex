@@ -80,21 +80,21 @@ Embeddings can run in-process via the optional `vex-embed` sidecar (text →
 vectors via Ollama/OpenAI). An **MCP server** — so agents call vex's primitives
 as tools directly — is on the [roadmap](docs/roadmap.md).
 
-## It's also just a fast Redis
+## Measured sorted-set performance
 
-Vex speaks RESP, so `redis-cli`, redis-py, ioredis, go-redis — anything — just
-works. And the substrate is genuinely fast:
+Vex's experimental adaptive configuration reached **3.66M sorted-set ops/s**
+with an **eight-CPU quota and 8 GiB** in our matched AWS comparison: **4.65× Redis
+and 1.91× Dragonfly throughput** on the 1,024-set workload, with **52% less CPU
+time per operation than Dragonfly**.
 
-- **Beats Dragonfly on identical hardware** (c6gn.16xlarge, 256B values,
-  saturated): SET **+46%** unpipelined / **4.8×** pipelined; GET **+35%** / **6.2×**.
-- **20–40% faster than Redis** pipelined; wins unpipelined past ~12 connections.
-- **22× faster shortest-path than Memgraph.**
+Vex led mixed hot/cold and uniform throughput; **Redis led the single-hot-key
+test**. Adaptive ownership is off by default and stayed inactive in uniform
+tests. Results use 32 connections, pipeline 16, no persistence, and medians of
+three 60-second measurements. They describe the tested sorted-set workloads,
+not peak capacity or all Redis commands.
 
-> Honest framing: unpipelined small-op throughput is *kernel-network-bound*, so
-> vex and Dragonfly are close there (vex ahead) — the daylight is in pipelined
-> and per-engine efficiency. We don't quote the "25× vs single-threaded Redis"
-> multiple (any multi-core engine can). Full numbers + methodology:
-> [Benchmarks](docs/benchmarks.md). Squeezing many-core boxes: [Tuning](docs/tuning.md).
+[Results and methodology](docs/benchmarks.md) ·
+[Pitch and benchmark package](docs/benchmarks/2026-09-29/README.md)
 
 ---
 

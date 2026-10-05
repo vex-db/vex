@@ -72,6 +72,16 @@ thread. Requires **Linux ≥ 6.1**; auto-falls-back to a plain ring, then epoll.
 A/B at saturation measured it a **wash** (±4%, within noise) — so it doesn't
 hurt, and it's correct. Set `VEX_URING_FLAGS=0` to force a plain ring.
 
+### Receive poll-first experiment (2026-09-22, rejected)
+
+An opt-in receive `POLL_FIRST` experiment passed correctness checks but measured
+only +0.6% median throughput on 256-byte mixed pipeline-1 traffic in a same-binary
+ABBA pilot, below the declared 3% gate. Median run p99 was 0.643 ms versus
+0.627 ms. The production patch and toggle were removed. The generic receive
+regression remains; the rejected patch, provenance and results are preserved in
+`bench/loadtest/results/recv-poll-first*`. This applies to the tested workload,
+not every possible use of the kernel feature.
+
 ### `VEX_NAPI_BUSY_POLL_US` — io_uring NAPI busy-poll (default: **0 / off**)
 When > 0, the worker busy-polls the NIC's receive queue **inline** for up to N
 microseconds before parking, processing the network softirq in its own context.
@@ -88,11 +98,42 @@ softirq, which `VEX_NAPI_BUSY_POLL_US` addresses instead). Experimental; left
 off. `VEX_POLL_SPIN_ADAPTIVE=0` makes it spin every tick instead of only when
 recently busy.
 
+### `VEX_SQ_HEAD_CACHE` — deferred-ring SQ-head cache (default: **0 / off**)
+On the optimized `SINGLE_ISSUER | DEFER_TASKRUN | COOP_TASKRUN` io_uring path,
+`VEX_SQ_HEAD_CACHE=1` caches the submission-queue head for recv/send batches and
+refreshes it only on first use or an apparent full queue. Poll/AOF submissions,
+plain rings, and fallback backends keep the standard path. This is experimental;
+the native ARM64 Docker pilot measured +5.8% median throughput on one-million-key,
+256-byte mixed pipeline-1 traffic with unchanged RSS. The write-only confirmation
+stopped with failed guards, substantial variation and invalid latency telemetry;
+the result is inconclusive and the flag remains off. See
+`docs/sq-head-cache-experiment-2026-09-22.md` for limits and the exact protocol.
+
+### Indirect reactor entries experiment (2026-09-22, rejected)
+
+The prototype stored pointers in the reactor's striped hash tables and
+allocated an Entry only for each live key. It retained the existing locks,
+allocator, 32-byte inline values and reusable larger-value buffers. Native
+allocation diagnostics at one million keys reduced loaded RSS by 35.3 MiB
+for 256-byte values and 35.5 MiB for 32-byte values. All 262 native tests pass
+with either prototype build setting.
+
+The mixed-P1 server pilot failed: median throughput was 410,154 versus 453,091
+ops/s, and both pairs failed CPU/op and p99 guards despite saving 35.3 MiB.
+RSS after `FLUSHDB` was also substantially higher despite zero tracked live
+allocations. The production patch and build option were removed; the exact
+patch is archived as `bench/loadtest/results/entry-indirection-rejected.patch`.
+Within-run drift limits causal precision, so this is a failed local screen,
+not a universal speed penalty. See `docs/memory-io-followup-2026-09-22.md`.
+
 ## What we tried that did NOT help (so you don't)
 
-Removing the stripe read-lock (it's 1.58% in `perf`), reducing worker count,
-app-level spin, and the io_uring ring flags all left throughput essentially
-unchanged — because the unpipelined ceiling is the kernel network stack, not
-vex's engine. The only way past it is **kernel-bypass (AF_XDP)** — see
-[af-xdp-design.md](af-xdp-design.md) — which is a large, optional bet, not a
-default. For the full investigation, see the engine architecture notes.
+Removing the stripe read-lock, reducing worker count, app-level spin and the
+io_uring ring flags did not establish repeatable throughput gains in the
+tested unpipelined workloads. The native local profile attributes substantial
+work to the kernel, including local reply delivery and client wakeups. That
+does not prove that kernel bypass is the only remaining improvement.
+Worker-owned data shards and [AF_XDP](af-xdp-design.md) remain architectural
+hypotheses requiring their own evidence; neither is enabled by these results.
+For the full investigation, see the engine architecture notes and current
+memory/I/O follow-up report.

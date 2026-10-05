@@ -1,559 +1,68 @@
-# Benchmarks
+# Sorted-set benchmarks: Vex, Redis and Dragonfly
 
-[Back to README](../README.md) | [Architecture](architecture.md)
+[Back to README](../README.md) · [Pitch and benchmark package](benchmarks/2026-09-29/README.md)
 
----
+**3.66 million sorted-set operations per second with an eight-CPU allocation.**
+Vex's experimental adaptive configuration led mixed hot/cold and uniform
+throughput in this matched AWS comparison. Redis led the single-hot-key test.
 
-## Methodology
+All engines received an **8-CPU quota and 8 GiB**, persistence disabled, with
+identical client settings on a separate host. Numbers are medians of three
+60-second measurements. All **36 measured trials** passed verification.
 
-The **Redis** comparison uses **`redis-benchmark`** (v8.0.3); the **Dragonfly** comparison uses **`memtier_benchmark`** on Dragonfly's own published methodology and hardware (see that section for its setup). Internal engine benchmarks use Zig-native timing with no network overhead. Every number on this page is measured — none extrapolated.
+![Matched AWS throughput and CPU cost](benchmarks/2026-09-29/comparison.png)
 
-- **Environment**: Docker containers on macOS (Apple Silicon, 14 cores / 48GB RAM)
-- **Isolation**: Each container gets **4 dedicated CPU cores** (`cpuset`) and **4GB RAM** (`mem_limit`), with no overlap between competitors
-- **Vex workers**: Capped at 4 (`--workers 4`) to match the 4-core allocation
-- **Redis config**: `--appendonly no --save ""` (persistence disabled, same as Vex `--no-persistence`)
-- **Versions**: Redis 8.0.3, Memgraph latest, Vex built with `-Doptimize=ReleaseFast`
-- **Tool**: `redis-benchmark` (ships with Redis) for network benchmarks, `zig build bench-kv` / `bench-ds` for engine benchmarks
-- **UDS benchmarks**: `redis-benchmark` runs inside the Docker container via `docker exec`, connecting over a shared Unix socket volume
+## Throughput
 
-### Docker Compose Resource Pinning
+Millions of operations per second; higher is better.
 
-```yaml
-redis:
-  cpuset: "0-3"      # 4 cores
-  mem_limit: 4g
-  command: ["redis-server", "--unixsocket", "/socks/redis.sock", "--unixsocketperm", "777"]
-vex:
-  cpuset: "4-7"      # 4 cores (no overlap)
-  mem_limit: 4g
-  command: ["--reactor", "--workers", "4", "--unixsocket", "/socks/vex.sock"]
-```
+| Workload | Redis | Vex adaptive | Dragonfly |
+|---|---:|---:|---:|
+| Single hot key | 0.882 | 0.756 | 0.570 |
+| Mixed hot/cold | 0.718 | 1.569 | 0.689 |
+| Uniform, 64 sets | 0.667 | 2.919 | 1.769 |
+| Uniform, 1,024 sets | 0.787 | 3.660 | 1.912 |
 
----
+For the 1,024-set workload, Vex delivered **4.65× Redis throughput and 1.91×
+Dragonfly throughput**. For mixed hot/cold traffic, the ratios were **2.18×**
+and **2.28×**, respectively. These ratios apply to the named workloads at the
+tested client settings.
 
-## Unpipelined Performance (one command per round-trip)
+## CPU efficiency
 
-The sections below this one use `redis-benchmark -P 50` (50 commands per
-pipeline batch). Pipelining is the single biggest throughput lever, but
-**most Redis clients do not pipeline by default** — redis-py, Jedis,
-go-redis, node-redis, redigo, and redis-rb all send one command per
-round-trip unless explicitly batched. This section documents that default
-regime; the pipelined and unpipelined stories are different and should not
-be compared to each other.
+Server CPU microseconds per operation; lower is better.
 
-**Environment:** AWS EKS `c5a.2xlarge` (8 vCPU / 4 physical cores), Linux
-io_uring backend, vex + Redis 8.0.3 + load generator co-located in one pod,
-n=50,000 × 3 runs per cell via the Go compare-client
-(`tools/compare-client`). June 2026, post io_uring wait-path fixes.
+| Workload | Redis | Vex adaptive | Dragonfly |
+|---|---:|---:|---:|
+| Single hot key | 2.27 | 2.37 | 3.58 |
+| Mixed hot/cold | 2.56 | 2.65 | 4.30 |
+| Uniform, 64 sets | 2.68 | 2.44 | 4.27 |
+| Uniform, 1,024 sets | 2.42 | 1.98 | 4.12 |
 
-### SET — vex throughput delta vs Redis 8.0.3, by connections (c) and vex workers (w)
+Vex used **52% less CPU time per operation than Dragonfly** in the 1,024-set
+workload. Redis remained slightly cheaper per operation for hot and mixed
+traffic. CPU time per operation does not directly establish cloud cost savings.
 
-Positive = vex faster. Redis is single-threaded, so its absolute numbers
-(~18k ops/s at c=1, plateauing at ~110k from c≈32) are the same in every
-column.
+## What was tested
 
-| c \ w | w=1 | w=2 | w=4 | w=6 | w=8 |
-|---|---|---|---|---|---|
-| 1 | +17% | +15% | +3% | +14% | +13% |
-| 2 | +36% | +22% | +29% | +23% | +38% |
-| 3 | +5% | +4% | −6% | −5% | −5% |
-| 4 | −0% | −10% | −13% | −12% | −12% |
-| 6 | −5% | −0% | −6% | −5% | −5% |
-| 8 | −7% | −3% | −4% | +1% | +2% |
-| 12 | −5% | +4% | +7% | +12% | +40% |
-| 16 | +3% | +16% | +30% | +36% | +34% |
-| 24 | +8% | +60% | +87% | +82% | +70% |
-| 32 | +7% | +91% | +109% | +94% | +86% |
-| 48 | +5% | +94% | +120% | +105% | +98% |
-| 64 | +3% | +93% | +138% | +120% | +110% |
-| 128 | −0% | +93% | +166% | +143% | +133% |
+- Approximately 80% ZINCRBY / 20% ZRANK, 32 connections, pipeline 16.
+- 262,144 preloaded members: 64 × 4,096 or 1,024 × 256.
+- Mixed traffic: 24 hot connections and 8 cold connections across 63 other keys.
+- Eight-CPU cgroup quota on a c6gn.8xlarge server; separate c7g.16xlarge client.
+- Redis 8.10.1, Dragonfly 2.0.0-40553fd842c2850b65787ed4da908d95aeab8834,
+  and a frozen experimental Vex build; image and executable hashes checked.
+- Exact-data, client CPU and network allowance checks; raw evidence retained.
 
-Three regimes, with sharp boundaries:
+**Adaptive ownership is experimental and off by default.** It activated for
+hot and mixed traffic and stayed inactive for uniform traffic. Uniform results
+are not attributed to hot-key routing. The 1,024-set comparison reran all three
+engines on a fresh matched host pair after the original hosts expired.
 
-1. **c ≤ 2 — vex wins on per-op latency** (+13% to +38%). Neither server
-   can batch wakeups at this concurrency, so it reduces to a pure
-   per-command-cost race.
-2. **c = 3–8 — the contested valley** (worst: −13% at c=4). Redis's single
-   event loop already amortizes wakeups across connections here while
-   total load is still RTT-bound; the dip is pinned at *absolute* c≈4
-   regardless of vex's worker count and appears in every command except
-   `MSET` (whose 10-keys-per-round-trip behaves like built-in pipelining
-   — confirming the dip lives in the wakeup path, not the data
-   structures).
-3. **c ≥ 12 — multi-worker scaling takes over.** Redis saturates its one
-   thread; vex keeps scaling (w=4 reaches ~300k ops/s at c=128, still
-   climbing).
+These are fixed-concurrency measurements, not a saturation sweep. Latency in
+the detailed report is **pipeline round-trip p99**, not per-command service
+latency. Short synthetic tests do not establish production durability,
+long-duration behavior, GET/SET performance or universal superiority.
 
-**Worker-count guidance for an 8-vCPU host: `--workers 4` is optimal**
-(ceilings at c=128: w=1 → 110k, w=2 → 221k, w=4 → 300k, w=6 → 273k,
-w=8 → 253k ops/s). Past 4 workers the co-located load and SMT contention
-on 4 physical cores cost more than the extra workers add.
-
-Per-command pattern notes (full grids: [unpipelined-command-grids.md](unpipelined-command-grids.md)):
-
-- **Hash point ops scale best** — at w=4 c=128: HGET +223%, HSET +219%
-  vs Redis (striped HashStore + combined-allocation writes).
-- **Multi-key ops** (MSET/MGET/HMSET/HMGET ×10 keys) skip the c=4 valley
-  but top out lower (+79% to +144%) — parse/serialize cost grows with
-  payload.
-- **HINCRBY** shows +413% at w=4 c=128, but that is mostly an anomalous
-  Redis weakness — do not headline it.
-
-### Big-reply commands: measure the client before believing the numbers
-
-`HGETALL` on a 1,500-field hash (~32KB replies) initially appeared to be
-a vex loss (−3…−10% at c≥16). Instrumenting the full stack showed the
-benchmark client was the bottleneck in every run: parsing a ~3,000-element
-reply pins one `redis-benchmark` thread at 100% CPU at ~3.7k ops/s while
-both servers idle. Measuring with a parse-free drain client
-(`tools/drain-client`, validates reply framing once then drains exact byte
-counts) and reading throughput from each server's own
-`total_commands_processed`:
-
-| | HGETALL throughput | Server CPU |
-|---|---|---|
-| Redis 8.0.3 | 7,878 ops/s | single thread at **100%** (hard ceiling) |
-| vex (w=4, wire cache) | **~178,000 ops/s (~23×)** | 4 workers saturated, ~5.7 GB/s of replies |
-
-Two vex-side mechanisms produce this:
-
-1. **Wire cache** — hashes with ≥16 fields cache their fully-serialized
-   RESP reply (RESP2/RESP3 separately) on the hash itself; any
-   HSET/HDEL/HINCRBY invalidates it. A cache-hit HGETALL is one stripe
-   rdlock + one memcpy (~4 µs total dispatch, measured by `DEBUG PROBES`).
-2. **Buffer-swap send** — replies ≥4KB transfer ownership to the send
-   buffer by pointer swap instead of memcpy.
-
-Redis's big-reply ceiling is its single serialization thread; vex builds
-the reply once and then serves it from all workers concurrently. The
-honest caveats: the 23× is for *read-hot* large hashes (every mutation
-forces one re-serialization), and any fully-parsing client will measure
-far lower numbers — because of its own parse cost, not the server's.
-
-### Per-core ceiling & latency anatomy (AWS `c6in.8xlarge`, single pinned core)
-
-The grid above measures vex's *multi-worker* advantage. This section isolates the
-**single-core** question — is one vex worker faster than one Redis thread? — and
-decomposes where an unpipelined request's time actually goes.
-
-**Setup:** AWS `c6in.8xlarge` (32 vCPU), Linux 6.17 io_uring backend, vex
-`-Doptimize=ReleaseFast`. The vex worker (`--workers 1`) and `redis-server` are each
-pinned to **one** core (`taskset -c`), driven by a **separate** `c6in.8xlarge` client
-box over the ENA NIC (never loopback), with multiple parallel `redis-benchmark`
-processes to saturate the core. Redis 8.0.3, June 2026.
-
-**The caveat that bit us first: you must saturate the core.** A single
-`redis-benchmark` process caps ~180k ops/s unpipelined, at which point vex and Redis
-look *identical* (both idle, client-bound). Only at ≥200 concurrent connections does
-the core become the bottleneck and the real per-core ceiling appear.
-
-#### Per-core SET/GET ceiling, by connection count (P=1, rps)
-
-| conns | vex SET | Redis SET | vex GET | Redis GET |
-|---|---|---|---|---|
-| 200 | **334k** | 272k | **336k** | 288k |
-| 800 | **323k** | 264k | **324k** | 270k |
-| 1600 | **317k** | 255k | **317k** | 262k |
-| 3200 | **322k** | 253k | **331k** | 258k |
-| 6400 | **320k** | 243k | — | 247k |
-
-vex sustains ~320k across the whole range; Redis peaks ~280k and **declines** under
-connection load. vex wins per-core at every depth, the margin widening to **1.32×**
-at 6400 conns. (Note: one vex worker also beats *four* on a single hot key — 4 workers
-fight over one stripe lock — so prefer few workers for hot-key, many for spread.)
-
-> The flat-vs-declining curve needed a fix first. vex previously had **no fd-limit
-> raise**, so past the OS default (1024) `accept()` spun on `EMFILE` and SET collapsed
-> to ~105k at 1600 conns. Raising `RLIMIT_NOFILE` to `maxclients` at startup (as Redis
-> does) + an accept-loop backoff fixed it (commit `294fb0a`).
-
-#### Latency vs connections (SET, ms) — it's queueing, and vex's tail is tighter
-
-| conns | vex p50 | Redis p50 | vex p99 | Redis p99 | vex max | Redis max |
-|---|---|---|---|---|---|---|
-| 50 | 0.263 | 0.271 | 0.327 | 0.343 | **0.63** | 0.74 |
-| 200 | 0.727 | 0.743 | 0.815 | 0.855 | **1.22** | 1.67 |
-| 800 | 3.01 | 2.82 | 3.41 | 3.09 | **4.30** | 6.14 |
-| 1600 | 6.17 | 6.30 | 7.17 | 7.06 | **8.10** | 12.67 |
-
-Latency grows **linearly** with connections — past the core's ceiling, added
-connections add *queueing*, not work (Little's Law). p50/p99 track Redis closely;
-vex's **worst-case tail is consistently tighter** (8.1 ms vs 12.7 ms at 1600 conns).
-
-#### Where an unpipelined request's time goes (vex, `DEBUG PROBES`, under SET load)
-
-| stage | avg | |
-|---|---|---|
-| recv + RESP parse (`recv_batch`) | 601 ns | |
-| command dispatch | 409 ns | |
-| storage op (the SET) | 268 ns | stripe-lock 32 + hashmap 33 + copy 21 + seqlock 25 = **~110 ns** |
-| queue reply (`io_submit`) | 41 ns | |
-| **total vex CPU / request** | **~1.3 µs** | |
-| blocked in `io_uring_enter` (waiting on the NIC) | ~117 µs | per wake, ~40 requests/wake |
-
-Against the ~260µs base round-trip, **vex's compute is ~1.3µs (~0.5%) and the SET
-itself is ~110 nanoseconds** — the worker spends the rest (~99.5%) in the
-network/kernel path, literally blocked ~117µs in `io_uring_enter` waiting for the
-NIC. So unpipelined latency is a **kernel problem, not an engine problem**: the levers
-are NAPI busy-poll / kernel-bypass (see [AF_XDP](af-xdp-design.md)) for the network and
-more cores for the queueing — not the data structures. This is also why vex's
-throughput edge (lower CPU/request → more req/s per core) shows up as a **throughput**
-win but a near-tie on **latency**, which the shared kernel path dominates.
-
----
-
-## Vex vs Redis 8.0 (`redis-benchmark`, P=50, c=16)
-
-Reproduced via `./tools/bench.sh 15` — runs the standard `redis-benchmark`
-matrix 15 times per command and reports the **median** rps.
-
-### All commands — TCP and UDS side by side
-
-| Command | Redis TCP | Vex TCP | TCP Δ | Redis UDS | Vex UDS | UDS Δ |
-|---|---|---|---|---|---|---|
-| **LPUSH** | 1.33M | **2.01M** | **+51%** | 3.42M | **8.20M** | **+139%** |
-| **ZADD** | 1.18M | **1.78M** | **+51%** | 3.68M | **8.20M** | **+123%** |
-| **RPUSH** | 1.66M | **1.93M** | **+16%** | 4.39M | **9.09M** | **+107%** |
-| **HSET** | 1.57M | **1.75M** | **+11%** | 3.91M | **7.94M** | **+103%** |
-| **SADD** | 1.42M | **1.97M** | **+39%** | 4.67M | **8.47M** | **+81%** |
-| **INCR** | 1.75M | **2.00M** | **+14%** | 4.85M | **8.33M** | **+72%** |
-| **RPOP** | 2.37M | **2.46M** | **+4%** | 7.14M | **10.20M** | **+43%** |
-| **LPOP** | 1.97M | **2.42M** | **+23%** | 7.14M | **9.43M** | **+32%** |
-| **GET** | 1.71M | **2.00M** | **+17%** | 7.25M | **9.43M** | **+30%** |
-| **SET** | 1.62M | **1.95M** | **+20%** | 4.20M | **4.24M** | **+1%** |
-| **LRANGE_100** | 167K | **191K** | **+14%** | 290K | **327K** | **+13%** |
-| **MSET** | 565K | 564K | ≈ | 715K | 681K | -5% |
-
-All values in requests per second. TCP from host, UDS inside the
-container via `docker exec`. Sorted by UDS speedup (descending).
-Median of 15 runs, P=50, c=16, n=500,000 per run.
-
-**Key takeaways:**
-- **TCP**: Vex faster on **11 of 12** commands (+4% to +51%); MSET tied.
-- **UDS**: Vex faster on **11 of 12** commands (+1% to +139%); MSET -5%.
-  UDS strips out network framing and shows the engine's true ceiling.
-- **LPUSH +139% UDS** (8.20M rps): stripe lease locks hold across the
-  pipeline — 1 CAS per batch instead of 50.
-- **ZADD +123% UDS** (8.20M rps): lazy sorted cache + lease batching.
-- **RPUSH +107% UDS** (9.09M rps): quicklist O(1) push + lease fast path.
-- **HSET +103% UDS** (7.94M rps): pre-alloc outside lock + lease batching.
-- **UDS is 2-6× faster than TCP** for both Redis and Vex — prefer
-  `--unixsocket` for same-machine deployments.
-- **MSET is the lone soft spot.** Vex's hot-path MSET takes the
-  per-stripe rdlock added in 0.7.3 (B3) — fine for safety, costly here
-  where the pipeline is bottlenecked on lock acquires rather than work.
-  Fix path: skip the rdlock for stripes the writer can already prove are
-  not under rehash. Tracked as a 0.7.x perf TODO.
-
-### UDS scaling across pipeline depth and concurrency
-
-| Command | P=50 c=16 | P=50 c=32 | P=100 c=16 | P=100 c=32 | P=50 c=128 |
-|---|---|---|---|---|---|
-| LPUSH | **+153%** | **+166%** | **+224%** | **+224%** | **+159%** |
-| HSET | **+132%** | **+127%** | **+196%** | **+178%** | **+156%** |
-| RPUSH | **+120%** | **+100%** | **+146%** | **+130%** | **+108%** |
-| ZADD | **+109%** | **+107%** | **+196%** | **+236%** | **+109%** |
-| SADD | **+79%** | **+76%** | **+153%** | **+159%** | **+74%** |
-| INCR | **+57%** | **+52%** | **+88%** | **+103%** | **+51%** |
-| SET | **+26%** | **+20%** | **+33%** | **+29%** | **+43%** |
-| GET | **+21%** | **+15%** | **+55%** | **+57%** | **+18%** |
-| RPOP | **+21%** | **+15%** | **+36%** | **+42%** | **+7%** |
-| LPOP | **+13%** | **+9%** | **+48%** | **+53%** | **+9%** |
-
-50/50 wins across all configurations. Performance scales with pipeline depth — deeper pipelines amortize the lease lock CAS across more commands.
-
----
-
-## Vex vs Dragonfly — head to head
-
-Dragonfly is the fastest multi-core Redis-compatible store. To make the
-comparison fair, we ran vex on **Dragonfly's own published methodology and
-hardware**: a `c6gn.16xlarge` server (64 cores, 32 NIC RSS queues) driven by
-*separate* `c6gn.16xlarge` client boxes, `memtier_benchmark -d 256
---distinct-client-seed`, SET and GET, pipeline 1 and 30 — **both engines in the
-same run, on the same box, all cores, RFS on.**
-
-### The result (saturated)
-
-| | vex | Dragonfly | vex margin |
-|---|---|---|---|
-| SET, unpipelined | **4.42M** | 3.03M | **+46%** |
-| SET, pipelined (P=30) | **31.96M** | 6.64M | **4.8×** |
-| GET, unpipelined | **4.09M** | 3.03M | **+35%** |
-| GET, pipelined (P=30) | **33.70M** | 5.41M | **6.2×** |
-
-vex wins **every cell**. Why it pulls ahead at saturation: adding a second
-client box took **Dragonfly only 2.74M → 3.03M** (near its ceiling) but **vex
-2.98M → 4.42M** (still climbing). vex is the most **CPU-efficient** of the three
-engines — highest throughput per core — so its saturation ceiling is higher.
-
-### How to measure this honestly (and what bit us)
-
-These numbers came only after fixing two *measurement* mistakes and one *vex*
-bug — documented here so the methodology is trustworthy, because every one of
-them flips the conclusion:
-
-1. **Saturate, or you measure the client, not the server.** A single `memtier`
-   box caps at ~1–3M ops/s, and below saturation **every engine looks tied**.
-   An earlier 2-box `c5a.16xlarge` run actually showed Dragonfly *winning* at
-   16 cores — that was the single-client cap plus a softirq cliff, not the
-   engine. **Always drive with ≥2 client boxes** and confirm the server, not
-   the client, is the bottleneck.
-2. **Unpipelined is kernel-bound — it's a near-tie by nature.** Under
-   unpipelined load ~88% of CPU is the kernel TCP/softirq path, *shared* by both
-   engines, so vex and Dragonfly are close there (vex +35–46%). The daylight is
-   in **pipelined** (4.8–6.2×), where one syscall serves 30 ops and the engine's
-   own efficiency shows. No serious engine wins the unpipelined-over-TCP contest
-   by a large margin — see [Kernel-bypass (AF_XDP)](af-xdp-design.md) for the
-   only thing that would.
-3. **RSS queues are the unpipelined ceiling.** The NIC's receive-queue count
-   gates how fast packets get *in*. Same vex binary, 64 cores: c5a (8 queues)
-   → c6in (16) ≈ **2.3×** → c6gn (32) highest. Pick a network-optimized
-   instance and enable **RFS** on many-core boxes — see [Tuning](tuning.md).
-4. **A real vex bug the fair test exposed.** vex's fast SET path only handled
-   values ≤ 32 bytes, so Dragonfly's 256-byte default sent every SET down the
-   slow lock+alloc path — vex *lost* SET 6.5× until we raised the inline
-   threshold. Running the benchmark the way Dragonfly does found a genuine,
-   fixable weakness. That is the point of running it.
-
-We deliberately **don't** quote the "25× vs single-threaded Redis" multiple
-common in this space: any multi-core engine beats one Redis core by ~the core
-count, so it measures core count, not engine quality.
-
----
-
-## Internal Engine Benchmarks (no network)
-
-Pure engine speed, measured in Zig with `clock_gettime(MONOTONIC)`. 100K operations per benchmark, `ReleaseFast` optimization. Numbers are median of 5 runs.
-
-### KV Strings (`zig build bench-kv -Doptimize=ReleaseFast`)
-
-| Operation | Latency |
-|---|---|
-| GET (miss) | **4.5 ns** |
-| EXISTS | 22.5 ns |
-| DEL (tombstone) | 32.6 ns |
-| SET (reuse tombstone) | 40.6 ns |
-| GET (hit) | 42.1 ns |
-| SET (insert) | 70.1 ns |
-| SET (update) | 83.5 ns |
-| Compact (50k entries) | 1.29 ms |
-
-GET (hit) is slightly slower than pre-0.7.3 (22 ns → 42 ns) because the
-hot-path GET now acquires the stripe `rdlock` to be safe against
-concurrent rehash (B3 fix in 0.7.3). The cost is one uncontended
-`pthread_rwlock_rdlock`/`unlock` round.
-
-### Lists — Quicklist (`zig build bench-ds -Doptimize=ReleaseFast`)
-
-| Operation | Latency | Notes |
-|---|---|---|
-| LLEN | **3.9 ns** | |
-| LPOP | **4.7 ns** | O(1) pop from head block |
-| RPOP | **4.7 ns** | O(1) trailer-based reverse pop |
-| LPUSH | 20.5 ns | O(1) prepend to head block |
-| RPUSH | 38.0 ns | O(1) append to tail block |
-| LINDEX | 619.7 ns | O(blocks) — scan through block chain |
-
-### Hashes
-
-| Operation | Latency |
-|---|---|
-| HLEN | **3.8 ns** |
-| HGET | 28.6 ns |
-| HDEL | 46.9 ns |
-| HSET | 80.7 ns |
-
-### Sets
-
-| Operation | Latency |
-|---|---|
-| SCARD | **3.7 ns** |
-| SISMEMBER | 24.9 ns |
-| SREM | 34.0 ns |
-| SADD | 54.2 ns |
-
-### Sorted Sets
-
-| Operation | Latency | Notes |
-|---|---|---|
-| ZCARD | **3.8 ns** | |
-| ZSCORE | 25.6 ns | O(1) HashMap lookup |
-| ZREM | 37.8 ns | |
-| ZADD | 69.4 ns | |
-| ZRANK | **0.5 us** | Lazy sorted cache |
-| ZRANGE(top 10) | **9.3 us** | Lazy sorted cache, 100K-member set |
-
-### Persistence (`zig build bench-persistence -Doptimize=ReleaseFast`)
-
-Measured on a 50,000-key KV store with 10,000-node / 20,000-edge graph
-plus per-entity properties. Each test runs warmup=1 + timed=5 iterations
-and reports the mean.
-
-| Operation | Latency (mean) | Notes |
-|---|---|---|
-| snapshot.save | **14.4 ms** | Whole-state RDB-style file write |
-| snapshot.load | **8.7 ms** | Whole-state restore from RDB |
-| aof.append(SET) | **1.36 us/op** | Per-command AOF buffer append |
-| aof.replay | **0.02 us/op** | Per-command replay during startup |
-
-### Graph Engine (`zig build bench-graph -Doptimize=ReleaseFast`, 50K nodes / 500K edges / 5 props each)
-
-| Operation | Latency | Notes |
-|---|---|---|
-| Neighbors | **52.6 ns** | CSR O(1) lookup |
-| ADDNODE | 61.4 ns | |
-| ADDEDGE | 67.1 ns | |
-| SETPROP | 83.1 ns | O(1) HashMap + per-entity index |
-| GETNODE | 174.1 ns | O(1) countProps + O(k) collectAll |
-| BFS Traverse (depth 4) | **4.3 us** | avg 95 nodes visited |
-| Shortest Path | **32.3 us** | Bidirectional BFS |
-| Weighted Path | 162.4 us | Bidirectional Dijkstra (flat arrays) |
-
-### Contraction Hierarchies (`bench-graph`, 100-node random graph)
-
-| Metric | Value | Notes |
-|---|---|---|
-| Dijkstra (bidir) | 4.4 us/op | Flat-array bidirectional Dijkstra |
-| **CH Query** | **1.2 us/op** | Reusable query engine, touched-list reset |
-| **Speedup** | **3.7×** | CH vs bidirectional Dijkstra |
-
-CH preprocesses the graph into a hierarchy of shortcuts. Queries search only upward in rank from both endpoints. Speedup grows with graph size and path length — road networks with millions of nodes see 100-1000×.
-
----
-
-## Graph: Vex vs Memgraph (Docker, 10K nodes / 50K edges)
-
-| Operation | Memgraph | Vex | Speedup |
-|---|---|---|---|
-| AddNode | 175.4 us | **138.1 us** | **+21%** |
-| AddEdge | 185.9 us | **140.5 us** | **+24%** |
-| BFS Traverse (depth 3) | 334 us | **228 us** | **+32%** |
-| Shortest Path | 4,524 us | **210 us** | **22x faster** |
-| Neighbors | 202 us | **130 us** | **+36%** |
-
-Vex wins all 5 operations. Shortest path uses bidirectional BFS (meet-in-the-middle), which explores ~sqrt(N) nodes instead of N.
-
----
-
-## perf-v3 Optimizations (branch: perf-v3)
-
-### AOF Persistence: Async vs Sync (`redis-benchmark`, P=16 and P=1)
-
-| Benchmark | main (sync AOF) | perf-v3 (async AOF) | Δ |
-|---|---|---|---|
-| **SET P=16** | 722K | **808K** | **+12%** |
-| **GET P=16** | 649K | **797K** | **+23%** |
-| **SET P=1** | 20.7K | **53.5K** | **+158%** |
-| **GET P=1** | 37.6K | **49.7K** | **+32%** |
-
-io_uring linked write→fsync chain keeps the worker thread unblocked during AOF flushes. 2.5x SET throughput at P=1 — the biggest win.
-
-### MGET Bulk Fetch (100 keys, `redis-benchmark`)
-
-| Pipeline | Throughput | Notes |
-|---|---|---|
-| P=1 | 46K rps | Real CKV lookups with SeqLock reads |
-| P=16 | 352K rps | Staging buffer: 1 memcpy vs 300 appendSlice |
-| P=32 | 467K rps | |
-| P=64 | 505K rps | |
-| P=128 | 491K rps | TCP saturation limit |
-
-MGET was broken in reactor mode on main (returned nil — read from empty plain KVStore). Now correctly routes through ConcurrentKV.
-
-### Graph Traversal — RESP Serialization + LIMIT
-
-| Operation (x200) | main | perf-v3 | Δ |
-|---|---|---|---|
-| TRAVERSE depth=5 | 113ms | 104ms | -8% |
-| **TRAVERSE depth=10** | **2185ms** | **1158ms** | **-47%** |
-| **TRAVERSE d=10 LIMIT 100** | **2244ms** | **145ms** | **-94%** |
-| PATH | 101ms | 44ms | **-56%** |
-
-`bufPrint` replaces `w.print` format engine in all RESP serialization. Batch response buffer for TRAVERSE. `GRAPH.TRAVERSE ... LIMIT N` for early BFS exit (p99: 222ms → 2.8ms).
-
-### What Changed (perf-v3)
-
-| Optimization | Impact |
-|---|---|
-| io_uring recv/send | Replace poll+syscall with async completions for TCP I/O |
-| Batched submit_and_wait | One `io_uring_enter` per wakeup submits queued SQEs and blocks for completions (SQPOLL was trialled here but later removed — its kernel poll thread oversubscribed cores at workers > 1) |
-| Async AOF write+fsync | io_uring linked SQE chain, worker stays unblocked |
-| O_DIRECT for AOF | Bypass page cache, page-aligned staging buffer |
-| Per-worker AOF shards | Eliminate cross-worker mutex contention |
-| RESP bufPrint | Replace format engine with bufPrint in all serialization |
-| MGET hot path | ConcurrentKV bulk lookup with staging buffer |
-| MSET hot path | ConcurrentKV batch write |
-| CommandHandler CKV routing | All KV commands work in reactor mode (was broken) |
-| CKV inline delete fix | Don't free inline_buf pointers (not heap-allocated) |
-| TRAVERSE LIMIT | Early BFS exit, caps serialization cost |
-| Parallel HNSW rebuild | Per-field threads at startup |
-| Parallel BFS frontier | Thread-local bitsets, merge with OR |
-
----
-
-## How to Reproduce
-
-```bash
-# Start containers (equal resources: 4 cores, 4GB each, UDS enabled)
-docker compose -f docker-compose.compare.yml up --build -d
-
-# Automated benchmark (15 runs, median, FLUSHALL between runs)
-./tools/bench.sh 15
-
-# Or manually — TCP benchmarks (from host)
-redis-benchmark -h 127.0.0.1 -p 16379 -c 16 -n 500000 -P 50 -q \
-  -t set,get,incr,lpush,rpush,lpop,rpop,sadd,hset,zadd,mset,lrange_100 --csv
-redis-benchmark -h 127.0.0.1 -p 16380 -c 16 -n 500000 -P 50 -q \
-  -t set,get,incr,lpush,rpush,lpop,rpop,sadd,hset,zadd,mset,lrange_100 --csv
-
-# UDS benchmarks (inside Docker — host can't access container sockets on macOS)
-docker exec redis-compare redis-benchmark -s /socks/redis.sock \
-  -c 16 -n 500000 -P 50 -q \
-  -t set,get,incr,lpush,rpush,lpop,rpop,sadd,hset,zadd,mset,lrange_100 --csv
-docker exec redis-compare redis-benchmark -s /socks/vex.sock \
-  -c 16 -n 500000 -P 50 -q \
-  -t set,get,incr,lpush,rpush,lpop,rpop,sadd,hset,zadd,mset,lrange_100 --csv
-
-docker compose -f docker-compose.compare.yml down -v
-
-# Graph: Vex vs Memgraph
-docker compose -f docker-compose.graph-bench.yml up --build -d
-cd tools/graph-bench
-go run . -nodes 10000 -edges 5 -depth 3 -runs 5 -timeout 120s
-docker compose -f docker-compose.graph-bench.yml down -v
-
-# Internal engine benchmarks (no network)
-zig build bench-kv -Doptimize=ReleaseFast
-zig build bench-ds -Doptimize=ReleaseFast
-zig build bench-graph -Doptimize=ReleaseFast
-```
-
-**Important**: Stop all unrelated Docker containers before benchmarking. Background containers competing for CPU will skew results.
-
----
-
-## Why Vex is Faster
-
-See [Architecture](architecture.md) for detailed explanation. Summary:
-
-| Optimization | Impact |
-|---|---|
-| 256-stripe per-stripe rwlock | Parallel reads, exclusive writes; different keys hit different stripes |
-| Prealloc outside lock | Lock held ~20ns (pointer swap only) |
-| Cache-line aligned stripes | No false sharing between cores |
-| Cached clock | Skip clock_gettime per GET |
-| Stripe lease locks | Hold-one-release-on-switch: 1 CAS per pipeline batch instead of per command |
-| TTAS spinlock | Load-before-CAS reduces cache line bouncing under contention |
-| Quicklist (8KB blocks) | O(1) push/pop with trailers, lazy ring buffer rebuild for LINDEX |
-| Encapsulated CKV alloc | Zero ownership transfer — CKV allocates internally, inline for small values |
-| Pre-alloc outside lock | HSET/SADD: heap alloc before lock acquire, pointer swap under lock |
-| Unix Domain Sockets | 3-4x faster than TCP for local connections |
-| Bidirectional BFS | sqrt(N) explored vs N for shortest path |
-| Flat-array Dijkstra | O(1) indexed dist/parent vs HashMap overhead |
-| Contraction Hierarchies | Preprocessed shortcut overlay, 3x faster weighted path queries |
-| CSR adjacency | Cache-friendly graph traversal |
-| Zero-copy RESP parse | No memcpy for complete commands |
-| Comptime dispatch | O(1) command routing |
-| AOF group commit | 1 write() per tick instead of per command |
-| Tombstone DEL | 25ns flag vs 140ns full remove |
+[Full methodology, latency and trial ranges](adaptive-three-engine-aws-2026-09-28.md) ·
+[CSV](benchmarks/2026-09-29/results.csv) · [JSON](benchmarks/2026-09-29/results.json) ·
+[Reproduce](benchmarks/2026-09-29/reproduce.md)

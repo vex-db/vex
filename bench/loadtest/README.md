@@ -1,7 +1,24 @@
-# vex load-test harness
+# Vex load-test harness
 
-Compares vex / Redis / Dragonfly throughput, fairly (server pinned to N cores,
-load generated from separate boxes, server-CPU sampled to prove saturation).
+## Current published comparison
+
+Use the [September 29 sorted-set benchmark package](../../docs/benchmarks/2026-09-29/README.md)
+for the current pitch, data, charts and reproduction instructions. The active AWS
+runner is `scripts/compare_adaptive_aws.py`; offline validation is
+`scripts/test_adaptive_aws.py`; summaries use `scripts/summarize_adaptive_aws.py`.
+Superseded public claims and charts were deleted; raw runs and shared helpers remain.
+
+## Other benchmark tools
+
+For mixed sizes, hot keys, TTL churn, burst/recovery, soak tests, and a Locust
+cache-aside application scenario, see [Realistic workloads](REALISTIC-WORKLOADS.md).
+
+For CPU-quota scaling with increasing offered load, scheduled-arrival latency,
+and load-generator headroom checks, see [CPU scaling](SCALING.md).
+
+The older tools below cover other protocols. Pinning, offered load, latency
+measurement and saturation checks vary; use each run’s recorded protocol.
+The current adaptive comparison uses unpinned workers and fixed concurrency.
 
 Two packagings:
 - `terraform/` — big-node "autorun" on dedicated EC2 (the 4→48-core *scaling*
@@ -15,3 +32,29 @@ Two packagings:
 setup + analysis) shared/adapted by both.
 
 See [docs/benchmarks.md](../../docs/benchmarks.md) for methodology and results.
+
+### Sorted-set partition override
+
+Use `--sorted-set-partitions N` with reactor mode to vary lock partitions without
+rebuilding Vex (default 256; power of two, 1–4096). See [configuration](../../docs/configuration.md) for the option and
+[retained AWS partition-sweep evidence](runs/2026-09-28-partition-sweep-aws/) for the original measurements.
+
+### Reproducing the current request-scaling checks
+
+`fixtures/aws-scaling/` contains the small, pinned deployment templates and
+engine inventory used by the AWS comparison helpers. These templates refer to
+the original `scrum-fresh` cluster and its node class; adapt them to your own
+cluster before provisioning. Importing the helpers and running their offline
+tests does not provision resources.
+
+Run `python3 scripts/test_request_scaling.py` and
+`python3 scripts/test_getset_capacity.py` for the current sweep's offline checks.
+The full `scripts/test_*.py` set also validates historical protocols.
+`sweep_request_scaling_aws.py` accepts an explicit frozen binary, namespace and
+output directory; consult `--help` before running an authorized AWS study.
+
+Raw `runs/` directories, frozen executables and caches are not versioned.
+Historical profilers referencing a dated run require that separately retained
+local evidence; published summaries are under `docs/benchmarks/`. The October 1
+request-scaling runs remain incomplete and must not be combined across host
+cohorts into a completed scaling curve.

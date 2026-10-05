@@ -1,0 +1,59 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "server-holder",
+    "namespace": "vex-scaling-20260927-hypotheses-r3",
+    "labels": {
+      "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3",
+      "role": "server"
+    },
+    "annotations": {
+      "karpenter.sh/do-not-disrupt": "true"
+    }
+  },
+  "spec": {
+    "restartPolicy": "Never",
+    "activeDeadlineSeconds": 14400,
+    "terminationGracePeriodSeconds": 5,
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": false,
+    "nodeSelector": {
+      "karpenter.sh/nodepool": "vex-scaling-20260927-hypotheses-r3-server"
+    },
+    "tolerations": [
+      {
+        "key": "vex-benchmark",
+        "value": "vex-scaling-20260927-hypotheses-r3",
+        "operator": "Equal",
+        "effect": "NoSchedule"
+      }
+    ],
+    "containers": [
+      {
+        "name": "holder",
+        "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+        "command": [
+          "sleep",
+          "14400"
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "16Mi"
+          },
+          "limits": {
+            "cpu": "50m",
+            "memory": "32Mi"
+          }
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "name": "results",
+        "emptyDir": {}
+      }
+    ]
+  }
+}

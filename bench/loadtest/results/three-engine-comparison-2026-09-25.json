@@ -1,0 +1,252 @@
+{
+  "date": "2026-09-25",
+  "protocol": {
+    "date": "2026-09-25",
+    "namespace": "vex-compare-20260925",
+    "server_machine": "c7g.2xlarge",
+    "server_quota": 6,
+    "server_memory_bytes": 4294967296,
+    "client_machine": "c7g.8xlarge",
+    "client_quota": 24,
+    "keys": 1000000,
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "workload": "80%GET/20%SET",
+    "pipeline": 1,
+    "connections": 128,
+    "threads": 32,
+    "warmup_seconds": 10,
+    "sample_seconds": 60,
+    "rounds": [
+      [
+        "vex",
+        "redis",
+        "dragonfly"
+      ],
+      [
+        "redis",
+        "dragonfly",
+        "vex"
+      ],
+      [
+        "dragonfly",
+        "vex",
+        "redis"
+      ]
+    ],
+    "fresh_server_and_preload_per_cell": true,
+    "variation_max": 0.05,
+    "client_min_cpu_headroom": 0.2,
+    "server_throttling": "record outcome under matched CPUquota; not automatic rejection",
+    "client_throttling_max": 0.01,
+    "persistence": "off",
+    "memory": "loaded RSS before warmup; sampled peak RSS during server-local measured bracket; not disk storage",
+    "scope": "fixed-concurrency same-machine comparison, not maximumcapacity or physicalcore scaling",
+    "stop": "stop on correctness/clientresourceinvalidity; do not retry favorable samples; mark comparisons inconclusive if repeats vary>5%"
+  },
+  "versions": {
+    "vex": {
+      "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+      "process_name": "vex",
+      "binary_path": "/usr/local/bin/vex",
+      "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+      "command": [
+        "/usr/local/bin/vex",
+        "--reactor",
+        "--workers",
+        "6",
+        "--no-persistence",
+        "--port",
+        "6379"
+      ],
+      "version": "0.8.0 development benchmark binary",
+      "container": "engine"
+    },
+    "redis": {
+      "image": "redis@sha256:2e940b1efbe5bae595d9cc7c4f5ecdc84497a63b2a8e1bfe7624a0fae2f05127",
+      "process_name": "redis-server",
+      "binary_path": "/usr/local/bin/redis-server",
+      "binary_sha256": "cb953788291192fcf2c312c4ea72573baf4d181ffc908bcad56dcad247f175a5",
+      "command": [
+        "/usr/local/bin/redis-server",
+        "--port",
+        "6379",
+        "--bind",
+        "0.0.0.0",
+        "--protected-mode",
+        "no",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--io-threads",
+        "6"
+      ],
+      "version": "8.10.1",
+      "container": "engine"
+    },
+    "dragonfly": {
+      "image": "docker.dragonflydb.io/dragonflydb/dragonfly@sha256:f1749fc7d2f65abba9db8e6538d5a16e2ea617f0012346d33d3a295f1ea64231",
+      "process_name": "dragonfly",
+      "binary_path": "/usr/local/bin/dragonfly",
+      "binary_sha256": "8d4b7b6849690ab4952e1cb1d8ffce3d3594aea70ed3447c2946e0b443090f0f",
+      "command": [
+        "/usr/local/bin/dragonfly",
+        "--proactor_threads=6",
+        "--port=6379",
+        "--maxmemory=3gb",
+        "--snapshot_cron=",
+        "--cache_mode=false"
+      ],
+      "version": "2.0.0-40553fd842c2850b65787ed4da908d95aeab8834",
+      "container": "engine"
+    }
+  },
+  "engines": {
+    "vex": {
+      "cells": [
+        "round1-vex",
+        "round2-vex",
+        "round3-vex"
+      ],
+      "ops_per_sec": [
+        684058.08,
+        656320.62,
+        684774.14
+      ],
+      "median_ops_per_sec": 684058.08,
+      "range_fraction": 0.04159518150856433,
+      "stable_5_percent": true,
+      "p99_ms": [
+        0.287,
+        0.399,
+        0.271
+      ],
+      "median_p99_ms": 0.287,
+      "loaded_rss_mib": [
+        458.953125,
+        458.94140625,
+        458.9765625
+      ],
+      "median_loaded_rss_mib": 458.953125,
+      "sampled_peak_rss_mib": [
+        460.35546875,
+        460.2890625,
+        460.453125
+      ],
+      "max_sampled_peak_rss_mib": 460.453125,
+      "minimum_client_cpu_headroom": 0.6282965298611112,
+      "maximum_client_thread_cpu_fraction": 0.32883157495445453,
+      "median_server_cgroup_cpu_us_per_op": 7.948482125852545,
+      "maximum_server_throttled_fraction": 0.0
+    },
+    "redis": {
+      "cells": [
+        "round1-redis",
+        "round2-redis",
+        "round3-redis"
+      ],
+      "ops_per_sec": [
+        503993.05,
+        506898.23,
+        510265.77
+      ],
+      "median_ops_per_sec": 506898.23,
+      "range_fraction": 0.012374712770253767,
+      "stable_5_percent": true,
+      "p99_ms": [
+        0.463,
+        0.495,
+        0.463
+      ],
+      "median_p99_ms": 0.463,
+      "loaded_rss_mib": [
+        372.74609375,
+        372.6328125,
+        372.73828125
+      ],
+      "median_loaded_rss_mib": 372.73828125,
+      "sampled_peak_rss_mib": [
+        374.3828125,
+        374.40234375,
+        374.34375
+      ],
+      "max_sampled_peak_rss_mib": 374.40234375,
+      "minimum_client_cpu_headroom": 0.7284505381944444,
+      "maximum_client_thread_cpu_fraction": 0.2461948560146737,
+      "median_server_cgroup_cpu_us_per_op": 10.092047396530162,
+      "maximum_server_throttled_fraction": 0.0
+    },
+    "dragonfly": {
+      "cells": [
+        "round1-dragonfly",
+        "round2-dragonfly",
+        "round3-dragonfly"
+      ],
+      "ops_per_sec": [
+        505777.54,
+        496558.17,
+        513962.91
+      ],
+      "median_ops_per_sec": 505777.54,
+      "range_fraction": 0.034411848339489313,
+      "stable_5_percent": true,
+      "p99_ms": [
+        0.399,
+        0.551,
+        0.399
+      ],
+      "median_p99_ms": 0.399,
+      "loaded_rss_mib": [
+        289.4453125,
+        288.5078125,
+        287.9765625
+      ],
+      "median_loaded_rss_mib": 288.5078125,
+      "sampled_peak_rss_mib": [
+        294.97265625,
+        295.203125,
+        294.97265625
+      ],
+      "max_sampled_peak_rss_mib": 295.203125,
+      "minimum_client_cpu_headroom": 0.7288742631944445,
+      "maximum_client_thread_cpu_fraction": 0.25783999407430386,
+      "median_server_cgroup_cpu_us_per_op": 11.636657727985309,
+      "maximum_server_throttled_fraction": 0.00032911666666666665
+    }
+  },
+  "ratios": {
+    "redis": {
+      "vex_throughput_ratio": 1.3494978666625055,
+      "vex_loaded_rss_ratio": 1.2313012858804666
+    },
+    "dragonfly": {
+      "vex_throughput_ratio": 1.3524880523559824,
+      "vex_loaded_rss_ratio": 1.590782312004116
+    }
+  },
+  "stable_5_percent": true,
+  "winner_5_percent_gate": "vex",
+  "raw_artifacts": "bench/loadtest/runs/2026-09-25-three-engine",
+  "claims_scope": "One fixed-concurrency workload on one shared ARM64 server host; no peak-capacity or machine-scaling claim. RSS is process memory, not disk storage.",
+  "cleanup": {
+    "confirmed_at_utc": "2026-09-25T06:57:44.877504+00:00",
+    "instances": [
+      {
+        "Id": "i-06396e2d29ed91588",
+        "State": "terminated"
+      },
+      {
+        "Id": "i-034691d57143a263b",
+        "State": "terminated"
+      }
+    ],
+    "remaining_resources": {
+      "namespace": 0,
+      "nodepool": 0,
+      "nodeclaim": 0,
+      "node": 0
+    },
+    "complete": true
+  }
+}

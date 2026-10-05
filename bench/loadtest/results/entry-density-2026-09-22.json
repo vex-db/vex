@@ -1,0 +1,395 @@
+{
+  "status": "complete",
+  "protocol": {
+    "status": "predeclared",
+    "flag": "indirect-reactor-entries",
+    "default": false,
+    "allocator": "native libc",
+    "entry_bytes": 64,
+    "cases": [
+      {
+        "keys": 1000000,
+        "value_bytes": 256
+      },
+      {
+        "keys": 200000,
+        "value_bytes": 256
+      },
+      {
+        "keys": 200000,
+        "value_bytes": 32
+      },
+      {
+        "keys": 1000000,
+        "value_bytes": 32
+      },
+      {
+        "keys": 100000,
+        "value_bytes": 4096
+      }
+    ],
+    "order": [
+      false,
+      true,
+      true,
+      false
+    ],
+    "churn": true,
+    "key_bytes": 16,
+    "primary_minimum_loaded_rss_saving_bytes": 25165824,
+    "other_loaded_rss_maximum_regression": 0.02,
+    "require_exact_allocation_reconciliation": true,
+    "require_no_equal_size_overwrite_allocations": true,
+    "require_correct_values_and_zero_live_allocations_after_flush": true,
+    "timing": "Single-thread insert/overwrite diagnostic only; not server throughput. Stop before server performance matrix if density or correctness gates fail.",
+    "server_performance_promotion": "Requires stable matched P1 GET/SET/mixed throughput within -2%, p99 within +5%. Current local transport stability failure blocks promotion; source candidate stays default off.",
+    "rss_estimator": "Mode medians and two explicit pairs: off1/on1 and off2/on2. Primary saving must be >=24MiB in the medians and both pairs; other loaded-RSS regressions must be <=2% in medians and both pairs.",
+    "swap_guard": "Require cgroup memory.swap.max=0 and memory.swap.current=0 before and after each cell, plus zero high/max/oom/oom_kill memory events. Docker builder memory-swap equals memory."
+  },
+  "cases": [
+    {
+      "case": {
+        "keys": 1000000,
+        "value_bytes": 256
+      },
+      "capacity": 2097152,
+      "loaded_rss_saving_bytes": 37040128.0,
+      "loaded_rss_saving_fraction": 0.07776616831993946,
+      "loaded_density_gate_pass": true,
+      "pairs": [
+        {
+          "control_index": 1,
+          "candidate_index": 2,
+          "loaded_rss_saving_bytes": 37044224,
+          "loaded_rss_ratio": 0.9222262353163752
+        },
+        {
+          "control_index": 4,
+          "candidate_index": 3,
+          "loaded_rss_saving_bytes": 37036032,
+          "loaded_rss_ratio": 0.9222414282397255
+        }
+      ],
+      "rss_phase_medians_bytes": {
+        "loaded": {
+          "control": 476301312.0,
+          "candidate": 439261184.0
+        },
+        "overwritten": {
+          "control": 476301312.0,
+          "candidate": 439261184.0
+        },
+        "deleted": {
+          "control": 476301312.0,
+          "candidate": 439261184.0
+        },
+        "mixed_reloaded": {
+          "control": 476301312.0,
+          "candidate": 439322624.0
+        },
+        "flushed": {
+          "control": 305915904.0,
+          "candidate": 378124288.0
+        },
+        "deinitialized": {
+          "control": 305915904.0,
+          "candidate": 378124288.0
+        }
+      },
+      "instrumented_timing_medians_ns": {
+        "insert_timing": {
+          "control": 414047313.0,
+          "candidate": 316058729.5
+        },
+        "overwrite_timing": {
+          "control": 283158167.0,
+          "candidate": 240996708.5
+        }
+      }
+    },
+    {
+      "case": {
+        "keys": 200000,
+        "value_bytes": 256
+      },
+      "capacity": 288768,
+      "loaded_rss_saving_bytes": 677888.0,
+      "loaded_rss_saving_fraction": 0.007824874116451148,
+      "loaded_density_gate_pass": true,
+      "pairs": [
+        {
+          "control_index": 1,
+          "candidate_index": 2,
+          "loaded_rss_saving_bytes": 671744,
+          "loaded_rss_ratio": 0.9922451295630792
+        },
+        {
+          "control_index": 4,
+          "candidate_index": 3,
+          "loaded_rss_saving_bytes": 684032,
+          "loaded_rss_ratio": 0.9921051387510046
+        }
+      ],
+      "rss_phase_medians_bytes": {
+        "loaded": {
+          "control": 86632448.0,
+          "candidate": 85954560.0
+        },
+        "overwritten": {
+          "control": 86632448.0,
+          "candidate": 85954560.0
+        },
+        "deleted": {
+          "control": 64063488.0,
+          "candidate": 85954560.0
+        },
+        "mixed_reloaded": {
+          "control": 86153216.0,
+          "candidate": 86011904.0
+        },
+        "flushed": {
+          "control": 77953024.0,
+          "candidate": 81125376.0
+        },
+        "deinitialized": {
+          "control": 77953024.0,
+          "candidate": 81125376.0
+        }
+      },
+      "instrumented_timing_medians_ns": {
+        "insert_timing": {
+          "control": 51828146.0,
+          "candidate": 46555729.0
+        },
+        "overwrite_timing": {
+          "control": 39332270.5,
+          "candidate": 28423979.5
+        }
+      }
+    },
+    {
+      "case": {
+        "keys": 200000,
+        "value_bytes": 32
+      },
+      "capacity": 288768,
+      "loaded_rss_saving_bytes": 2347008.0,
+      "loaded_rss_saving_fraction": 0.06898627498194077,
+      "loaded_density_gate_pass": true,
+      "pairs": [
+        {
+          "control_index": 1,
+          "candidate_index": 2,
+          "loaded_rss_saving_bytes": 2355200,
+          "loaded_rss_ratio": 0.9307729352275463
+        },
+        {
+          "control_index": 4,
+          "candidate_index": 3,
+          "loaded_rss_saving_bytes": 2338816,
+          "loaded_rss_ratio": 0.9312545148085721
+        }
+      ],
+      "rss_phase_medians_bytes": {
+        "loaded": {
+          "control": 34021376.0,
+          "candidate": 31674368.0
+        },
+        "overwritten": {
+          "control": 34021376.0,
+          "candidate": 31674368.0
+        },
+        "deleted": {
+          "control": 34021376.0,
+          "candidate": 31674368.0
+        },
+        "mixed_reloaded": {
+          "control": 36556800.0,
+          "candidate": 36339712.0
+        },
+        "flushed": {
+          "control": 32092160.0,
+          "candidate": 34693120.0
+        },
+        "deinitialized": {
+          "control": 32092160.0,
+          "candidate": 34693120.0
+        }
+      },
+      "instrumented_timing_medians_ns": {
+        "insert_timing": {
+          "control": 38408604.0,
+          "candidate": 29252771.0
+        },
+        "overwrite_timing": {
+          "control": 26430021.0,
+          "candidate": 13616604.0
+        }
+      }
+    },
+    {
+      "case": {
+        "keys": 1000000,
+        "value_bytes": 32
+      },
+      "capacity": 2097152,
+      "loaded_rss_saving_bytes": 37224448.0,
+      "loaded_rss_saving_fraction": 0.18221188547598044,
+      "loaded_density_gate_pass": true,
+      "pairs": [
+        {
+          "control_index": 1,
+          "candidate_index": 2,
+          "loaded_rss_saving_bytes": 37216256,
+          "loaded_rss_ratio": 0.8178209086898985
+        },
+        {
+          "control_index": 4,
+          "candidate_index": 3,
+          "loaded_rss_saving_bytes": 37232640,
+          "loaded_rss_ratio": 0.817755322988091
+        }
+      ],
+      "rss_phase_medians_bytes": {
+        "loaded": {
+          "control": 204292096.0,
+          "candidate": 167067648.0
+        },
+        "overwritten": {
+          "control": 204292096.0,
+          "candidate": 167067648.0
+        },
+        "deleted": {
+          "control": 204292096.0,
+          "candidate": 167067648.0
+        },
+        "mixed_reloaded": {
+          "control": 228286464.0,
+          "candidate": 191053824.0
+        },
+        "flushed": {
+          "control": 57901056.0,
+          "candidate": 152875008.0
+        },
+        "deinitialized": {
+          "control": 57901056.0,
+          "candidate": 152875008.0
+        }
+      },
+      "instrumented_timing_medians_ns": {
+        "insert_timing": {
+          "control": 313329312.5,
+          "candidate": 243008292.0
+        },
+        "overwrite_timing": {
+          "control": 219502749.5,
+          "candidate": 172069916.5
+        }
+      }
+    },
+    {
+      "case": {
+        "keys": 100000,
+        "value_bytes": 4096
+      },
+      "capacity": 156672,
+      "loaded_rss_saving_bytes": 753664.0,
+      "loaded_rss_saving_fraction": 0.0017567561116494889,
+      "loaded_density_gate_pass": true,
+      "pairs": [
+        {
+          "control_index": 1,
+          "candidate_index": 2,
+          "loaded_rss_saving_bytes": 749568,
+          "loaded_rss_ratio": 0.9982527664531159
+        },
+        {
+          "control_index": 4,
+          "candidate_index": 3,
+          "loaded_rss_saving_bytes": 757760,
+          "loaded_rss_ratio": 0.9982337215963338
+        }
+      ],
+      "rss_phase_medians_bytes": {
+        "loaded": {
+          "control": 429008896.0,
+          "candidate": 428255232.0
+        },
+        "overwritten": {
+          "control": 429008896.0,
+          "candidate": 428255232.0
+        },
+        "deleted": {
+          "control": 429008896.0,
+          "candidate": 428255232.0
+        },
+        "mixed_reloaded": {
+          "control": 429008896.0,
+          "candidate": 428255232.0
+        },
+        "flushed": {
+          "control": 282953728.0,
+          "candidate": 411076608.0
+        },
+        "deinitialized": {
+          "control": 282953728.0,
+          "candidate": 411076608.0
+        }
+      },
+      "instrumented_timing_medians_ns": {
+        "insert_timing": {
+          "control": 97697792.0,
+          "candidate": 92599770.5
+        },
+        "overwrite_timing": {
+          "control": 115347645.5,
+          "candidate": 111365229.5
+        }
+      }
+    }
+  ],
+  "all_loaded_density_gates_pass": true,
+  "correctness": {
+    "release_safe_units_each_mode": 262,
+    "socket_modes": [
+      "direct-modern",
+      "indirect-modern",
+      "indirect-fallback"
+    ],
+    "suites": [
+      "recv_poll_first.py",
+      "compact_values.py"
+    ],
+    "copy_socket_probe": "Control returns ERR unknown command; separate raw probe retained, no COPY integration pass claimed."
+  },
+  "provenance": {
+    "git_head": "72958ac8a04961166c74eab36b3fddc385ddc5b0",
+    "files": {
+      "build.zig": "99156697ee29232c972127f60e06598664843443fa305aa49d1edaa3c98f2823",
+      "src/engine/kv/concurrent_kv.zig": "c5132143b7699c747f3892872557c67288da5d53d9ad5529d579c1a831e11768",
+      "src/server/worker.zig": "c8329f5feb19c7c0c0a0403cbd6ba41817f58c14893dc32a8de503ac66af437d",
+      "src/server/event_loop.zig": "e4523c5b7e3c1fa13dae363da7278b50c64d73ab3549bce5cf8ef7247c7dfb03",
+      "tests/unit/engine/concurrent_kv_test.zig": "8cad428f4e0b7f30889176d5c0e3c528cb4a6e7d46afc305c9ffc8a0c8e93eae",
+      "bench/loadtest/diagnostics/memory_density.zig": "098f58126f7e8c05622aa36492a7f339b974093755a010c8f47c842f48269334"
+    },
+    "compiler": "0.17.0-dev.314+eae06cf5c",
+    "native_architecture": "aarch64",
+    "source_diff": "working-source.patch",
+    "note": "Working-source patch includes prior default-off SQ-head experiment and preexisting regression tests; both memory modes use this identical snapshot."
+  },
+  "images": {
+    "control": "sha256:1bc7d5b989c159c1689a719a7239eb716ed369c19c6dc033fb68bb4f754da8be",
+    "candidate": "sha256:555ecb0713d64a6ceef950341a166135d94fc10317656c60d17702a4b2ed5105"
+  },
+  "binary_sha256": {
+    "control": "1832adb3b99418ee341d7af677c8fb8074cf645ef1191de55bfe801e88db2145",
+    "candidate": "195502699d156f15a0e8d2e5d1442d33a378d3e55574d7da70d2d1a2c9074dea"
+  },
+  "interpretation": "Loaded-data RSS improves in these five datasets. Higher post-FLUSHDB RSS is allocator retention with zero tracked live allocations. Instrumented loop timings are not server-throughput results. Default remains direct entries.",
+  "raw_directory": "bench/loadtest/runs/2026-09-22-memory-density",
+  "candidate_disposition": "rejected; exact prototype changes removed from production source",
+  "rejected_patch": "bench/loadtest/results/entry-indirection-rejected.patch",
+  "rejected_patch_sha256": "01b11cbcd4306f5b521fa3a9db3b0b860b93f3b4751d17fcbc3ef5df8e6576d3",
+  "server_pilot": "bench/loadtest/results/entry-layouts-2026-09-22.json",
+  "cleanup": "Verified: all experiment containers, networks and socket volumes removed; unrelated development containers preserved. Reproducible local images retained."
+}

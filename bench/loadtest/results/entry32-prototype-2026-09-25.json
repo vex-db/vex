@@ -1,0 +1,2582 @@
+{
+  "status": "isolated prototype; not promoted; AWS performance pending upload approval",
+  "layout_bytes": 32,
+  "inline_value_limit_bytes": 24,
+  "metadata_object_bytes": 32,
+  "method": "native ARM64 Linux, same allocator and map; native allocation diagnostics are not server throughput benchmarks",
+  "native_curve": [
+    {
+      "phase": "configuration",
+      "mode": "curve",
+      "allocator": "native",
+      "key_bytes": 16,
+      "value_bytes": 256,
+      "max_keys": 1600000,
+      "native_gpa_is_c": true,
+      "trim_is_standalone_only": true
+    },
+    {
+      "phase": "curve-before",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 0,
+      "capacity": 0,
+      "map_requested_bytes": 0,
+      "large_map_count": 0,
+      "large_map_resident_page_bytes": 0,
+      "key_bytes": 0,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 0,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 0,
+      "tracked_peak_requested": 0,
+      "alloc_calls": 0,
+      "rss_bytes": 1593344,
+      "capacity_histogram": [],
+      "allocation_histogram": []
+    },
+    {
+      "phase": "curve-grow-200000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 200000,
+      "capacity": 288768,
+      "map_requested_bytes": 14155776,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 15200256,
+      "key_bytes": 3200000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 51200000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 68555776,
+      "tracked_peak_requested": 68560824,
+      "alloc_calls": 402074,
+      "rss_bytes": 77053952,
+      "capacity_histogram": [
+        {
+          "capacity": 1024,
+          "stripes": 230
+        },
+        {
+          "capacity": 2048,
+          "stripes": 26
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 200000,
+          "live_requested": 3200000,
+          "live_modeled_smp_bytes": 3200000,
+          "total_allocations": 200000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 200000,
+          "live_requested": 51200000,
+          "live_modeled_smp_bytes": 51200000,
+          "total_allocations": 200000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 230,
+          "live_requested": 11546000,
+          "live_modeled_smp_bytes": 12247040,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 26,
+          "live_requested": 2609776,
+          "live_modeled_smp_bytes": 2662400,
+          "total_allocations": 26
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-400000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 400000,
+      "capacity": 536576,
+      "map_requested_bytes": 26298368,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 27320320,
+      "key_bytes": 6400000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 102400000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 135098368,
+      "tracked_peak_requested": 135098368,
+      "alloc_calls": 802310,
+      "rss_bytes": 149860352,
+      "capacity_histogram": [
+        {
+          "capacity": 2048,
+          "stripes": 250
+        },
+        {
+          "capacity": 4096,
+          "stripes": 6
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 400000,
+          "live_requested": 6400000,
+          "live_modeled_smp_bytes": 6400000,
+          "total_allocations": 400000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 400000,
+          "live_requested": 102400000,
+          "live_modeled_smp_bytes": 102400000,
+          "total_allocations": 400000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 250,
+          "live_requested": 25094000,
+          "live_modeled_smp_bytes": 25600000,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 6,
+          "live_requested": 1204368,
+          "live_modeled_smp_bytes": 1228800,
+          "total_allocations": 6
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-600000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 600000,
+      "capacity": 1048576,
+      "map_requested_bytes": 51386368,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 52244480,
+      "key_bytes": 9600000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 153600000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 214586368,
+      "tracked_peak_requested": 214586368,
+      "alloc_calls": 1202560,
+      "rss_bytes": 236376064,
+      "capacity_histogram": [
+        {
+          "capacity": 4096,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 600000,
+          "live_requested": 9600000,
+          "live_modeled_smp_bytes": 9600000,
+          "total_allocations": 600000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 600000,
+          "live_requested": 153600000,
+          "live_modeled_smp_bytes": 153600000,
+          "total_allocations": 600000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 256,
+          "live_requested": 51386368,
+          "live_modeled_smp_bytes": 52428800,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-750000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 750000,
+      "capacity": 1048576,
+      "map_requested_bytes": 51386368,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 52350976,
+      "key_bytes": 12000000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 192000000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 255386368,
+      "tracked_peak_requested": 255386368,
+      "alloc_calls": 1502560,
+      "rss_bytes": 282083328,
+      "capacity_histogram": [
+        {
+          "capacity": 4096,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 750000,
+          "live_requested": 12000000,
+          "live_modeled_smp_bytes": 12000000,
+          "total_allocations": 750000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 750000,
+          "live_requested": 192000000,
+          "live_modeled_smp_bytes": 192000000,
+          "total_allocations": 750000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 256,
+          "live_requested": 51386368,
+          "live_modeled_smp_bytes": 52428800,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-800000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 800000,
+      "capacity": 1048576,
+      "map_requested_bytes": 51386368,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 52371456,
+      "key_bytes": 12800000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 204800000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 268986368,
+      "tracked_peak_requested": 268986368,
+      "alloc_calls": 1602560,
+      "rss_bytes": 297304064,
+      "capacity_histogram": [
+        {
+          "capacity": 4096,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 800000,
+          "live_requested": 12800000,
+          "live_modeled_smp_bytes": 12800000,
+          "total_allocations": 800000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 800000,
+          "live_requested": 204800000,
+          "live_modeled_smp_bytes": 204800000,
+          "total_allocations": 800000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 256,
+          "live_requested": 51386368,
+          "live_modeled_smp_bytes": 52428800,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-825000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 825000,
+      "capacity": 1228800,
+      "map_requested_bytes": 60217344,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 61136896,
+      "key_bytes": 13200000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 211200000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 284617344,
+      "tracked_peak_requested": 284728856,
+      "alloc_calls": 1652604,
+      "rss_bytes": 313679872,
+      "capacity_histogram": [
+        {
+          "capacity": 4096,
+          "stripes": 212
+        },
+        {
+          "capacity": 8192,
+          "stripes": 44
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 825000,
+          "live_requested": 13200000,
+          "live_modeled_smp_bytes": 13200000,
+          "total_allocations": 825000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 825000,
+          "live_requested": 211200000,
+          "live_modeled_smp_bytes": 211200000,
+          "total_allocations": 825000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 212,
+          "live_requested": 42554336,
+          "live_modeled_smp_bytes": 43417600,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 44,
+          "live_requested": 17663008,
+          "live_modeled_smp_bytes": 17842176,
+          "total_allocations": 44
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-850000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 850000,
+      "capacity": 1863680,
+      "map_requested_bytes": 91326464,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 92045312,
+      "key_bytes": 13600000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 217600000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 322526464,
+      "tracked_peak_requested": 322715224,
+      "alloc_calls": 1702759,
+      "rss_bytes": 353017856,
+      "capacity_histogram": [
+        {
+          "capacity": 4096,
+          "stripes": 57
+        },
+        {
+          "capacity": 8192,
+          "stripes": 199
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 850000,
+          "live_requested": 13600000,
+          "live_modeled_smp_bytes": 13600000,
+          "total_allocations": 850000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 850000,
+          "live_requested": 217600000,
+          "live_modeled_smp_bytes": 217600000,
+          "total_allocations": 850000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 57,
+          "live_requested": 11441496,
+          "live_modeled_smp_bytes": 11673600,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 199,
+          "live_requested": 79884968,
+          "live_modeled_smp_bytes": 80695296,
+          "total_allocations": 199
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-900000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 900000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103436288,
+      "key_bytes": 14400000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 230400000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 347566592,
+      "tracked_peak_requested": 347566592,
+      "alloc_calls": 1802816,
+      "rss_bytes": 378978304,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 900000,
+          "live_requested": 14400000,
+          "live_modeled_smp_bytes": 14400000,
+          "total_allocations": 900000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 900000,
+          "live_requested": 230400000,
+          "live_modeled_smp_bytes": 230400000,
+          "total_allocations": 900000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-1000000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 1000000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103464960,
+      "key_bytes": 16000000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 256000000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 374766592,
+      "tracked_peak_requested": 374766592,
+      "alloc_calls": 2002816,
+      "rss_bytes": 409407488,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 1000000,
+          "live_requested": 16000000,
+          "live_modeled_smp_bytes": 16000000,
+          "total_allocations": 1000000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 1000000,
+          "live_requested": 256000000,
+          "live_modeled_smp_bytes": 256000000,
+          "total_allocations": 1000000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-1200000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 1200000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103542784,
+      "key_bytes": 19200000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 307200000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 429166592,
+      "tracked_peak_requested": 429166592,
+      "alloc_calls": 2402816,
+      "rss_bytes": 470286336,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 1200000,
+          "live_requested": 19200000,
+          "live_modeled_smp_bytes": 19200000,
+          "total_allocations": 1200000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 1200000,
+          "live_requested": 307200000,
+          "live_modeled_smp_bytes": 307200000,
+          "total_allocations": 1200000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-1500000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 1500000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103653376,
+      "key_bytes": 24000000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 384000000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 510766592,
+      "tracked_peak_requested": 510766592,
+      "alloc_calls": 3002816,
+      "rss_bytes": 561598464,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 1500000,
+          "live_requested": 24000000,
+          "live_modeled_smp_bytes": 24000000,
+          "total_allocations": 1500000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 1500000,
+          "live_requested": 384000000,
+          "live_modeled_smp_bytes": 384000000,
+          "total_allocations": 1500000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-grow-1600000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 1600000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103673856,
+      "key_bytes": 25600000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 409600000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 537966592,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3202816,
+      "rss_bytes": 592015360,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 1600000,
+          "live_requested": 25600000,
+          "live_modeled_smp_bytes": 25600000,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 1600000,
+          "live_requested": 409600000,
+          "live_modeled_smp_bytes": 409600000,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-delete-800000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 800000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103673856,
+      "key_bytes": 12800000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 204800000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 320366592,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3202816,
+      "rss_bytes": 592015360,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 800000,
+          "live_requested": 12800000,
+          "live_modeled_smp_bytes": 12800000,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 800000,
+          "live_requested": 204800000,
+          "live_modeled_smp_bytes": 204800000,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-delete-200000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 200000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103673856,
+      "key_bytes": 3200000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 51200000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 157166592,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3202816,
+      "rss_bytes": 592015360,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 200000,
+          "live_requested": 3200000,
+          "live_modeled_smp_bytes": 3200000,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 200000,
+          "live_requested": 51200000,
+          "live_modeled_smp_bytes": 51200000,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-delete-0",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 0,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103673856,
+      "key_bytes": 0,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 0,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 102766592,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3202816,
+      "rss_bytes": 592015360,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1600000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-refill-200000",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 200000,
+      "capacity": 2097152,
+      "map_requested_bytes": 102766592,
+      "large_map_count": 256,
+      "large_map_resident_page_bytes": 103673856,
+      "key_bytes": 3200000,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 51200000,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 157166592,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3602816,
+      "rss_bytes": 592015360,
+      "capacity_histogram": [
+        {
+          "capacity": 8192,
+          "stripes": 256
+        }
+      ],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 200000,
+          "live_requested": 3200000,
+          "live_modeled_smp_bytes": 3200000,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 200000,
+          "live_requested": 51200000,
+          "live_modeled_smp_bytes": 51200000,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 256,
+          "live_requested": 102766592,
+          "live_modeled_smp_bytes": 103809024,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-flushdb-before-trim",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 0,
+      "capacity": 0,
+      "map_requested_bytes": 0,
+      "large_map_count": 0,
+      "large_map_resident_page_bytes": 0,
+      "key_bytes": 0,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 0,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 0,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3602816,
+      "rss_bytes": 89649152,
+      "capacity_histogram": [],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-malloc-trim",
+      "result": 1,
+      "rss_bytes": 2101248,
+      "tracked_live_requested": 0
+    },
+    {
+      "phase": "curve-flushdb-after-trim",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 0,
+      "capacity": 0,
+      "map_requested_bytes": 0,
+      "large_map_count": 0,
+      "large_map_resident_page_bytes": 0,
+      "key_bytes": 0,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 0,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 0,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3602816,
+      "rss_bytes": 2101248,
+      "capacity_histogram": [],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        }
+      ]
+    },
+    {
+      "phase": "curve-deinitialized",
+      "entry_bytes": 32,
+      "stored_entry_bytes": 32,
+      "entry_object_requested_bytes": 0,
+      "entries": 0,
+      "capacity": 0,
+      "map_requested_bytes": 0,
+      "large_map_count": 0,
+      "large_map_resident_page_bytes": 0,
+      "key_bytes": 0,
+      "inline_values": 0,
+      "heap_value_capacity_bytes": 0,
+      "metadata_requested_bytes": 0,
+      "metadata_count": 0,
+      "tracked_live_requested": 0,
+      "tracked_peak_requested": 537966592,
+      "alloc_calls": 3602816,
+      "rss_bytes": 2101248,
+      "capacity_histogram": [],
+      "allocation_histogram": [
+        {
+          "power2_class": 16,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 256,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 1800000
+        },
+        {
+          "power2_class": 512,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 1024,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 2048,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 4096,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 8192,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 16384,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 32768,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 65536,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 131072,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 262144,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        },
+        {
+          "power2_class": 524288,
+          "live_count": 0,
+          "live_requested": 0,
+          "live_modeled_smp_bytes": 0,
+          "total_allocations": 256
+        }
+      ]
+    }
+  ],
+  "native_size_guard": {
+    "24": {
+      "control": {
+        "loaded_rss_mib": 108.65234375,
+        "loaded_requested_mib": 93.212890625,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      },
+      "candidate": {
+        "loaded_rss_mib": 75.8828125,
+        "loaded_requested_mib": 61.212890625,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      }
+    },
+    "25": {
+      "control": {
+        "loaded_rss_mib": 108.6484375,
+        "loaded_requested_mib": 93.212890625,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      },
+      "candidate": {
+        "loaded_rss_mib": 112.52734375,
+        "loaded_requested_mib": 80.286376953125,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      }
+    },
+    "32": {
+      "control": {
+        "loaded_rss_mib": 108.6484375,
+        "loaded_requested_mib": 93.212890625,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      },
+      "candidate": {
+        "loaded_rss_mib": 112.5234375,
+        "loaded_requested_mib": 85.626953125,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      }
+    },
+    "33": {
+      "control": {
+        "loaded_rss_mib": 144.6953125,
+        "loaded_requested_mib": 118.389892578125,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      },
+      "candidate": {
+        "loaded_rss_mib": 112.52734375,
+        "loaded_requested_mib": 86.389892578125,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      }
+    },
+    "256": {
+      "control": {
+        "loaded_rss_mib": 315.59765625,
+        "loaded_requested_mib": 288.525390625,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      },
+      "candidate": {
+        "loaded_rss_mib": 283.53125,
+        "loaded_requested_mib": 256.525390625,
+        "overwrite_allocations": 0,
+        "deinitialized_live_requested": 0
+      }
+    }
+  },
+  "socket_memory": {
+    "grow": [
+      {
+        "phase": "grow-200000",
+        "keys": 200000,
+        "rss_mib": 78.19921875,
+        "hwm_mib": 78.19921875
+      },
+      {
+        "phase": "grow-400000",
+        "keys": 400000,
+        "rss_mib": 147.4765625,
+        "hwm_mib": 147.4765625
+      },
+      {
+        "phase": "grow-600000",
+        "keys": 600000,
+        "rss_mib": 230.12109375,
+        "hwm_mib": 230.12109375
+      },
+      {
+        "phase": "grow-750000",
+        "keys": 750000,
+        "rss_mib": 273.74609375,
+        "hwm_mib": 273.74609375
+      },
+      {
+        "phase": "grow-800000",
+        "keys": 800000,
+        "rss_mib": 288.4765625,
+        "hwm_mib": 288.4765625
+      },
+      {
+        "phase": "grow-825000",
+        "keys": 825000,
+        "rss_mib": 303.7578125,
+        "hwm_mib": 303.7578125
+      },
+      {
+        "phase": "grow-850000",
+        "keys": 850000,
+        "rss_mib": 340.578125,
+        "hwm_mib": 340.578125
+      },
+      {
+        "phase": "grow-900000",
+        "keys": 900000,
+        "rss_mib": 366.38671875,
+        "hwm_mib": 366.38671875
+      },
+      {
+        "phase": "grow-1000000",
+        "keys": 1000000,
+        "rss_mib": 395.46484375,
+        "hwm_mib": 395.46484375
+      },
+      {
+        "phase": "grow-1200000",
+        "keys": 1200000,
+        "rss_mib": 453.64453125,
+        "hwm_mib": 453.64453125
+      },
+      {
+        "phase": "grow-1500000",
+        "keys": 1500000,
+        "rss_mib": 540.8515625,
+        "hwm_mib": 540.8515625
+      },
+      {
+        "phase": "grow-1600000",
+        "keys": 1600000,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "delete-800000-immediate",
+        "keys": 800000,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "delete-800000-5s",
+        "keys": 800000,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "delete-200000-immediate",
+        "keys": 200000,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "delete-200000-5s",
+        "keys": 200000,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "delete-0-immediate",
+        "keys": 0,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "delete-0-5s",
+        "keys": 0,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "refill-200000",
+        "keys": 200000,
+        "rss_mib": 569.9375,
+        "hwm_mib": 569.9375
+      },
+      {
+        "phase": "flush-immediate",
+        "keys": 0,
+        "rss_mib": 61.66015625,
+        "hwm_mib": 569.64453125
+      },
+      {
+        "phase": "flush-5s",
+        "keys": 0,
+        "rss_mib": 61.66015625,
+        "hwm_mib": 569.64453125
+      }
+    ],
+    "overwrite": [
+      {
+        "phase": "overwrite-4096",
+        "keys": 100000,
+        "rss_mib": 409.82421875,
+        "hwm_mib": 409.82421875
+      },
+      {
+        "phase": "overwrite-2048",
+        "keys": 100000,
+        "rss_mib": 411.30859375,
+        "hwm_mib": 411.30859375
+      },
+      {
+        "phase": "overwrite-128",
+        "keys": 100000,
+        "rss_mib": 411.30859375,
+        "hwm_mib": 411.30859375
+      },
+      {
+        "phase": "overwrite-32",
+        "keys": 100000,
+        "rss_mib": 411.30859375,
+        "hwm_mib": 411.30859375
+      },
+      {
+        "phase": "flush-immediate",
+        "keys": 0,
+        "rss_mib": 52.40234375,
+        "hwm_mib": 410.9375
+      },
+      {
+        "phase": "flush-5s",
+        "keys": 0,
+        "rss_mib": 52.40234375,
+        "hwm_mib": 410.9375
+      }
+    ],
+    "ttl": [
+      {
+        "phase": "ttl-set",
+        "keys": 88313,
+        "rss_mib": 47.14453125,
+        "hwm_mib": 47.14453125
+      },
+      {
+        "phase": "ttl-5s",
+        "keys": 0,
+        "rss_mib": 47.14453125,
+        "hwm_mib": 47.14453125
+      },
+      {
+        "phase": "ttl-30s",
+        "keys": 0,
+        "rss_mib": 47.14453125,
+        "hwm_mib": 47.14453125
+      }
+    ]
+  },
+  "validation": {
+    "general_unit_tests": 270,
+    "focused_test_runner_total": 5,
+    "independent_review": "no further concrete correctness blocker found; not proof of performance",
+    "native_curve_and_guards": "exact requested-byte reconciliation and zero live allocations at destruction; zero metadata in plain-value curve",
+    "integration": [
+      "expiry_reclamation",
+      "compact_values",
+      "recv_poll_first"
+    ]
+  },
+  "binary_identity": {
+    "image": "sha256:27d1217c8c19b0fdd31c700b4b36a748890cb655e72d2a3ad2cef50a167d9d65",
+    "process_name": "vex",
+    "binary_path": "/usr/local/bin/vex",
+    "binary_sha256": "e3d9e6845dafa001932350dc16e1c4692518f182aeefc5ebef22a27c94c3d730",
+    "command": [
+      "/usr/local/bin/vex",
+      "--reactor",
+      "--workers",
+      "6",
+      "--no-persistence",
+      "--port",
+      "6379"
+    ],
+    "version": "0.8.0 development benchmark binary",
+    "container": "engine"
+  },
+  "flush_duration_ms": {
+    "grow": 71.696333,
+    "overwrite": 36.824625
+  },
+  "density_target": {
+    "achieved_memory_only_at_sampled_keys": [
+      600000,
+      750000,
+      800000,
+      1200000,
+      1500000,
+      1600000
+    ],
+    "value_bytes": 256,
+    "key_bytes": 16,
+    "mode": "plain strings, no TTL, no persistence, noeviction",
+    "between_redis_and_dragonfly": true,
+    "remaining_gap_keys": [
+      850000,
+      900000,
+      1000000
+    ],
+    "throughput": "unverified; do not promote",
+    "small_value_guard": "25/32 B native diagnostic RSS grows by about3.9MiB at800k; 32B speed unverified"
+  },
+  "raw_artifacts": "bench/loadtest/runs/2026-09-25-entry32-prototype",
+  "cleanup": "temporary Docker builder, containers and networks removed; local images retained; no new AWS resources"
+}

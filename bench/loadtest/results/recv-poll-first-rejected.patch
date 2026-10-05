@@ -1,0 +1,170 @@
+diff --git a/src/server/event_loop.zig b/src/server/event_loop.zig
+index 5542ae4..77c4a76 100644
+--- a/src/server/event_loop.zig
++++ b/src/server/event_loop.zig
+@@ -121,6 +121,26 @@ fn readUringFlags() u32 {
+     return URING_OPT_FLAGS;
+ }
+ 
++/// The receive poll-first experiment is valid only on the modern deferred
++/// taskrun ring. It is deliberately a strict opt-in; unset and every value
++/// other than "1" preserve the existing receive path.
++fn readRecvPollFirst() bool {
++    const raw = std.c.getenv("VEX_RECV_POLL_FIRST") orelse return false;
++    return std.mem.eql(u8, std.mem.trim(u8, std.mem.span(raw), " \t\r\n"), "1");
++}
++
++// Prefer the Zig std.os.linux ABI names when available. These are the Linux
++// UAPI values from the primary source include/uapi/linux/io_uring.h for
++// toolchains that predate the declarations.
++const IORING_RECVSEND_POLL_FIRST: u16 = if (@hasDecl(linux, "IORING_RECVSEND_POLL_FIRST"))
++    @as(u16, linux.IORING_RECVSEND_POLL_FIRST)
++else
++    @as(u16, 1 << 0);
++const IORING_CQE_F_SOCK_NONEMPTY: u32 = if (@hasDecl(linux, "IORING_CQE_F_SOCK_NONEMPTY"))
++    @as(u32, linux.IORING_CQE_F_SOCK_NONEMPTY)
++else
++    @as(u32, 1 << 2);
++
+ pub const EventLoop = struct {
+     pub const Event = struct {
+         fd: i32,
+@@ -131,6 +151,8 @@ pub const EventLoop = struct {
+         hup: bool,
+         op: u2 = 0, // 0=poll, 1=recv, 2=send
+         bytes: i32 = 0, // bytes transferred (recv/send CQE result)
++        /// OP_RECV CQE metadata; unknown/non-recv events default conservatively.
++        recv_socket_nonempty: bool = true,
+     };
+ 
+     // --- Backend handle ---
+@@ -182,6 +204,9 @@ pub const EventLoop = struct {
+     /// load. Pair with a large VEX_POLL_SPIN_US for a near-never-park busy poll.
+     /// Default true (polite: spin only when recently busy).
+     spin_adaptive: bool,
++    /// Opt-in receive SQE poll-first behavior. Only true for the successful
++    /// DEFER_TASKRUN ring; plain rings and fallback backends remain unchanged.
++    recv_poll_first: bool,
+     /// Ring was created R_DISABLED (SINGLE_ISSUER/DEFER_TASKRUN path) and must
+     /// be enabled from the worker thread before first submit. enableRing()
+     /// (called in Worker.run on the worker's own thread) flips this to false.
+@@ -240,6 +265,7 @@ pub const EventLoop = struct {
+             .spin_ns = readSpinNs(),
+             .spin_hot = false,
+             .spin_adaptive = readSpinAdaptive(),
++            .recv_poll_first = defer_enable and readRecvPollFirst(),
+             .pending_enable = defer_enable,
+         };
+ 
+@@ -256,7 +282,7 @@ pub const EventLoop = struct {
+         }
+ 
+         probes_mod.ring_mode.store(2, .monotonic);
+-        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={})", .{ defer_enable, defer_enable });
++        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={}, recv_poll_first={})", .{ defer_enable, defer_enable, self.recv_poll_first });
+ 
+         return self;
+     }
+@@ -328,6 +354,7 @@ pub const EventLoop = struct {
+             .spin_ns = 0, // epoll path parks via epoll_wait timeout, no CQ to peek
+             .spin_hot = false,
+             .spin_adaptive = true,
++            .recv_poll_first = false,
+             .pending_enable = false,
+         };
+     }
+@@ -378,6 +405,7 @@ pub const EventLoop = struct {
+             .spin_ns = 0, // kqueue path parks via kevent timeout, no CQ to peek
+             .spin_hot = false,
+             .spin_adaptive = true,
++            .recv_poll_first = false,
+             .pending_enable = false,
+         };
+     }
+@@ -631,6 +659,7 @@ pub const EventLoop = struct {
+                     .hup = res == 0,
+                     .op = 1,
+                     .bytes = res,
++                    .recv_socket_nonempty = (cqe.flags & IORING_CQE_F_SOCK_NONEMPTY) != 0,
+                 };
+                 out_idx += 1;
+             } else if (op == OP_AOF_WRITE) {
+@@ -821,8 +850,10 @@ pub const EventLoop = struct {
+     }
+ 
+     /// Submit a recv SQE. Buffer must remain valid until CQE.
+-    pub fn submitRecv(self: *EventLoop, fd: i32, buf: []u8) !void {
+-        _ = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
++    pub fn submitRecv(self: *EventLoop, fd: i32, buf: []u8, poll_first: bool) !void {
++        const sqe = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
++        // POLL_FIRST is an SQE ioprio bit, not a recv(2) MSG flag.
++        if (self.recv_poll_first and poll_first) sqe.ioprio |= IORING_RECVSEND_POLL_FIRST;
+     }
+ 
+     /// Submit a send SQE. Buffer must remain valid until CQE.
+@@ -870,4 +901,3 @@ fn setNonBlocking(fd: i32) void {
+ }
+ 
+ // c_int is a builtin type, no need to redefine
+-
+diff --git a/src/server/worker.zig b/src/server/worker.zig
+index 548e1c1..c72fd36 100644
+--- a/src/server/worker.zig
++++ b/src/server/worker.zig
+@@ -652,7 +652,7 @@ pub const Worker = struct {
+                         continue;
+                     }
+                     if (self.conns.get(ev.fd)) |conn| {
+-                        self.handleRecvCompletion(conn, ev.bytes);
++                        self.handleRecvCompletion(conn, ev.bytes, ev.recv_socket_nonempty);
+                     }
+                     continue;
+                 } else if (ev.op == 2) {
+@@ -851,7 +851,9 @@ pub const Worker = struct {
+         };
+ 
+         if (recv_mode) {
+-            self.rearmRecv(conn);
++            // The first receive stays a normal recv; poll-first is only useful
++            // after a completion reported the socket empty.
++            self.rearmRecv(conn, false);
+         }
+     }
+ 
+@@ -978,7 +980,7 @@ pub const Worker = struct {
+ 
+     // ── io_uring recv/send completion handlers ──────────────────────────
+ 
+-    fn handleRecvCompletion(self: *Worker, conn: *Connection, bytes: i32) void {
++    fn handleRecvCompletion(self: *Worker, conn: *Connection, bytes: i32, socket_nonempty: bool) void {
+         conn.recv_pending = false;
+ 
+         if (bytes <= 0) {
+@@ -1046,7 +1048,7 @@ pub const Worker = struct {
+         }
+ 
+         // Re-arm recv for next data (recv_buf is independent from write_buf)
+-        self.rearmRecv(conn);
++        self.rearmRecv(conn, !socket_nonempty);
+         if (probe_on) probes.finish(&self.probes.io_submit, io_t0);
+ 
+         const stripe_release_t0: u64 = if (probe_on) probes.start() else 0;
+@@ -1213,11 +1215,11 @@ pub const Worker = struct {
+         }
+     }
+ 
+-    fn rearmRecv(self: *Worker, conn: *Connection) void {
++    fn rearmRecv(self: *Worker, conn: *Connection, poll_first: bool) void {
+         if (conn.recv_pending or conn.ssl != null) return;
+         conn.recv_pending = true;
+         if (is_linux) {
+-            self.loop.submitRecv(conn.fd, &conn.recv_buf) catch {
++            self.loop.submitRecv(conn.fd, &conn.recv_buf, poll_first) catch {
+                 conn.recv_pending = false;
+                 return;
+             };
+@@ -3698,4 +3700,3 @@ fn constantTimeEql(a: []const u8, b: []const u8) bool {
+ fn log(comptime fmt: []const u8, args: anytype) void {
+     vex_log.info(fmt, args);
+ }
+-

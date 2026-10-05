@@ -1,0 +1,123 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "server",
+    "namespace": "vex-scaling-20260927-hypotheses-r3",
+    "labels": {
+      "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3",
+      "role": "server"
+    },
+    "annotations": {
+      "karpenter.sh/do-not-disrupt": "true"
+    }
+  },
+  "spec": {
+    "restartPolicy": "Never",
+    "activeDeadlineSeconds": 14400,
+    "terminationGracePeriodSeconds": 5,
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": true,
+    "nodeSelector": {
+      "karpenter.sh/nodepool": "vex-scaling-20260927-hypotheses-r3-server"
+    },
+    "tolerations": [
+      {
+        "key": "vex-benchmark",
+        "value": "vex-scaling-20260927-hypotheses-r3",
+        "operator": "Equal",
+        "effect": "NoSchedule"
+      }
+    ],
+    "containers": [
+      {
+        "name": "engine",
+        "image": "redis@sha256:2e940b1efbe5bae595d9cc7c4f5ecdc84497a63b2a8e1bfe7624a0fae2f05127",
+        "imagePullPolicy": "IfNotPresent",
+        "command": [
+          "/usr/local/bin/redis-server",
+          "--port",
+          "6379",
+          "--bind",
+          "0.0.0.0",
+          "--protected-mode",
+          "no",
+          "--save",
+          "",
+          "--appendonly",
+          "no",
+          "--io-threads",
+          "16"
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "16",
+            "memory": "8Gi"
+          },
+          "limits": {
+            "cpu": "16",
+            "memory": "8Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "results",
+            "mountPath": "/results"
+          }
+        ],
+        "readinessProbe": {
+          "tcpSocket": {
+            "port": 6379
+          },
+          "periodSeconds": 2,
+          "failureThreshold": 90
+        },
+        "securityContext": {
+          "seccompProfile": {
+            "type": "Unconfined"
+          }
+        }
+      },
+      {
+        "name": "sampler",
+        "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+        "command": [
+          "sleep",
+          "14400"
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "50m",
+            "memory": "32Mi"
+          },
+          "limits": {
+            "cpu": "200m",
+            "memory": "128Mi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "results",
+            "mountPath": "/results"
+          }
+        ],
+        "securityContext": {
+          "capabilities": {
+            "add": [
+              "SYS_PTRACE"
+            ]
+          }
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "name": "results",
+        "emptyDir": {}
+      }
+    ],
+    "securityContext": {
+      "fsGroup": 10001
+    }
+  }
+}

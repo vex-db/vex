@@ -1,0 +1,1079 @@
+{
+  "settings": {
+    "namespace": "vex-saturation-20260922",
+    "context": "scrum-fresh",
+    "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+    "server_machine": "c6a.2xlarge",
+    "server_cpu_quota": 6,
+    "server_memory_limit": "10Gi",
+    "client_machine": "c6a.8xlarge",
+    "client_cpu_quota": 24,
+    "keys": 1000000,
+    "key_bytes": 16,
+    "key_prefix": "vex:key::",
+    "value_bytes": 256,
+    "ratio": "1:4",
+    "threads": 32,
+    "warmup_seconds": 10,
+    "sample_seconds": 30,
+    "throttle_threshold": 0.01,
+    "cells": [
+      "forward-p1-c32",
+      "forward-p1-c128",
+      "forward-p1-c512",
+      "forward-p8-c128",
+      "reverse-p8-c128",
+      "reverse-p1-c512",
+      "reverse-p1-c128",
+      "reverse-p1-c32"
+    ],
+    "method": "one fresh server pod and preload for all eight cells; diagnostics captured outside timing results"
+  },
+  "summary": [
+    {
+      "pipeline": 1,
+      "connections": 32,
+      "samples": 2,
+      "ops_median": 180707.505,
+      "ops_min": 178634.36,
+      "ops_max": 182780.65,
+      "p99_median_ms": 0.347,
+      "server_cpu_us_per_op": 24.785092913144982,
+      "server_user_us_per_op": 2.0655682696539976,
+      "server_system_us_per_op": 22.719524827974876,
+      "peak_rss_mib": 468.7578125,
+      "client_peak_thread_avg_pct": 24.8,
+      "significant_constraint": false
+    },
+    {
+      "pipeline": 1,
+      "connections": 128,
+      "samples": 2,
+      "ops_median": 321560.425,
+      "ops_min": 320265.55,
+      "ops_max": 322855.3,
+      "p99_median_ms": 0.751,
+      "server_cpu_us_per_op": 18.29320172328613,
+      "server_user_us_per_op": 1.0381390675082942,
+      "server_system_us_per_op": 17.255062707400146,
+      "peak_rss_mib": 468.7578125,
+      "client_peak_thread_avg_pct": 46.6,
+      "significant_constraint": false
+    },
+    {
+      "pipeline": 1,
+      "connections": 512,
+      "samples": 2,
+      "ops_median": 315201.315,
+      "ops_min": 314550.23,
+      "ops_max": 315852.4,
+      "p99_median_ms": 4.431,
+      "server_cpu_us_per_op": 17.913474151859177,
+      "server_user_us_per_op": 0.9218232875166626,
+      "server_system_us_per_op": 16.99165091710656,
+      "peak_rss_mib": 468.70703125,
+      "client_peak_thread_avg_pct": 41.3,
+      "significant_constraint": false
+    },
+    {
+      "pipeline": 8,
+      "connections": 128,
+      "samples": 2,
+      "ops_median": 1889770.155,
+      "ops_min": 1879935.02,
+      "ops_max": 1899605.29,
+      "p99_median_ms": 0.819,
+      "server_cpu_us_per_op": 3.116983638040774,
+      "server_user_us_per_op": 0.7194629861265969,
+      "server_system_us_per_op": 2.3975206606878516,
+      "peak_rss_mib": 466.8671875,
+      "client_peak_thread_avg_pct": 37.9,
+      "significant_constraint": false
+    }
+  ],
+  "runs": [
+    {
+      "cell": "forward-p1-c32",
+      "pipeline": 1,
+      "connections": 32,
+      "threads": 32,
+      "clients": 1,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 5359047,
+      "ops_per_sec": 178634.36,
+      "p99_ms": 0.423,
+      "runtime_ms": 30000,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 458.7578125,
+        "mean_rss_mib": 458.75208333333336,
+        "sample_span_seconds": 29.053184509277344,
+        "process_cpu_seconds": 127.47,
+        "process_cpu_cores": 4.387470845383436
+      },
+      "client_rss": {
+        "peak_rss_mib": 17.7890625,
+        "mean_rss_mib": 17.72109375,
+        "sample_span_seconds": 29.03367590904236,
+        "process_cpu_seconds": 182.9,
+        "process_cpu_cores": 6.299581237077766
+      },
+      "server_cpu_delta": {
+        "usage_usec": 131593018,
+        "user_usec": 10790159,
+        "system_usec": 120802860,
+        "nr_periods": 304,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 188821649,
+        "user_usec": 51370440,
+        "system_usec": 137451209,
+        "nr_periods": 307,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 4.387470845383436,
+      "server_cgroup_cpu_seconds_per_op": 2.4555302090091763e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.52341841749102e-05,
+      "client_process_cpu_cores": 6.299581237077766,
+      "client_cpu_headroom_cores": 17.700418762922233,
+      "client_cpu_headroom_fraction": 0.737517448455093,
+      "client_memtier_cpu_cores": 6.293,
+      "client_max_thread_avg_pct": 24.6,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "forward-p1-c32-server-before-proc-stat.txt",
+            "softirq": "forward-p1-c32-server-before-softirq.txt",
+            "netdev": "forward-p1-c32-server-before-netdev.txt",
+            "snmp": "forward-p1-c32-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p1-c32-client-before-proc-stat.txt",
+            "softirq": "forward-p1-c32-client-before-softirq.txt",
+            "netdev": "forward-p1-c32-client-before-netdev.txt",
+            "snmp": "forward-p1-c32-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "forward-p1-c32-server-after-proc-stat.txt",
+            "softirq": "forward-p1-c32-server-after-softirq.txt",
+            "netdev": "forward-p1-c32-server-after-netdev.txt",
+            "snmp": "forward-p1-c32-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p1-c32-client-after-proc-stat.txt",
+            "softirq": "forward-p1-c32-client-after-softirq.txt",
+            "netdev": "forward-p1-c32-client-after-netdev.txt",
+            "snmp": "forward-p1-c32-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.0
+    },
+    {
+      "cell": "forward-p1-c128",
+      "pipeline": 1,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 9608043,
+      "ops_per_sec": 320265.55,
+      "p99_ms": 0.879,
+      "runtime_ms": 30000,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 459.81640625,
+        "mean_rss_mib": 459.8118489583333,
+        "sample_span_seconds": 29.054898023605347,
+        "process_cpu_seconds": 170.37,
+        "process_cpu_cores": 5.863727343375451
+      },
+      "client_rss": {
+        "peak_rss_mib": 39.39453125,
+        "mean_rss_mib": 38.473046875,
+        "sample_span_seconds": 29.033889532089233,
+        "process_cpu_seconds": 359.51,
+        "process_cpu_cores": 12.38242639184314
+      },
+      "server_cpu_delta": {
+        "usage_usec": 175959733,
+        "user_usec": 9787956,
+        "system_usec": 166171777,
+        "nr_periods": 305,
+        "nr_throttled": 31,
+        "throttled_usec": 53566
+      },
+      "client_cpu_delta": {
+        "usage_usec": 371423346,
+        "user_usec": 90909152,
+        "system_usec": 280514194,
+        "nr_periods": 309,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.863727343375451,
+      "server_cgroup_cpu_seconds_per_op": 1.831379532751883e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.86575441013326e-05,
+      "client_process_cpu_cores": 12.38242639184314,
+      "client_cpu_headroom_cores": 11.61757360815686,
+      "client_cpu_headroom_fraction": 0.4840655670065358,
+      "client_memtier_cpu_cores": 12.377,
+      "client_max_thread_avg_pct": 46.6,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.00029758888888888887,
+          "throttled_wall_ratio": 0.0017855333333333333,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "forward-p1-c128-server-before-proc-stat.txt",
+            "softirq": "forward-p1-c128-server-before-softirq.txt",
+            "netdev": "forward-p1-c128-server-before-netdev.txt",
+            "snmp": "forward-p1-c128-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p1-c128-client-before-proc-stat.txt",
+            "softirq": "forward-p1-c128-client-before-softirq.txt",
+            "netdev": "forward-p1-c128-client-before-netdev.txt",
+            "snmp": "forward-p1-c128-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "forward-p1-c128-server-after-proc-stat.txt",
+            "softirq": "forward-p1-c128-server-after-softirq.txt",
+            "netdev": "forward-p1-c128-server-after-netdev.txt",
+            "snmp": "forward-p1-c128-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p1-c128-client-after-proc-stat.txt",
+            "softirq": "forward-p1-c128-client-after-softirq.txt",
+            "netdev": "forward-p1-c128-client-after-netdev.txt",
+            "snmp": "forward-p1-c128-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.0
+    },
+    {
+      "cell": "forward-p1-c512",
+      "pipeline": 1,
+      "connections": 512,
+      "threads": 32,
+      "clients": 16,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 9476149,
+      "ops_per_sec": 315852.4,
+      "p99_ms": 6.463,
+      "runtime_ms": 30002,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 466.07421875,
+        "mean_rss_mib": 466.0669270833333,
+        "sample_span_seconds": 29.05123209953308,
+        "process_cpu_seconds": 162.91000000000003,
+        "process_cpu_cores": 5.607679544944958
+      },
+      "client_rss": {
+        "peak_rss_mib": 124.37109375,
+        "mean_rss_mib": 120.17838541666667,
+        "sample_span_seconds": 29.02596640586853,
+        "process_cpu_seconds": 358.29,
+        "process_cpu_cores": 12.343775052656307
+      },
+      "server_cpu_delta": {
+        "usage_usec": 168238075,
+        "user_usec": 9130676,
+        "system_usec": 159107400,
+        "nr_periods": 309,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 370518423,
+        "user_usec": 91230298,
+        "system_usec": 279288126,
+        "nr_periods": 311,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.607679544944958,
+      "server_cgroup_cpu_seconds_per_op": 1.7753844415067767e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.910010522206858e-05,
+      "client_process_cpu_cores": 12.343775052656307,
+      "client_cpu_headroom_cores": 11.656224947343693,
+      "client_cpu_headroom_fraction": 0.4856760394726539,
+      "client_memtier_cpu_cores": 12.338,
+      "client_max_thread_avg_pct": 41.3,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "forward-p1-c512-server-before-proc-stat.txt",
+            "softirq": "forward-p1-c512-server-before-softirq.txt",
+            "netdev": "forward-p1-c512-server-before-netdev.txt",
+            "snmp": "forward-p1-c512-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p1-c512-client-before-proc-stat.txt",
+            "softirq": "forward-p1-c512-client-before-softirq.txt",
+            "netdev": "forward-p1-c512-client-before-netdev.txt",
+            "snmp": "forward-p1-c512-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "forward-p1-c512-server-after-proc-stat.txt",
+            "softirq": "forward-p1-c512-server-after-softirq.txt",
+            "netdev": "forward-p1-c512-server-after-netdev.txt",
+            "snmp": "forward-p1-c512-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p1-c512-client-after-proc-stat.txt",
+            "softirq": "forward-p1-c512-client-after-softirq.txt",
+            "netdev": "forward-p1-c512-client-after-netdev.txt",
+            "snmp": "forward-p1-c512-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.002
+    },
+    {
+      "cell": "forward-p8-c128",
+      "pipeline": 8,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 56988664,
+      "ops_per_sec": 1899605.29,
+      "p99_ms": 0.799,
+      "runtime_ms": 30000,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 466.72265625,
+        "mean_rss_mib": 466.72057291666664,
+        "sample_span_seconds": 29.047322750091553,
+        "process_cpu_seconds": 171.13,
+        "process_cpu_cores": 5.89142075062531
+      },
+      "client_rss": {
+        "peak_rss_mib": 39.48828125,
+        "mean_rss_mib": 38.64869791666667,
+        "sample_span_seconds": 29.026472568511963,
+        "process_cpu_seconds": 322.9,
+        "process_cpu_cores": 11.124327947112775
+      },
+      "server_cpu_delta": {
+        "usage_usec": 176747323,
+        "user_usec": 40597940,
+        "system_usec": 136149384,
+        "nr_periods": 306,
+        "nr_throttled": 30,
+        "throttled_usec": 29197
+      },
+      "client_cpu_delta": {
+        "usage_usec": 333718652,
+        "user_usec": 118749925,
+        "system_usec": 214968727,
+        "nr_periods": 307,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.89142075062531,
+      "server_cgroup_cpu_seconds_per_op": 3.1014470351507097e-06,
+      "client_cgroup_cpu_seconds_per_op": 5.85587779352048e-06,
+      "client_process_cpu_cores": 11.124327947112775,
+      "client_cpu_headroom_cores": 12.875672052887225,
+      "client_cpu_headroom_fraction": 0.5364863355369678,
+      "client_memtier_cpu_cores": 11.121,
+      "client_max_thread_avg_pct": 37.9,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.00016220555555555556,
+          "throttled_wall_ratio": 0.0009732333333333334,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "forward-p8-c128-server-before-proc-stat.txt",
+            "softirq": "forward-p8-c128-server-before-softirq.txt",
+            "netdev": "forward-p8-c128-server-before-netdev.txt",
+            "snmp": "forward-p8-c128-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p8-c128-client-before-proc-stat.txt",
+            "softirq": "forward-p8-c128-client-before-softirq.txt",
+            "netdev": "forward-p8-c128-client-before-netdev.txt",
+            "snmp": "forward-p8-c128-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "forward-p8-c128-server-after-proc-stat.txt",
+            "softirq": "forward-p8-c128-server-after-softirq.txt",
+            "netdev": "forward-p8-c128-server-after-netdev.txt",
+            "snmp": "forward-p8-c128-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "forward-p8-c128-client-after-proc-stat.txt",
+            "softirq": "forward-p8-c128-client-after-softirq.txt",
+            "netdev": "forward-p8-c128-client-after-netdev.txt",
+            "snmp": "forward-p8-c128-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.0
+    },
+    {
+      "cell": "reverse-p8-c128",
+      "pipeline": 8,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 56398592,
+      "ops_per_sec": 1879935.02,
+      "p99_ms": 0.839,
+      "runtime_ms": 30001,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 466.8671875,
+        "mean_rss_mib": 466.86484375,
+        "sample_span_seconds": 29.046598434448242,
+        "process_cpu_seconds": 171.03999999999996,
+        "process_cpu_cores": 5.888469191530274
+      },
+      "client_rss": {
+        "peak_rss_mib": 39.5546875,
+        "mean_rss_mib": 38.64479166666667,
+        "sample_span_seconds": 29.02771258354187,
+        "process_cpu_seconds": 321.76000000000005,
+        "process_cpu_cores": 11.084579919067805
+      },
+      "server_cpu_delta": {
+        "usage_usec": 176669731,
+        "user_usec": 40975818,
+        "system_usec": 135693913,
+        "nr_periods": 306,
+        "nr_throttled": 34,
+        "throttled_usec": 41183
+      },
+      "client_cpu_delta": {
+        "usage_usec": 332520260,
+        "user_usec": 122753377,
+        "system_usec": 209766882,
+        "nr_periods": 308,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.888469191530274,
+      "server_cgroup_cpu_seconds_per_op": 3.1325202409308378e-06,
+      "client_cgroup_cpu_seconds_per_op": 5.895896479117777e-06,
+      "client_process_cpu_cores": 11.084579919067805,
+      "client_cpu_headroom_cores": 12.915420080932195,
+      "client_cpu_headroom_fraction": 0.5381425033721747,
+      "client_memtier_cpu_cores": 11.08,
+      "client_max_thread_avg_pct": 37.9,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.00022878681821717053,
+          "throttled_wall_ratio": 0.0013727209093030233,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "reverse-p8-c128-server-before-proc-stat.txt",
+            "softirq": "reverse-p8-c128-server-before-softirq.txt",
+            "netdev": "reverse-p8-c128-server-before-netdev.txt",
+            "snmp": "reverse-p8-c128-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p8-c128-client-before-proc-stat.txt",
+            "softirq": "reverse-p8-c128-client-before-softirq.txt",
+            "netdev": "reverse-p8-c128-client-before-netdev.txt",
+            "snmp": "reverse-p8-c128-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "reverse-p8-c128-server-after-proc-stat.txt",
+            "softirq": "reverse-p8-c128-server-after-softirq.txt",
+            "netdev": "reverse-p8-c128-server-after-netdev.txt",
+            "snmp": "reverse-p8-c128-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p8-c128-client-after-proc-stat.txt",
+            "softirq": "reverse-p8-c128-client-after-softirq.txt",
+            "netdev": "reverse-p8-c128-client-after-netdev.txt",
+            "snmp": "reverse-p8-c128-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.001
+    },
+    {
+      "cell": "reverse-p1-c512",
+      "pipeline": 1,
+      "connections": 512,
+      "threads": 32,
+      "clients": 16,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 9437104,
+      "ops_per_sec": 314550.23,
+      "p99_ms": 2.399,
+      "runtime_ms": 30002,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 468.70703125,
+        "mean_rss_mib": 468.7018229166667,
+        "sample_span_seconds": 29.056282997131348,
+        "process_cpu_seconds": 165.1400000000001,
+        "process_cpu_cores": 5.6834523540503765
+      },
+      "client_rss": {
+        "peak_rss_mib": 124.44921875,
+        "mean_rss_mib": 120.2109375,
+        "sample_span_seconds": 29.03171467781067,
+        "process_cpu_seconds": 353.93,
+        "process_cpu_cores": 12.191150399756218
+      },
+      "server_cpu_delta": {
+        "usage_usec": 170557761,
+        "user_usec": 8305630,
+        "system_usec": 162252131,
+        "nr_periods": 310,
+        "nr_throttled": 3,
+        "throttled_usec": 2811
+      },
+      "client_cpu_delta": {
+        "usage_usec": 366018652,
+        "user_usec": 90804914,
+        "system_usec": 275213737,
+        "nr_periods": 313,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.6834523540503765,
+      "server_cgroup_cpu_seconds_per_op": 1.8073103888650586e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.8785060755926815e-05,
+      "client_process_cpu_cores": 12.191150399756218,
+      "client_cpu_headroom_cores": 11.808849600243782,
+      "client_cpu_headroom_fraction": 0.49203540001015755,
+      "client_memtier_cpu_cores": 12.19,
+      "client_max_thread_avg_pct": 39.800000000000004,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 1.5615625624958335e-05,
+          "throttled_wall_ratio": 9.369375374975002e-05,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "reverse-p1-c512-server-before-proc-stat.txt",
+            "softirq": "reverse-p1-c512-server-before-softirq.txt",
+            "netdev": "reverse-p1-c512-server-before-netdev.txt",
+            "snmp": "reverse-p1-c512-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p1-c512-client-before-proc-stat.txt",
+            "softirq": "reverse-p1-c512-client-before-softirq.txt",
+            "netdev": "reverse-p1-c512-client-before-netdev.txt",
+            "snmp": "reverse-p1-c512-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "reverse-p1-c512-server-after-proc-stat.txt",
+            "softirq": "reverse-p1-c512-server-after-softirq.txt",
+            "netdev": "reverse-p1-c512-server-after-netdev.txt",
+            "snmp": "reverse-p1-c512-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p1-c512-client-after-proc-stat.txt",
+            "softirq": "reverse-p1-c512-client-after-softirq.txt",
+            "netdev": "reverse-p1-c512-client-after-netdev.txt",
+            "snmp": "reverse-p1-c512-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.002
+    },
+    {
+      "cell": "reverse-p1-c128",
+      "pipeline": 1,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 9685735,
+      "ops_per_sec": 322855.3,
+      "p99_ms": 0.623,
+      "runtime_ms": 30001,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 468.7578125,
+        "mean_rss_mib": 468.7578125,
+        "sample_span_seconds": 29.05209445953369,
+        "process_cpu_seconds": 171.3599999999999,
+        "process_cpu_cores": 5.898369917483407
+      },
+      "client_rss": {
+        "peak_rss_mib": 39.328125,
+        "mean_rss_mib": 38.44296875,
+        "sample_span_seconds": 29.030330181121826,
+        "process_cpu_seconds": 362.56,
+        "process_cpu_cores": 12.489007108702113
+      },
+      "server_cpu_delta": {
+        "usage_usec": 176983640,
+        "user_usec": 10243177,
+        "system_usec": 166740464,
+        "nr_periods": 305,
+        "nr_throttled": 42,
+        "throttled_usec": 66894
+      },
+      "client_cpu_delta": {
+        "usage_usec": 374906126,
+        "user_usec": 92027681,
+        "system_usec": 282878445,
+        "nr_periods": 308,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.898369917483407,
+      "server_cgroup_cpu_seconds_per_op": 1.8272608119053432e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.8707039372850894e-05,
+      "client_process_cpu_cores": 12.489007108702113,
+      "client_cpu_headroom_cores": 11.510992891297887,
+      "client_cpu_headroom_fraction": 0.4796247038040786,
+      "client_memtier_cpu_cores": 12.493,
+      "client_max_thread_avg_pct": 41.5,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.0003716209459684677,
+          "throttled_wall_ratio": 0.0022297256758108063,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "reverse-p1-c128-server-before-proc-stat.txt",
+            "softirq": "reverse-p1-c128-server-before-softirq.txt",
+            "netdev": "reverse-p1-c128-server-before-netdev.txt",
+            "snmp": "reverse-p1-c128-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p1-c128-client-before-proc-stat.txt",
+            "softirq": "reverse-p1-c128-client-before-softirq.txt",
+            "netdev": "reverse-p1-c128-client-before-netdev.txt",
+            "snmp": "reverse-p1-c128-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "reverse-p1-c128-server-after-proc-stat.txt",
+            "softirq": "reverse-p1-c128-server-after-softirq.txt",
+            "netdev": "reverse-p1-c128-server-after-netdev.txt",
+            "snmp": "reverse-p1-c128-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p1-c128-client-after-proc-stat.txt",
+            "softirq": "reverse-p1-c128-client-after-softirq.txt",
+            "netdev": "reverse-p1-c128-client-after-netdev.txt",
+            "snmp": "reverse-p1-c128-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.001
+    },
+    {
+      "cell": "reverse-p1-c32",
+      "pipeline": 1,
+      "connections": 32,
+      "threads": 32,
+      "clients": 1,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 5483435,
+      "ops_per_sec": 182780.65,
+      "p99_ms": 0.271,
+      "runtime_ms": 30000,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 468.7578125,
+        "mean_rss_mib": 468.7578125,
+        "sample_span_seconds": 29.053135871887207,
+        "process_cpu_seconds": 132.78999999999996,
+        "process_cpu_cores": 4.57059095395248
+      },
+      "client_rss": {
+        "peak_rss_mib": 17.78515625,
+        "mean_rss_mib": 17.7171875,
+        "sample_span_seconds": 29.025089263916016,
+        "process_cpu_seconds": 188.93,
+        "process_cpu_cores": 6.509196174458548
+      },
+      "server_cpu_delta": {
+        "usage_usec": 137167489,
+        "user_usec": 11612211,
+        "system_usec": 125555279,
+        "nr_periods": 306,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 195382152,
+        "user_usec": 52241100,
+        "system_usec": 143141051,
+        "nr_periods": 306,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 4.57059095395248,
+      "server_cgroup_cpu_seconds_per_op": 2.5014883736198202e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.563134276233784e-05,
+      "client_process_cpu_cores": 6.509196174458548,
+      "client_cpu_headroom_cores": 17.49080382554145,
+      "client_cpu_headroom_fraction": 0.7287834927308938,
+      "client_memtier_cpu_cores": 6.511,
+      "client_max_thread_avg_pct": 24.8,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "reverse-p1-c32-server-before-proc-stat.txt",
+            "softirq": "reverse-p1-c32-server-before-softirq.txt",
+            "netdev": "reverse-p1-c32-server-before-netdev.txt",
+            "snmp": "reverse-p1-c32-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p1-c32-client-before-proc-stat.txt",
+            "softirq": "reverse-p1-c32-client-before-softirq.txt",
+            "netdev": "reverse-p1-c32-client-before-netdev.txt",
+            "snmp": "reverse-p1-c32-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "reverse-p1-c32-server-after-proc-stat.txt",
+            "softirq": "reverse-p1-c32-server-after-softirq.txt",
+            "netdev": "reverse-p1-c32-server-after-netdev.txt",
+            "snmp": "reverse-p1-c32-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "reverse-p1-c32-client-after-proc-stat.txt",
+            "softirq": "reverse-p1-c32-client-after-softirq.txt",
+            "netdev": "reverse-p1-c32-client-after-netdev.txt",
+            "snmp": "reverse-p1-c32-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 30.0
+    }
+  ],
+  "validation": {
+    "same_server_and_client_pod_across_all_runs": true,
+    "live_binary_hash_verified": true,
+    "errors": 0,
+    "misses": 0,
+    "sampled_values_and_key_counts_passed": true
+  },
+  "interpretation": "Saturation diagnostic, not a before/after engine speedup; pipelined mode is a diagnostic control. Cgroup CPU snapshots bracket the load; proc/network snapshots have a wider window.",
+  "diagnostics": {
+    "perf_samples": 11835,
+    "kernel_leaf_samples": 11160,
+    "userspace_leaf_samples": 675,
+    "lost_samples": 0,
+    "active_workers_covered": 6,
+    "kernel_symbols": "unresolved",
+    "recorder_exit_code": null,
+    "recovered_remote_artifacts": true,
+    "post_snapshot": "delayed; not a CPU-rate denominator",
+    "probe_dispatches": 6056995,
+    "probe_ring_entries": 520181,
+    "commands_per_ring_entry": 11.644014295024231,
+    "decision": "No production source change justified; next planned test compares Service ClusterIP against direct Pod IP."
+  }
+}

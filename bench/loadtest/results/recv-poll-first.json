@@ -1,0 +1,237 @@
+{
+  "decision": "rejected: throughput gain below predeclared 3% gate",
+  "settings": {
+    "binary_sha256": "a952a10c939ffa95a50d381b3caaf8e81c8b5fd76a249f130e48cf8514b7c1b0",
+    "order": [
+      "off",
+      "on",
+      "on",
+      "off"
+    ],
+    "value_bytes": 256,
+    "keys": 1000000,
+    "key_bytes": 16,
+    "pipeline": 1,
+    "connections": 128,
+    "warmup_seconds": 10,
+    "measured_seconds": 60,
+    "workload": "80% GET / 20% SET",
+    "cpu_counters": "Snapshots bracket the timed memtier invocation, including tool overhead.",
+    "purpose": "Rejection/continuation gate; insufficient alone to enable by default."
+  },
+  "provenance": {
+    "base_commit": "72958ac8a04961166c74eab36b3fddc385ddc5b0",
+    "binary_sha256": "a952a10c939ffa95a50d381b3caaf8e81c8b5fd76a249f130e48cf8514b7c1b0",
+    "compiler": "0.17.0-dev.314+eae06cf5c",
+    "optimize": "ReleaseFast",
+    "target": "x86_64-linux-gnu",
+    "cpu": "x86_64_v3",
+    "note": "Source patch includes a post-build comment-only wording correction from proved to reported; runtime code identical."
+  },
+  "validation": [
+    {
+      "mode": "off",
+      "tests": "passed",
+      "backend": "io_uring",
+      "poll_first_enabled": false
+    },
+    {
+      "mode": "on",
+      "tests": "passed",
+      "backend": "io_uring",
+      "poll_first_enabled": true
+    },
+    {
+      "mode": "fallback",
+      "tests": "passed",
+      "backend": "io_uring",
+      "poll_first_enabled": false
+    }
+  ],
+  "summary": {
+    "off": {
+      "ops": 316326.305,
+      "p99_ms": 0.627,
+      "peak_rss_mib": 459.9765625
+    },
+    "on": {
+      "ops": 318347.13,
+      "p99_ms": 0.643,
+      "peak_rss_mib": 459.90625
+    }
+  },
+  "runs": [
+    {
+      "file": "1-off-mixed.json",
+      "start": 1790059635.637,
+      "end": 1790059695.637,
+      "ops": 316156.29,
+      "p50_ms": 0.399,
+      "p95_ms": 0.519,
+      "p99_ms": 0.607,
+      "client_cpu_cores": 12.133,
+      "client_max_thread_avg_pct": 41.699999999999996,
+      "rx_kib_s": 65515.74,
+      "tx_kib_s": 27416.92,
+      "peak_rss_mib": 459.9765625,
+      "mean_rss_mib": 459.9721354166667,
+      "server_cpu_cores": 5.894937102102177,
+      "mode": "off",
+      "order": 1,
+      "loaded_rss_mib": 458.59375,
+      "cpu_delta": {
+        "usage_usec": 353677024,
+        "user_usec": 19374891,
+        "system_usec": 334302133,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 605,
+        "nr_throttled": 2,
+        "throttled_usec": 2619,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 728098406,
+        "user_usec": 180305723,
+        "system_usec": 547792682,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 609,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    {
+      "file": "2-on-mixed.json",
+      "start": 1790059741.541,
+      "end": 1790059801.541,
+      "ops": 317723.07,
+      "p50_ms": 0.391,
+      "p95_ms": 0.551,
+      "p99_ms": 0.655,
+      "client_cpu_cores": 12.285,
+      "client_max_thread_avg_pct": 42.6,
+      "rx_kib_s": 65840.45,
+      "tx_kib_s": 27552.76,
+      "peak_rss_mib": 459.953125,
+      "mean_rss_mib": 459.9498697916667,
+      "server_cpu_cores": 5.877714122293261,
+      "mode": "on",
+      "order": 2,
+      "loaded_rss_mib": 458.6484375,
+      "cpu_delta": {
+        "usage_usec": 352705094,
+        "user_usec": 19381952,
+        "system_usec": 333323142,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 606,
+        "nr_throttled": 4,
+        "throttled_usec": 1630,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 737249670,
+        "user_usec": 179526698,
+        "system_usec": 557722972,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 609,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    {
+      "file": "3-on-mixed.json",
+      "start": 1790059847.332,
+      "end": 1790059907.332,
+      "ops": 318971.19,
+      "p50_ms": 0.391,
+      "p95_ms": 0.527,
+      "p99_ms": 0.631,
+      "client_cpu_cores": 12.368,
+      "client_max_thread_avg_pct": 42.3,
+      "rx_kib_s": 66099.09,
+      "tx_kib_s": 27661.0,
+      "peak_rss_mib": 459.859375,
+      "mean_rss_mib": 459.85520833333334,
+      "server_cpu_cores": 5.878512524358246,
+      "mode": "on",
+      "order": 3,
+      "loaded_rss_mib": 458.53125,
+      "cpu_delta": {
+        "usage_usec": 352758514,
+        "user_usec": 20353477,
+        "system_usec": 332405036,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 607,
+        "nr_throttled": 2,
+        "throttled_usec": 1224,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 742171777,
+        "user_usec": 178850942,
+        "system_usec": 563320835,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 608,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    {
+      "file": "4-off-mixed.json",
+      "start": 1790059952.049,
+      "end": 1790060012.049,
+      "ops": 316496.32,
+      "p50_ms": 0.399,
+      "p95_ms": 0.527,
+      "p99_ms": 0.647,
+      "client_cpu_cores": 12.331,
+      "client_max_thread_avg_pct": 42.5,
+      "rx_kib_s": 65586.25,
+      "tx_kib_s": 27446.37,
+      "peak_rss_mib": 459.9765625,
+      "mean_rss_mib": 459.97265625,
+      "server_cpu_cores": 5.881106823794373,
+      "mode": "off",
+      "order": 4,
+      "loaded_rss_mib": 458.6328125,
+      "cpu_delta": {
+        "usage_usec": 352864266,
+        "user_usec": 19281659,
+        "system_usec": 333582608,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 605,
+        "nr_throttled": 73,
+        "throttled_usec": 190209,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 739989406,
+        "user_usec": 178819325,
+        "system_usec": 561170081,
+        "nice_usec": 0,
+        "core_sched.force_idle_usec": 0,
+        "nr_periods": 608,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    }
+  ]
+}

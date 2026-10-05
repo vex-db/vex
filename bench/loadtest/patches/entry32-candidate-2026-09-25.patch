@@ -1,0 +1,625 @@
+--- a/src/engine/kv/concurrent_kv.zig
++++ b/src/engine/kv/concurrent_kv.zig
+@@ -40,26 +40,139 @@
+     /// Uses `.monotonic` — this is a budget heuristic, not a synchronization point.
+     total_bytes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+ 
+-    pub const INLINE_BUF_SIZE = 32;
++    pub const INLINE_BUF_SIZE = 24;
+ 
+     /// Reactor entries keep tiny values inline and larger values in reusable,
+     /// owned buffers. The plain KVStore layout is independent of this hot path.
+     pub const Entry = struct {
+-        // Inline bytes and heap metadata are mutually exclusive. Sharing their
+-        // storage keeps the complete entry within one 64-byte cache line.
++        const TAG_MASK = 3;
++        const HEAP_TAG = 0;
++        const INLINE_TAG = 1;
++        const META_TAG = 2;
++
++        /// Kept out of the common table slot. `aux` holds EntryFlags in its
++        /// low byte and the inline length above it when the value is inline.
++        const Metadata = struct {
++            expires_at: i64 = 0,
++            last_access: i64 = 0,
++            int_value: i64 = 0,
++            aux: u64 = 0,
++        };
++
++        // Inline bytes and heap fields are mutually exclusive. Plain strings
++        // use this direct storage and a tag; only TTL/int/LRU entries chase
++        // the aligned Metadata pointer carried by state.
+         storage: extern union {
+             inline_buf: [INLINE_BUF_SIZE]u8,
+             heap: extern struct { ptr: [*]const u8, len: usize, capacity: usize },
+         } = .{ .heap = .{ .ptr = "", .len = 0, .capacity = 0 } },
+-        expires_at: i64 = 0,
+-        last_access: i64 = 0,
+-        int_value: i64 = 0,
+-        inline_len: u16 = 0,
+-        flags: KVStore.EntryFlags = .{},
++        state: usize = HEAP_TAG,
+ 
++        comptime {
++            std.debug.assert(@sizeOf(Metadata) == 32);
++            std.debug.assert(@alignOf(Metadata) >= 4);
++            std.debug.assert(@sizeOf(Entry) == 32);
++            std.debug.assert(@alignOf(Entry) == 8);
++        }
++
++        fn metadata(self: *const Entry) ?*Metadata {
++            if (self.state & TAG_MASK != META_TAG) return null;
++            return @ptrFromInt(self.state & ~@as(usize, TAG_MASK));
++        }
++
++        fn inlineLen(self: *const Entry) usize {
++            if (self.metadata()) |meta| return @intCast(meta.aux >> 8);
++            return self.state >> 2;
++        }
++
++        fn flagsFromAux(aux: u64) KVStore.EntryFlags {
++            return @bitCast(@as(u8, @truncate(aux)));
++        }
++
++        fn auxWith(entry_flags: KVStore.EntryFlags, inline_len: usize) u64 {
++            return (@as(u64, @intCast(inline_len)) << 8) | @as(u64, @as(u8, @bitCast(entry_flags)));
++        }
++
++        pub fn flags(self: *const Entry) KVStore.EntryFlags {
++            if (self.metadata()) |meta| return flagsFromAux(meta.aux);
++            return .{ .is_inline = (self.state & TAG_MASK) == INLINE_TAG };
++        }
++
++        pub fn isInline(self: *const Entry) bool {
++            return self.flags().is_inline;
++        }
++
++        pub fn hasMetadata(self: *const Entry) bool {
++            return self.metadata() != null;
++        }
++
++        pub fn hasTtl(self: *const Entry) bool {
++            return self.flags().has_ttl;
++        }
++
++        pub fn isInteger(self: *const Entry) bool {
++            return self.flags().is_integer;
++        }
++
++        pub fn expiresAt(self: *const Entry) i64 {
++            return if (self.metadata()) |meta| meta.expires_at else 0;
++        }
++
++        pub fn lastAccess(self: *const Entry) i64 {
++            return if (self.metadata()) |meta| meta.last_access else 0;
++        }
++
++        pub fn integerPtr(self: *Entry) ?*i64 {
++            return if (self.metadata()) |meta| &meta.int_value else null;
++        }
++
++        pub fn integerValue(self: *const Entry) i64 {
++            return if (self.metadata()) |meta| meta.int_value else 0;
++        }
++
++        fn setMetadata(self: *Entry, meta: *Metadata) void {
++            self.state = @intFromPtr(meta) | META_TAG;
++        }
++
++        fn setInlineState(self: *Entry, len: usize) void {
++            if (self.metadata()) |meta| {
++                var entry_flags = flagsFromAux(meta.aux);
++                entry_flags.is_inline = true;
++                meta.aux = auxWith(entry_flags, len);
++            } else {
++                self.state = (len << 2) | INLINE_TAG;
++            }
++        }
++
++        fn setHeapState(self: *Entry) void {
++            if (self.metadata()) |meta| {
++                var entry_flags = flagsFromAux(meta.aux);
++                entry_flags.is_inline = false;
++                meta.aux = auxWith(entry_flags, 0);
++            } else {
++                self.state = HEAP_TAG;
++            }
++        }
++
++        fn ensureMetadata(self: *Entry, allocator: Allocator) !*Metadata {
++            if (self.metadata()) |meta| return meta;
++            const meta = try allocator.create(Metadata);
++            meta.* = .{ .aux = auxWith(self.flags(), self.inlineLen()) };
++            self.setMetadata(meta);
++            return meta;
++        }
++
++        fn freeMetadata(self: *Entry, allocator: Allocator) void {
++            const meta = self.metadata() orelse return;
++            const entry_flags = flagsFromAux(meta.aux);
++            const len: usize = @intCast(meta.aux >> 8);
++            allocator.destroy(meta);
++            self.state = if (entry_flags.is_inline) (len << 2) | INLINE_TAG else HEAP_TAG;
++        }
++
+         pub fn bytes(self: *const Entry) []const u8 {
+-            return if (self.flags.is_inline)
+-                self.storage.inline_buf[0..self.inline_len]
++            return if (self.isInline())
++                self.storage.inline_buf[0..self.inlineLen()]
+             else
+                 self.storage.heap.ptr[0..self.storage.heap.len];
+         }
+@@ -70,7 +183,7 @@
+         }
+ 
+         fn freeValue(self: *const Entry, allocator: Allocator) void {
+-            if (!self.flags.is_inline) allocator.free(self.allocation());
++            if (!self.isInline()) allocator.free(self.allocation());
+         }
+ 
+         /// Caller holds the stripe write lock. Allocation failure leaves the old
+@@ -81,9 +194,8 @@
+                 @memcpy(copy[0..value.len], value);
+                 self.freeValue(allocator);
+                 self.storage = .{ .inline_buf = copy };
+-                self.inline_len = @intCast(value.len);
+-                self.flags.is_inline = true;
+-            } else if (!self.flags.is_inline and self.storage.heap.capacity >= value.len and
++                self.setInlineState(value.len);
++            } else if (!self.isInline() and self.storage.heap.capacity >= value.len and
+                 self.storage.heap.capacity / 2 <= value.len)
+             {
+                 // Equal-size overwrites and modest size changes allocate nothing.
+@@ -98,7 +210,7 @@
+                     .len = replacement.len,
+                     .capacity = replacement.len,
+                 } };
+-                self.flags.is_inline = false;
++                self.setHeapState();
+             }
+         }
+     };
+@@ -112,7 +224,7 @@
+         tombstone_count: u32 = 0,
+     };
+ 
+-    pub const Expired = struct { key: []const u8, value: ?[]const u8 };
++    pub const Expired = struct { key: []const u8, value: ?[]const u8, metadata: ?*Entry.Metadata };
+     pub const SweepCursor = struct { next_stripe: usize = 0, buckets: [STRIPE_COUNT]usize = @splat(0) };
+ 
+     /// Owned value returned by get(). Caller must call deinit() to free.
+@@ -139,6 +251,13 @@
+         return self;
+     }
+ 
++    /// The maintenance thread calls this after invalidating WATCH versions.
++    pub fn freeExpired(self: *ConcurrentKV, stale: Expired) void {
++        self.allocator.free(stale.key);
++        if (stale.value) |value| self.allocator.free(value);
++        if (stale.metadata) |meta| self.allocator.destroy(meta);
++    }
++
+     /// Initialize rwlocks after placement for macOS compatibility. Maps grow
+     /// under their stripe's exclusive lock instead of reserving millions of slots.
+     pub fn initStripes(self: *ConcurrentKV) void {
+@@ -154,6 +273,7 @@
+             while (iter.next()) |entry| {
+                 self.allocator.free(entry.key_ptr.*);
+                 entry.value_ptr.freeValue(self.allocator);
++                entry.value_ptr.freeMetadata(self.allocator);
+             }
+             s.map.deinit();
+         }
+@@ -168,16 +288,23 @@
+             const s = &self.stripes[idx];
+             const owned_key = try self.allocator.dupe(u8, entry.key_ptr.*);
+             errdefer self.allocator.free(owned_key);
+-            const owned_val = try self.allocator.dupe(u8, entry.value_ptr.value);
+-            errdefer self.allocator.free(owned_val);
+             var flags = entry.value_ptr.flags;
+-            flags.is_inline = false; // imported values are heap-allocated, not inline
+-            try s.map.put(owned_key, .{
+-                .storage = .{ .heap = .{ .ptr = owned_val.ptr, .len = owned_val.len, .capacity = owned_val.len } },
+-                .expires_at = entry.value_ptr.expires_at,
+-                .flags = flags,
+-            });
+-            _ = self.total_bytes.fetchAdd(owned_key.len + owned_val.len, .monotonic);
++            var copied: Entry = .{};
++            try copied.replaceValue(self.allocator, entry.value_ptr.value);
++            errdefer copied.freeValue(self.allocator);
++            if (flags.has_ttl or flags.is_integer or self.eviction_policy == .allkeys_lru) {
++                const meta = try copied.ensureMetadata(self.allocator);
++                flags.is_inline = copied.isInline();
++                meta.* = .{
++                    .expires_at = entry.value_ptr.expires_at,
++                    .last_access = entry.value_ptr.last_access,
++                    .int_value = entry.value_ptr.int_value,
++                    .aux = Entry.auxWith(flags, if (flags.is_inline) copied.inlineLen() else 0),
++                };
++            }
++            errdefer copied.freeMetadata(self.allocator);
++            try s.map.put(owned_key, copied);
++            _ = self.total_bytes.fetchAdd(owned_key.len + entry.value_ptr.value.len, .monotonic);
+             if (flags.has_ttl) self.has_expiry.store(true, .release);
+         }
+     }
+@@ -191,10 +318,10 @@
+ 
+         const entry = s.map.getPtr(key) orelse return null;
+         if (self.isExpired(entry)) return null;
+-        if (entry.flags.is_integer) {
++        if (entry.isInteger()) {
+             // Format native int to string
+             var buf: [24]u8 = undefined;
+-            const str = std.fmt.bufPrint(&buf, "{d}", .{entry.int_value}) catch return null;
++            const str = std.fmt.bufPrint(&buf, "{d}", .{entry.integerValue()}) catch return null;
+             const copy = self.allocator.dupe(u8, str) catch return null;
+             return .{ .data = copy, .allocator = self.allocator };
+         }
+@@ -221,22 +348,35 @@
+         writeLockStripe(s);
+ 
+         defer writeUnlockStripe(s);
++        const needs_metadata = expires_at != 0 or self.eviction_policy == .allkeys_lru;
++        const new_meta = if (needs_metadata) self.allocator.create(Entry.Metadata) catch {
++            return .{ .stale_val = owned_value, .stale_key = owned_key };
++        } else null;
+         // Adopt the supplied allocation even for short values. This path already
+         // owns a buffer (COPY), so allocating or copying it again gains nothing.
+         const gop = s.map.getOrPut(owned_key) catch {
++            if (new_meta) |meta| self.allocator.destroy(meta);
+             return .{ .stale_val = owned_value, .stale_key = owned_key };
+         };
+         const old_len = if (gop.found_existing) gop.value_ptr.bytes().len else 0;
+-        const old_val = if (gop.found_existing and !gop.value_ptr.flags.is_inline)
++        const old_val = if (gop.found_existing and !gop.value_ptr.isInline())
+             gop.value_ptr.allocation()
+         else
+             null;
++        const old_meta = if (gop.found_existing) gop.value_ptr.metadata() else null;
+         gop.key_ptr.* = if (gop.found_existing) gop.key_ptr.* else owned_key;
+         gop.value_ptr.* = .{
+             .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
+-            .expires_at = expires_at,
+-            .flags = .{ .has_ttl = expires_at != 0 },
+         };
++        if (new_meta) |meta| {
++            meta.* = .{
++                .expires_at = expires_at,
++                .last_access = self.nowMillis(),
++                .aux = Entry.auxWith(.{ .has_ttl = expires_at != 0 }, 0),
++            };
++            gop.value_ptr.setMetadata(meta);
++        }
++        if (old_meta) |meta| self.allocator.destroy(meta);
+         if (expires_at != 0) self.has_expiry.store(true, .release);
+         const added = owned_value.len + (if (gop.found_existing) @as(usize, 0) else owned_key.len);
+         if (added > old_len) _ = self.total_bytes.fetchAdd(added - old_len, .monotonic);
+@@ -261,8 +401,9 @@
+         writeUnlockStripe(s);
+         if (result) |kv| {
+             // Inline values point into the entry's inline_buf (not heap-allocated) — don't free
+-            const stale_val = if (!kv.value.flags.is_inline) kv.value.allocation() else null;
++            const stale_val = if (!kv.value.isInline()) kv.value.allocation() else null;
+             const removed_bytes = kv.key.len + kv.value.bytes().len;
++            if (kv.value.metadata()) |meta| self.allocator.destroy(meta);
+             _ = self.total_bytes.fetchSub(removed_bytes, .monotonic);
+             return .{ .found = true, .stale_key = kv.key, .stale_val = stale_val };
+         }
+@@ -293,8 +434,8 @@
+ 
+         const entry = s.map.getPtr(key) orelse return null;
+         if (self.isExpired(entry)) return null;
+-        if (!entry.flags.has_ttl) return -1;
+-        return @divTrunc(entry.expires_at - self.nowMillis(), 1000);
++        if (!entry.hasTtl()) return -1;
++        return @divTrunc(entry.expiresAt() - self.nowMillis(), 1000);
+     }
+ 
+     pub fn restoreEntry(self: *ConcurrentKV, key: []const u8, value: []const u8, expires_at: ?i64) !void {
+@@ -317,6 +458,7 @@
+             while (iter.next()) |entry| {
+                 alloc.free(entry.key_ptr.*);
+                 entry.value_ptr.freeValue(alloc);
++                entry.value_ptr.freeMetadata(alloc);
+             }
+             old_map.deinit();
+         }
+@@ -344,6 +486,21 @@
+         return total;
+     }
+ 
++    /// Requested metadata bytes only; table/key/value accounting remains
++    /// separate so diagnostics cannot infer this from a residual.
++    pub fn metadataRequestedBytes(self: *ConcurrentKV) usize {
++        self.readLockAll();
++        defer self.readUnlockAll();
++        var total: usize = 0;
++        for (&self.stripes) |*s| {
++            var iter = s.map.iterator();
++            while (iter.next()) |entry| {
++                if (entry.value_ptr.hasMetadata()) total += @sizeOf(Entry.Metadata);
++            }
++        }
++        return total;
++    }
++
+     pub fn keys(self: *ConcurrentKV, allocator: Allocator, pattern: []const u8) ![][]const u8 {
+         self.readLockAll();
+         defer self.readUnlockAll();
+@@ -368,57 +525,60 @@
+     pub fn incrBy(self: *ConcurrentKV, key: []const u8, delta: i64) error{ NotAnInteger, OutOfMemory }!i64 {
+         const s = self.getStripe(key);
+         writeLockStripe(s);
++        defer writeUnlockStripe(s);
+ 
+         const result = s.map.getPtr(key);
+         if (result) |existing| {
+             if (self.isExpired(existing)) {
+                 // Treat expired as 0
+-                existing.int_value = delta;
+-                existing.flags = .{ .is_integer = true, .is_inline = existing.flags.is_inline };
+-                existing.last_access = self.nowMillis();
+-                writeUnlockStripe(s);
++                const meta = existing.ensureMetadata(self.allocator) catch return error.OutOfMemory;
++                const is_inline = existing.isInline();
++                meta.* = .{
++                    .last_access = self.nowMillis(),
++                    .int_value = delta,
++                    .aux = Entry.auxWith(.{ .is_integer = true, .is_inline = is_inline }, if (is_inline) existing.inlineLen() else 0),
++                };
+                 return delta;
+             }
+ 
+             // If already marked as integer, use cached int_value directly (~1ns)
+-            if (existing.flags.is_integer) {
+-                existing.int_value += delta;
+-                existing.last_access = self.nowMillis();
+-                const new_val = existing.int_value;
+-                writeUnlockStripe(s);
++            if (existing.isInteger()) {
++                const meta = existing.metadata().?;
++                meta.int_value += delta;
++                meta.last_access = self.nowMillis();
++                const new_val = meta.int_value;
+                 return new_val;
+             }
+ 
+             // First INCR on a string value — parse once, then use native from here on
+             const current = std.fmt.parseInt(i64, existing.bytes(), 10) catch {
+-                writeUnlockStripe(s);
+                 return error.NotAnInteger;
+             };
+-            existing.int_value = current + delta;
+-            existing.flags = .{ .is_integer = true, .is_inline = existing.flags.is_inline };
+-            existing.last_access = self.nowMillis();
+-            const new_val = existing.int_value;
+-            writeUnlockStripe(s);
++            const meta = existing.ensureMetadata(self.allocator) catch return error.OutOfMemory;
++            const is_inline = existing.isInline();
++            meta.* = .{
++                .last_access = self.nowMillis(),
++                .int_value = current + delta,
++                .aux = Entry.auxWith(.{ .is_integer = true, .is_inline = is_inline }, if (is_inline) existing.inlineLen() else 0),
++            };
++            const new_val = meta.int_value;
+             return new_val;
+         }
+ 
+         const alloc = self.allocator;
+         const owned_key = alloc.dupe(u8, key) catch {
+-            writeUnlockStripe(s);
+             return error.OutOfMemory;
+         };
+-        s.map.put(owned_key, .{
+-            .int_value = delta,
+-            .last_access = self.nowMillis(),
+-            .flags = .{ .is_integer = true },
+-        }) catch {
+-            alloc.free(owned_key);
+-            writeUnlockStripe(s);
++        errdefer alloc.free(owned_key);
++        var entry: Entry = .{};
++        entry.setInlineState(0);
++        const meta = entry.ensureMetadata(alloc) catch return error.OutOfMemory;
++        meta.* = .{ .last_access = self.nowMillis(), .int_value = delta, .aux = Entry.auxWith(.{ .is_integer = true }, 0) };
++        s.map.put(owned_key, entry) catch {
++            entry.freeMetadata(alloc);
+             return error.OutOfMemory;
+         };
+         _ = self.total_bytes.fetchAdd(owned_key.len, .monotonic);
+-
+-        writeUnlockStripe(s);
+         return delta;
+     }
+ 
+@@ -471,22 +631,46 @@
+         }
+ 
+         const now = self.nowMillis();
++        const needs_metadata = expires_at != 0 or self.eviction_policy == .allkeys_lru;
+         if (s.map.getPtr(key)) |existing| {
+             const old_value_len = existing.bytes().len;
++            var prepared: ?*Entry.Metadata = null;
++            if (needs_metadata and existing.metadata() == null) {
++                prepared = try alloc.create(Entry.Metadata);
++            }
++            errdefer if (prepared) |meta| alloc.destroy(meta);
+             try existing.replaceValue(alloc, value);
+-            existing.flags = .{ .has_ttl = expires_at != 0, .is_inline = existing.flags.is_inline };
++            if (needs_metadata) {
++                const meta = prepared orelse existing.metadata().?;
++                const is_inline = existing.isInline();
++                meta.* = .{
++                    .expires_at = expires_at,
++                    .last_access = now,
++                    .aux = Entry.auxWith(.{ .has_ttl = expires_at != 0, .is_inline = is_inline }, if (is_inline) existing.inlineLen() else 0),
++                };
++                if (prepared != null) existing.setMetadata(meta);
++            } else {
++                existing.freeMetadata(alloc);
++            }
+             if (expires_at != 0) self.has_expiry.store(true, .release);
+-            existing.expires_at = expires_at;
+-            existing.last_access = now;
+             if (value.len > old_value_len) _ = self.total_bytes.fetchAdd(value.len - old_value_len, .monotonic);
+             if (value.len < old_value_len) _ = self.total_bytes.fetchSub(old_value_len - value.len, .monotonic);
+         } else {
+             const owned_key = try alloc.dupe(u8, key);
+             errdefer alloc.free(owned_key);
+-            var entry: Entry = .{ .expires_at = expires_at, .last_access = now };
++            var entry: Entry = .{};
+             try entry.replaceValue(alloc, value);
+             errdefer entry.freeValue(alloc);
+-            entry.flags.has_ttl = expires_at != 0;
++            if (needs_metadata) {
++                const meta = try entry.ensureMetadata(alloc);
++                const is_inline = entry.isInline();
++                meta.* = .{
++                    .expires_at = expires_at,
++                    .last_access = now,
++                    .aux = Entry.auxWith(.{ .has_ttl = expires_at != 0, .is_inline = is_inline }, if (is_inline) entry.inlineLen() else 0),
++                };
++            }
++            errdefer entry.freeMetadata(alloc);
+             if (expires_at != 0) self.has_expiry.store(true, .release);
+             // bytes() resolves inline storage at its current address after a move.
+             try s.map.put(owned_key, entry);
+@@ -514,9 +698,8 @@
+             var samples: usize = 0;
+             var it = s.map.iterator();
+             while (it.next()) |entry| {
+-                if (entry.value_ptr.flags.deleted) continue;
+-                if (entry.value_ptr.last_access < oldest_access) {
+-                    oldest_access = entry.value_ptr.last_access;
++                if (entry.value_ptr.lastAccess() < oldest_access) {
++                    oldest_access = entry.value_ptr.lastAccess();
+                     oldest_key = entry.key_ptr.*;
+                 }
+                 samples += 1;
+@@ -526,9 +709,10 @@
+             const victim_key = oldest_key orelse return;
+ 
+             // Remove victim — this stripe is already write-locked, safe to mutate map.
+-            const removed = s.map.fetchRemove(victim_key) orelse return;
++            var removed = s.map.fetchRemove(victim_key) orelse return;
+             const freed_bytes: usize = removed.key.len + removed.value.bytes().len;
+             removed.value.freeValue(alloc);
++            removed.value.freeMetadata(alloc);
+             alloc.free(removed.key);
+ 
+             _ = self.total_bytes.fetchSub(freed_bytes, .monotonic);
+@@ -578,9 +762,13 @@
+                 var it = s.map.iterator();
+                 it.index = @intCast(bucket);
+                 const entry = it.next() orelse continue;
+-                if (!entry.value_ptr.flags.has_ttl or now_ms <= entry.value_ptr.expires_at) continue;
++                if (!entry.value_ptr.hasTtl() or now_ms <= entry.value_ptr.expiresAt()) continue;
+                 const stale = s.map.fetchRemove(entry.key_ptr.*) orelse continue;
+-                removed[count] = .{ .key = stale.key, .value = if (stale.value.flags.is_inline) null else stale.value.allocation() };
++                removed[count] = .{
++                    .key = stale.key,
++                    .value = if (stale.value.isInline()) null else stale.value.allocation(),
++                    .metadata = stale.value.metadata(),
++                };
+                 _ = self.total_bytes.fetchSub(stale.key.len + stale.value.bytes().len, .monotonic);
+                 _ = obs_stats.expired_keys.fetchAdd(1, .monotonic);
+                 count += 1;
+@@ -634,8 +822,8 @@
+     }
+ 
+     fn isExpired(self: *const ConcurrentKV, entry: *const Entry) bool {
+-        if (!entry.flags.has_ttl) return false;
+-        return self.nowMillis() > entry.expires_at;
++        if (!entry.hasTtl()) return false;
++        return self.nowMillis() > entry.expiresAt();
+     }
+ };
+ 
+--- a/src/server/worker.zig
++++ b/src/server/worker.zig
+@@ -2509,15 +2509,14 @@
+                     }
+                     const entry = entry_opt.?;
+ 
+-                    if (entry.flags.deleted or
+-                        (entry.flags.has_ttl and ckv.nowMillis() > entry.expires_at))
++                    if (entry.hasTtl() and ckv.nowMillis() > entry.expiresAt())
+                     {
+                         writeNullTo(&conn.write_buf, conn.protocol_version);
+                         return true;
+                     }
+ 
+-                    if (entry.flags.is_integer) {
+-                        const int_val = entry.int_value;
++                    if (entry.isInteger()) {
++                        const int_val = entry.integerValue();
+                         var int_buf: [24]u8 = undefined;
+                         const int_str = std.fmt.bufPrint(&int_buf, "{d}", .{int_val}) catch return false;
+                         var hdr_buf: [32]u8 = undefined;
+@@ -2639,16 +2638,15 @@
+                             continue;
+                         }
+                         const entry = entry_opt.?;
+-                        if (entry.flags.deleted or
+-                            (entry.flags.has_ttl and ckv.nowMillis() > entry.expires_at))
++                        if (entry.hasTtl() and ckv.nowMillis() > entry.expiresAt())
+                         {
+                             ckv.readUnlockStripePublic(stripe);
+                             pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
+                             continue;
+                         }
+ 
+-                        if (entry.flags.is_integer) {
+-                            const int_val = entry.int_value;
++                        if (entry.isInteger()) {
++                            const int_val = entry.integerValue();
+                             ckv.readUnlockStripePublic(stripe);
+                             const s = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n{d}\r\n", .{
+                                 std.fmt.count("{d}", .{int_val}), int_val,
+@@ -2657,9 +2655,9 @@
+                             continue;
+                         }
+ 
+-                        if (entry.flags.is_inline) {
++                        if (entry.isInline()) {
+                             var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
+-                            const vlen = entry.inline_len;
++                            const vlen = entry.bytes().len;
+                             @memcpy(val_copy[0..vlen], entry.bytes());
+                             ckv.readUnlockStripePublic(stripe);
+                             const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
+@@ -2718,8 +2716,8 @@
+                     ckv.readLockStripePublic(stripe);
+                     var fast_new_val: ?i64 = null;
+                     if (stripe.map.getPtr(ns_key)) |entry| {
+-                        if (entry.flags.is_integer and !entry.flags.deleted) {
+-                            const int_ptr: *i64 = &entry.int_value;
++                        if (entry.isInteger()) {
++                            const int_ptr = entry.integerPtr().?;
+                             fast_new_val = @atomicRmw(i64, int_ptr, .Add, 1, .monotonic) + 1;
+                         }
+                     }
+@@ -3190,8 +3188,7 @@
+                                 if (!std.mem.startsWith(u8, user_key, pattern[0 .. pattern.len - 1])) continue;
+                             } else if (!std.mem.eql(u8, user_key, pattern)) continue;
+                             const e = entry.value_ptr;
+-                            if (e.flags.deleted) continue;
+-                            if (e.flags.has_ttl and ckv.nowMillis() > e.expires_at) continue;
++                            if (e.hasTtl() and ckv.nowMillis() > e.expiresAt()) continue;
+                             // Write key
+                             const kh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{user_key.len}) catch break;
+                             pos += kh.len;
+--- a/src/server/tcp.zig
++++ b/src/server/tcp.zig
+@@ -1140,8 +1140,7 @@
+                     const count = store.sweepExpired(now, &cursor, &removed);
+                     for (removed[0..count]) |stale| {
+                         watches.bumpVersion(stale.key);
+-                        store.allocator.free(stale.key);
+-                        if (stale.value) |value| store.allocator.free(value);
++                        store.freeExpired(stale);
+                     }
+                     mutex.unlock();
+                 }

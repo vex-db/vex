@@ -1,0 +1,202 @@
+diff --git a/src/server/event_loop.zig b/src/server/event_loop.zig
+index 5542ae4..14b6972 100644
+--- a/src/server/event_loop.zig
++++ b/src/server/event_loop.zig
+@@ -121,6 +121,38 @@ fn readUringFlags() u32 {
+     return URING_OPT_FLAGS;
+ }
+ 
++fn readSqHeadCache() bool {
++    const raw = std.c.getenv("VEX_SQ_HEAD_CACHE") orelse return false;
++    const s = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
++    return std.mem.eql(u8, s, "1");
++}
++
++fn sqHasCapacity(head: u32, tail: u32, entries: usize) bool {
++    return tail +% 1 -% head <= entries;
++}
++
++const SqHeadCache = struct {
++    head: u32 = 0,
++    valid: bool = false,
++
++    fn invalidate(self: *SqHeadCache) void {
++        self.valid = false;
++    }
++
++    fn reserve(self: *SqHeadCache, tail: u32, entries: usize, actual_head: *const u32) ?u32 {
++        const next = tail +% 1;
++        if (!self.valid) {
++            self.head = @atomicLoad(u32, actual_head, .acquire);
++            self.valid = true;
++        }
++        if (!sqHasCapacity(self.head, tail, entries)) {
++            self.head = @atomicLoad(u32, actual_head, .acquire);
++            if (!sqHasCapacity(self.head, tail, entries)) return null;
++        }
++        return next;
++    }
++};
++
+ pub const EventLoop = struct {
+     pub const Event = struct {
+         fd: i32,
+@@ -186,6 +218,11 @@ pub const EventLoop = struct {
+     /// be enabled from the worker thread before first submit. enableRing()
+     /// (called in Worker.run on the worker's own thread) flips this to false.
+     pending_enable: bool,
++    /// Opt-in only for the deferred SINGLE_ISSUER ring. recv/send use a
++    /// conservative cached SQ head between poll boundaries; poll/AOF remain
++    /// on stdlib get_sqe() so mixed callers cannot make this cache unsafe.
++    sq_head_cache_enabled: if (is_linux) bool else void,
++    sq_head_cache: if (is_linux) SqHeadCache else void,
+ 
+     pub fn init() !EventLoop {
+         if (is_linux) {
+@@ -241,6 +278,8 @@ pub const EventLoop = struct {
+             .spin_hot = false,
+             .spin_adaptive = readSpinAdaptive(),
+             .pending_enable = defer_enable,
++            .sq_head_cache_enabled = defer_enable and readSqHeadCache(),
++            .sq_head_cache = .{},
+         };
+ 
+         // A R_DISABLED ring cannot be submitted to until enabled from the sole
+@@ -256,7 +295,7 @@ pub const EventLoop = struct {
+         }
+ 
+         probes_mod.ring_mode.store(2, .monotonic);
+-        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={})", .{ defer_enable, defer_enable });
++        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={}, sq_head_cache={})", .{ defer_enable, defer_enable, self.sq_head_cache_enabled });
+ 
+         return self;
+     }
+@@ -329,6 +368,8 @@ pub const EventLoop = struct {
+             .spin_hot = false,
+             .spin_adaptive = true,
+             .pending_enable = false,
++            .sq_head_cache_enabled = false,
++            .sq_head_cache = .{},
+         };
+     }
+ 
+@@ -379,6 +420,8 @@ pub const EventLoop = struct {
+             .spin_hot = false,
+             .spin_adaptive = true,
+             .pending_enable = false,
++            .sq_head_cache_enabled = {},
++            .sq_head_cache = {},
+         };
+     }
+ 
+@@ -530,6 +573,10 @@ pub const EventLoop = struct {
+     fn pollIoUring(self: *EventLoop, out: []Event, timeout_ms: i32) ![]Event {
+         _ = timeout_ms; // io_uring submit_and_wait with wait_nr=1 blocks until at least 1 completion
+ 
++        // A new poll batch may include stdlib get_sqe() callers (poll/AOF), so
++        // never carry a cached head across this boundary.
++        if (is_linux and self.sq_head_cache_enabled) self.sq_head_cache.invalidate();
++
+         // A R_DISABLED ring rejects submit_and_wait with BADFD until enabled.
+         // The worker normally calls enableRing() explicitly before its poll loop
+         // (making it the SINGLE_ISSUER submitter); this lazy guard covers any
+@@ -816,18 +863,43 @@ pub const EventLoop = struct {
+ 
+     // --- io_uring helpers ---
+ 
++    fn getSqeRecvSend(self: *EventLoop) !*linux.io_uring_sqe {
++        if (!self.sq_head_cache_enabled) return self.ring.get_sqe();
++
++        const sq = &self.ring.sq;
++        // An old head only makes us report full conservatively. Refresh once
++        // before returning SubmissionQueueFull, and advance tail only after
++        // the actual capacity check succeeds.
++        const next = self.sq_head_cache.reserve(sq.sqe_tail, sq.sqes.len, sq.head) orelse return error.SubmissionQueueFull;
++        const sqe = &sq.sqes[sq.sqe_tail & sq.mask];
++        sq.sqe_tail = next;
++        return sqe;
++    }
++
+     fn submitPollAdd(self: *EventLoop, fd: i32, poll_mask: u32) !void {
+         _ = try self.ring.poll_add(encodeUserData(OP_POLL, fd), fd, poll_mask);
+     }
+ 
+     /// Submit a recv SQE. Buffer must remain valid until CQE.
+     pub fn submitRecv(self: *EventLoop, fd: i32, buf: []u8) !void {
+-        _ = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
++        if (is_linux and self.use_uring and self.sq_head_cache_enabled) {
++            const sqe = try self.getSqeRecvSend();
++            sqe.prep_recv(fd, buf, 0);
++            sqe.user_data = encodeUserData(OP_RECV, fd);
++        } else {
++            _ = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
++        }
+     }
+ 
+     /// Submit a send SQE. Buffer must remain valid until CQE.
+     pub fn submitSend(self: *EventLoop, fd: i32, buf: []const u8) !void {
+-        _ = try self.ring.send(encodeUserData(OP_SEND, fd), fd, buf, 0);
++        if (is_linux and self.use_uring and self.sq_head_cache_enabled) {
++            const sqe = try self.getSqeRecvSend();
++            sqe.prep_send(fd, buf, 0);
++            sqe.user_data = encodeUserData(OP_SEND, fd);
++        } else {
++            _ = try self.ring.send(encodeUserData(OP_SEND, fd), fd, buf, 0);
++        }
+     }
+ 
+     /// Submit a write SQE linked to fsync for AOF durability.
+@@ -869,5 +941,52 @@ fn setNonBlocking(fd: i32) void {
+     _ = std.c.fcntl(fd, std.c.F.SETFL, @as(c_int, flags) | o_nonblock);
+ }
+ 
+-// c_int is a builtin type, no need to redefine
++test "SQ head cache uses real recv/send SQEs conservatively" {
++    if (!is_linux) return;
++    var el: EventLoop = undefined;
++    var head: u32 = 0;
++    var sqes: [4]linux.io_uring_sqe = undefined;
++    var buf: [8]u8 = undefined;
++    el.use_uring = true;
++    el.sq_head_cache_enabled = true;
++    el.sq_head_cache = .{};
++    el.ring.sq.head = &head;
++    el.ring.sq.sqes = sqes[0..];
++    el.ring.sq.mask = 3;
++    el.ring.sq.sqe_tail = 0;
++
++    try el.submitRecv(3, buf[0..]);
++    try std.testing.expectEqual(linux.IORING_OP.RECV, sqes[0].opcode);
++    try std.testing.expectEqual(@as(i32, 3), sqes[0].fd);
++    try std.testing.expectEqual(@as(u32, buf.len), sqes[0].len);
++    try std.testing.expectEqual(encodeUserData(OP_RECV, 3), sqes[0].user_data);
++    try std.testing.expectEqual(@as(u32, 1), el.ring.sq.sqe_tail);
++
++    // A normal poll/AOF allocation can interleave without making the cached
++    // head unsafe; the cached path uses the real producer tail afterward.
++    _ = try el.ring.get_sqe();
++    try el.submitSend(3, buf[0..]);
++    try std.testing.expectEqual(linux.IORING_OP.SEND, sqes[2].opcode);
++    try std.testing.expectEqual(encodeUserData(OP_SEND, 3), sqes[2].user_data);
++    try std.testing.expectEqual(@as(u32, 3), el.ring.sq.sqe_tail);
++
++    try el.submitRecv(3, buf[0..]);
++    try std.testing.expectEqual(@as(u32, 4), el.ring.sq.sqe_tail);
++    // Full with the old head: refresh sees no capacity and leaves tail still 4.
++    try std.testing.expectError(error.SubmissionQueueFull, el.submitSend(3, buf[0..]));
++    try std.testing.expectEqual(@as(u32, 4), el.ring.sq.sqe_tail);
++    // Kernel consumption makes the refresh succeed.
++    head = 1;
++    try el.submitSend(3, buf[0..]);
++    try std.testing.expectEqual(@as(u32, 5), el.ring.sq.sqe_tail);
++
++    // Poll-boundary invalidation reloads the head lazily, and tail arithmetic wraps.
++    el.sq_head_cache.invalidate();
++    head = std.math.maxInt(u32);
++    el.ring.sq.sqe_tail = std.math.maxInt(u32);
++    try el.submitRecv(3, buf[0..]);
++    try std.testing.expectEqual(@as(u32, 0), el.ring.sq.sqe_tail);
++    try std.testing.expectEqual(linux.IORING_OP.RECV, sqes[3].opcode);
++}
+ 
++// c_int is a builtin type, no need to redefine

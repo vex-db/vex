@@ -1,0 +1,240 @@
+{
+  "status": "complete",
+  "cells": [
+    {
+      "cell": "1-control",
+      "server_identity": "PID=1 START=2000195 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 463406.34,
+      "p99_ms": 0.439,
+      "runtime_ms": 60000,
+      "operations": 27804483,
+      "server_cpu_seconds_per_op": 4.256770751680583e-06,
+      "client_cpu_seconds_per_op": 6.886876695387574e-06,
+      "server_rss_bytes": 480464896,
+      "server_headroom_fraction": 0.013689083333333296,
+      "client_headroom_fraction": 0.20214147500000001,
+      "client_max_thread_avg_pct": 10.2,
+      "server_throttle_fraction": 0.0006974833333333333,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_container_memory_bytes": 480772096.0,
+      "client_container_memory_bytes": 40705720.32,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409386156,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "variant": "control",
+      "binary_sha256": "1832adb3b99418ee341d7af677c8fb8074cf645ef1191de55bfe801e88db2145",
+      "server_image_id": "sha256:1bc7d5b989c159c1689a719a7239eb716ed369c19c6dc033fb68bb4f754da8be",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    },
+    {
+      "cell": "2-candidate",
+      "server_identity": "PID=1 START=2008447 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 416794.26,
+      "p99_ms": 0.495,
+      "runtime_ms": 60001,
+      "operations": 25007686,
+      "server_cpu_seconds_per_op": 4.721204033032085e-06,
+      "client_cpu_seconds_per_op": 7.488721747385983e-06,
+      "server_rss_bytes": 443494400,
+      "server_headroom_fraction": 0.01611343333333326,
+      "client_headroom_fraction": 0.21968499166666666,
+      "client_max_thread_avg_pct": 10.100000000000001,
+      "server_throttle_fraction": 0.0008933166666666667,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_container_memory_bytes": 443967078.4,
+      "client_container_memory_bytes": 40946892.8,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409386469,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "variant": "candidate",
+      "binary_sha256": "195502699d156f15a0e8d2e5d1442d33a378d3e55574d7da70d2d1a2c9074dea",
+      "server_image_id": "sha256:555ecb0713d64a6ceef950341a166135d94fc10317656c60d17702a4b2ed5105",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    },
+    {
+      "cell": "3-candidate",
+      "server_identity": "PID=1 START=2016485 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 403514.31,
+      "p99_ms": 0.495,
+      "runtime_ms": 60000,
+      "operations": 24211155,
+      "server_cpu_seconds_per_op": 4.855366462277409e-06,
+      "client_cpu_seconds_per_op": 7.665693561500886e-06,
+      "server_rss_bytes": 443535360,
+      "server_headroom_fraction": 0.020383083333333385,
+      "client_headroom_fraction": 0.22668627083333337,
+      "client_max_thread_avg_pct": 9.9,
+      "server_throttle_fraction": 0.00120105,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_container_memory_bytes": 443757363.2,
+      "client_container_memory_bytes": 41292922.88,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409386171,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "variant": "candidate",
+      "binary_sha256": "195502699d156f15a0e8d2e5d1442d33a378d3e55574d7da70d2d1a2c9074dea",
+      "server_image_id": "sha256:555ecb0713d64a6ceef950341a166135d94fc10317656c60d17702a4b2ed5105",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    },
+    {
+      "cell": "4-control",
+      "server_identity": "PID=1 START=2024526 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 442775.83,
+      "p99_ms": 0.471,
+      "runtime_ms": 60000,
+      "operations": 26566601,
+      "server_cpu_seconds_per_op": 4.446708745315217e-06,
+      "client_cpu_seconds_per_op": 7.161629333011025e-06,
+      "server_rss_bytes": 480559104,
+      "server_headroom_fraction": 0.015550524999999982,
+      "client_headroom_fraction": 0.20724937916666664,
+      "client_max_thread_avg_pct": 10.100000000000001,
+      "server_throttle_fraction": 0.0010802,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 15,
+      "server_container_memory_bytes": 480876953.6,
+      "client_container_memory_bytes": 40433090.56,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409386875,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "variant": "control",
+      "binary_sha256": "1832adb3b99418ee341d7af677c8fb8074cf645ef1191de55bfe801e88db2145",
+      "server_image_id": "sha256:1bc7d5b989c159c1689a719a7239eb716ed369c19c6dc033fb68bb4f754da8be",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    }
+  ],
+  "comparison": {
+    "pairs": [
+      {
+        "control_ops_per_sec": 463406.34,
+        "candidate_ops_per_sec": 416794.26,
+        "throughput_ratio": 0.8994142376213498,
+        "control_p99_ms": 0.439,
+        "candidate_p99_ms": 0.495,
+        "control_cpu_per_op": 4.256770751680583e-06,
+        "candidate_cpu_per_op": 4.721204033032085e-06,
+        "control_rss_bytes": 480464896,
+        "candidate_rss_bytes": 443494400,
+        "rss_saving_bytes": 36970496
+      },
+      {
+        "control_ops_per_sec": 442775.83,
+        "candidate_ops_per_sec": 403514.31,
+        "throughput_ratio": 0.9113286739251327,
+        "control_p99_ms": 0.471,
+        "candidate_p99_ms": 0.495,
+        "control_cpu_per_op": 4.446708745315217e-06,
+        "candidate_cpu_per_op": 4.855366462277409e-06,
+        "control_rss_bytes": 480559104,
+        "candidate_rss_bytes": 443535360,
+        "rss_saving_bytes": 37023744
+      }
+    ],
+    "control_ops_median": 453091.085,
+    "candidate_ops_median": 410154.28500000003,
+    "median_rss_saving_bytes": 36997120.0,
+    "primary_pass": false,
+    "reasons": [
+      "paired throughput below 98%",
+      "paired p99 regression above 5%",
+      "paired CPU/op regression above 2%",
+      "paired throughput below 98%",
+      "paired p99 regression above 5%",
+      "paired CPU/op regression above 2%",
+      "median throughput below 98%"
+    ],
+    "interpretation": "bounded memory-layout pilot; no default promotion claim"
+  },
+  "protocol": {
+    "network": "vex-entry-layout-20260922",
+    "order": [
+      [
+        "1-control",
+        "control"
+      ],
+      [
+        "2-candidate",
+        "candidate"
+      ],
+      [
+        "3-candidate",
+        "candidate"
+      ],
+      [
+        "4-control",
+        "control"
+      ]
+    ],
+    "control_image_id": "sha256:1bc7d5b989c159c1689a719a7239eb716ed369c19c6dc033fb68bb4f754da8be",
+    "candidate_image_id": "sha256:555ecb0713d64a6ceef950341a166135d94fc10317656c60d17702a4b2ed5105",
+    "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7",
+    "control_binary_sha256": "1832adb3b99418ee341d7af677c8fb8074cf645ef1191de55bfe801e88db2145",
+    "candidate_binary_sha256": "195502699d156f15a0e8d2e5d1442d33a378d3e55574d7da70d2d1a2c9074dea",
+    "workers": 2,
+    "server_cpus": "0-1",
+    "server_quota": 2,
+    "client_cpus": "2-5",
+    "client_quota": 4,
+    "keys": 1000000,
+    "key_range": [
+      1000000,
+      1999999
+    ],
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "threads": 32,
+    "connections": 128,
+    "pipeline": 1,
+    "ratio": "1:4",
+    "warmup_seconds": 10,
+    "timed_seconds": 60,
+    "clock_metadata_required": true,
+    "gates": {
+      "paired_throughput_min": 0.98,
+      "median_throughput_min": 0.98,
+      "paired_p99_max_ratio": 1.05,
+      "paired_cpu_max_ratio": 1.02,
+      "paired_and_median_rss_saving_bytes": 25165824
+    },
+    "interpretation": "bounded memory-layout pilot; no default promotion claim",
+    "docker_version": "Docker version 29.2.0, build 0b9d198",
+    "within_mode_variation_max": 0.05,
+    "source_sha256": {
+      "build.zig": "99156697ee29232c972127f60e06598664843443fa305aa49d1edaa3c98f2823",
+      "src/engine/kv/concurrent_kv.zig": "c5132143b7699c747f3892872557c67288da5d53d9ad5529d579c1a831e11768",
+      "src/server/worker.zig": "c8329f5feb19c7c0c0a0403cbd6ba41817f58c14893dc32a8de503ac66af437d",
+      "src/server/event_loop.zig": "e4523c5b7e3c1fa13dae363da7278b50c64d73ab3549bce5cf8ef7247c7dfb03",
+      "bench/loadtest/scripts/profile_local_docker.py": "8dd4b3070cc4edde5490f5cce72511305cabc58f98ca31ac6f399b809f11b3ad",
+      "bench/loadtest/scripts/compare_entry_layouts.py": "efb349b9f2c76e757c4605be3647cc31c3fa6b32a0eaee19af64076cf5794653"
+    }
+  },
+  "raw_directory": "bench/loadtest/runs/2026-09-22-entry-layouts",
+  "candidate_disposition": "rejected; exact prototype changes removed from production source",
+  "rejected_patch": "bench/loadtest/results/entry-indirection-rejected.patch",
+  "rejected_patch_sha256": "01b11cbcd4306f5b521fa3a9db3b0b860b93f3b4751d17fcbc3ef5df8e6576d3",
+  "interpretation": "Failed bounded local mixed-P1 viability screen. Both pairs fail throughput, p99 and CPU/op guards while saving RSS. Within-run drift limits causal precision; do not claim a universal code penalty. No default promotion or further benchmark runs.",
+  "within_mode_variation": {
+    "control": 0.0455328093687829,
+    "candidate": 0.032377937975218304
+  },
+  "cleanup": "Verified: all experiment containers, networks and socket volumes removed; unrelated development containers preserved. Reproducible local images retained."
+}

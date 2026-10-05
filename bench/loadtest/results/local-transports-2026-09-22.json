@@ -1,0 +1,200 @@
+{
+  "status": "inconclusive",
+  "reason": "inconclusive: 1-worker uds variation 15.685% exceeds 5%",
+  "cells": [
+    {
+      "cell": "worker1-tcp-1",
+      "server_identity": "PID=1 START=1856416 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 222392.39,
+      "p99_ms": 0.887,
+      "runtime_ms": 60001,
+      "operations": 13343664,
+      "server_cpu_seconds_per_op": 4.397410336471302e-06,
+      "client_cpu_seconds_per_op": 8.459245526566018e-06,
+      "server_rss_bytes": 480710656,
+      "server_headroom_fraction": 0.02204056666666665,
+      "client_headroom_fraction": 0.5296777916666666,
+      "client_max_thread_avg_pct": 6.0,
+      "server_throttle_fraction": 5.381666666666667e-05,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_container_memory_bytes": 482554675.2,
+      "client_container_memory_bytes": 46493859.84,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409374797,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "workers": 1,
+      "transport": "tcp",
+      "binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f",
+      "server_image_id": "sha256:dce13e86968d9ff9c429688ee9ccd30d08fadae14ef68a63c81fc7061863fbbb",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    },
+    {
+      "cell": "worker1-uds-1",
+      "server_identity": "PID=1 START=1864482 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 560718.85,
+      "p99_ms": 0.423,
+      "runtime_ms": 60001,
+      "operations": 33643284,
+      "server_cpu_seconds_per_op": 1.763711800548365e-06,
+      "client_cpu_seconds_per_op": 3.7337246268824407e-06,
+      "server_rss_bytes": 480550912,
+      "server_headroom_fraction": 0.011049050000000005,
+      "client_headroom_fraction": 0.476605175,
+      "client_max_thread_avg_pct": 6.6000000000000005,
+      "server_throttle_fraction": 0.00010805,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_container_memory_bytes": 480352665.6,
+      "client_container_memory_bytes": 41146122.24,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409379003,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "workers": 1,
+      "transport": "uds",
+      "binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f",
+      "server_image_id": "sha256:dce13e86968d9ff9c429688ee9ccd30d08fadae14ef68a63c81fc7061863fbbb",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    },
+    {
+      "cell": "worker1-uds-2",
+      "server_identity": "PID=1 START=1872622 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 479164.55,
+      "p99_ms": 0.479,
+      "runtime_ms": 60000,
+      "operations": 28750134,
+      "server_cpu_seconds_per_op": 2.0632780355041128e-06,
+      "client_cpu_seconds_per_op": 4.1354394035172146e-06,
+      "server_rss_bytes": 480514048,
+      "server_headroom_fraction": 0.011341333333333425,
+      "client_headroom_fraction": 0.5046065125,
+      "client_max_thread_avg_pct": 6.3,
+      "server_throttle_fraction": 7.9e-05,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 15,
+      "server_container_memory_bytes": 480247808.0,
+      "client_container_memory_bytes": 40338718.72,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790060409379053,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "workers": 1,
+      "transport": "uds",
+      "binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f",
+      "server_image_id": "sha256:dce13e86968d9ff9c429688ee9ccd30d08fadae14ef68a63c81fc7061863fbbb",
+      "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    }
+  ],
+  "protocol": {
+    "network": "vex-transport-20260922",
+    "server_image_id": "sha256:dce13e86968d9ff9c429688ee9ccd30d08fadae14ef68a63c81fc7061863fbbb",
+    "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7",
+    "server_repo_digests": [
+      "vex-perf-local@sha256:dce13e86968d9ff9c429688ee9ccd30d08fadae14ef68a63c81fc7061863fbbb"
+    ],
+    "client_repo_digests": [
+      "vex-memtier-monotonic@sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7"
+    ],
+    "binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f",
+    "order": [
+      [
+        "worker1-tcp-1",
+        1,
+        "tcp"
+      ],
+      [
+        "worker1-uds-1",
+        1,
+        "uds"
+      ],
+      [
+        "worker1-uds-2",
+        1,
+        "uds"
+      ],
+      [
+        "worker1-tcp-2",
+        1,
+        "tcp"
+      ],
+      [
+        "worker2-uds-1",
+        2,
+        "uds"
+      ],
+      [
+        "worker2-tcp-1",
+        2,
+        "tcp"
+      ],
+      [
+        "worker2-tcp-2",
+        2,
+        "tcp"
+      ],
+      [
+        "worker2-uds-2",
+        2,
+        "uds"
+      ]
+    ],
+    "workers": [
+      1,
+      2
+    ],
+    "transports": [
+      "tcp",
+      "uds"
+    ],
+    "warmup_seconds": 10,
+    "timed_seconds": 60,
+    "stability_gate": 0.05,
+    "transport_difference_gate": 0.05,
+    "configuration": {
+      "keys": 1000000,
+      "key_minimum": 1000000,
+      "key_maximum": 1999999,
+      "key_bytes": 16,
+      "value_bytes": 256,
+      "threads": 32,
+      "connections": 128,
+      "pipeline": 1,
+      "ratio": "1:4",
+      "server_cpus": {
+        "1": "0",
+        "2": "0-1"
+      },
+      "server_quota": {
+        "1": 1,
+        "2": 2
+      },
+      "client_cpus": "2-5",
+      "client_quota": 4,
+      "socket_path": "/bench-sockets/vex.sock",
+      "socket_volume": "vex-transport-20260922-sockets"
+    },
+    "clock_metadata": {
+      "required": true,
+      "clock_source": "CLOCK_MONOTONIC",
+      "source_tag": "2.5.1",
+      "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+    },
+    "docker_version": "Docker version 29.2.0, build 0b9d198"
+  },
+  "raw_directory": "bench/loadtest/runs/2026-09-22-local-transports",
+  "interpretation": "Stopped at declared repeatability guard; three individually valid timed cells do not establish a paired transport gain or one-to-two-worker scaling. Remaining five cells were not run.",
+  "helper_sha256": "8dd4b3070cc4edde5490f5cce72511305cabc58f98ca31ac6f399b809f11b3ad",
+  "runner_sha256": "eeb47c217746c99dcd26f53f9b4742cc92a4e997db347e28a34f69e02fea8318",
+  "cleanup": "Verified: all experiment containers, networks and socket volumes removed; unrelated development containers preserved. Reproducible local images retained."
+}

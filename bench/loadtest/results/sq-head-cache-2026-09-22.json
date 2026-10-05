@@ -1,0 +1,168 @@
+{
+  "status": "pilot_pass_confirmation_inconclusive_no_promotion",
+  "protocol": {
+    "image": "sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+    "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+    "order": [
+      [
+        "1-off",
+        false
+      ],
+      [
+        "2-on",
+        true
+      ],
+      [
+        "3-on",
+        true
+      ],
+      [
+        "4-off",
+        false
+      ]
+    ],
+    "timed_seconds": 60,
+    "warmup_seconds": 10,
+    "gain_gate": 0.03,
+    "p99_regression_gate": 0.05,
+    "rss_regression_gate": 0.02
+  },
+  "source": {
+    "head": "72958ac8a04961166c74eab36b3fddc385ddc5b0",
+    "source_archive_sha256": "cd43c134cf2f5efb3d727d8b7de84e3e24fcccc06bd9f97e471a476e2f80ae9e",
+    "production_diff_files": [
+      "src/server/event_loop.zig"
+    ]
+  },
+  "rows": [
+    {
+      "cell": "1-off",
+      "server_identity": "PID=1 START=800982 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 440976.71,
+      "p99_ms": 0.503,
+      "runtime_ms": 60001,
+      "operations": 26458652,
+      "server_cpu_seconds_per_op": 4.46446050993074e-06,
+      "client_cpu_seconds_per_op": 7.236929568445134e-06,
+      "server_headroom_fraction": 0.015636608333333246,
+      "client_headroom_fraction": 0.20216916250000005,
+      "client_max_thread_avg_pct": 10.2,
+      "server_throttle_fraction": 0.0011340666666666667,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 15,
+      "server_rss_bytes": 480550912,
+      "server_container_memory_bytes": 480876953.6,
+      "client_container_memory_bytes": 40925921.28,
+      "enabled": false,
+      "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+      "errors": 0,
+      "misses": 0
+    },
+    {
+      "cell": "2-on",
+      "server_identity": "PID=1 START=809661 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 464454.47,
+      "p99_ms": 0.439,
+      "runtime_ms": 60001,
+      "operations": 27867320,
+      "server_cpu_seconds_per_op": 4.236059011056679e-06,
+      "client_cpu_seconds_per_op": 6.858180549833999e-06,
+      "server_headroom_fraction": 0.01626989999999995,
+      "client_headroom_fraction": 0.2036703666666667,
+      "client_max_thread_avg_pct": 10.100000000000001,
+      "server_throttle_fraction": 0.0009986666666666666,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_rss_bytes": 480403456,
+      "server_container_memory_bytes": 480667238.4,
+      "client_container_memory_bytes": 40873492.48,
+      "enabled": true,
+      "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+      "errors": 0,
+      "misses": 0
+    },
+    {
+      "cell": "3-on",
+      "server_identity": "PID=1 START=817798 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 468666.23,
+      "p99_ms": 0.447,
+      "runtime_ms": 60001,
+      "operations": 28120351,
+      "server_cpu_seconds_per_op": 4.206633480499586e-06,
+      "client_cpu_seconds_per_op": 6.845385251414537e-06,
+      "server_headroom_fraction": 0.014233249999999975,
+      "client_headroom_fraction": 0.19793901666666658,
+      "client_max_thread_avg_pct": 10.2,
+      "server_throttle_fraction": 0.0009688,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_rss_bytes": 480595968,
+      "server_container_memory_bytes": 480981811.2,
+      "client_container_memory_bytes": 40726691.84,
+      "enabled": true,
+      "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+      "errors": 0,
+      "misses": 0
+    },
+    {
+      "cell": "4-off",
+      "server_identity": "PID=1 START=825898 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 441016.81,
+      "p99_ms": 0.479,
+      "runtime_ms": 60001,
+      "operations": 26461059,
+      "server_cpu_seconds_per_op": 4.467368860785201e-06,
+      "client_cpu_seconds_per_op": 7.147049330111844e-06,
+      "server_headroom_fraction": 0.014905741666666694,
+      "client_headroom_fraction": 0.21200627500000002,
+      "client_max_thread_avg_pct": 10.0,
+      "server_throttle_fraction": 0.0009163666666666667,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 14,
+      "server_rss_bytes": 480600064,
+      "server_container_memory_bytes": 480876953.6,
+      "client_container_memory_bytes": 40957378.56,
+      "enabled": false,
+      "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+      "errors": 0,
+      "misses": 0
+    }
+  ],
+  "comparison": {
+    "measurement_valid": true,
+    "signal_pass": true,
+    "gain": 0.057967750148549824,
+    "within_mode_variation": 0.009027256602495282,
+    "off_ops_median": 440996.76,
+    "on_ops_median": 466560.35,
+    "reasons": [],
+    "constrained": false
+  },
+  "correctness": {
+    "unit_tests": 258,
+    "integration_suites": [
+      "recv_poll_first.py",
+      "compact_values.py"
+    ],
+    "modes": [
+      "off",
+      "on",
+      "requested_on_plain_ring"
+    ],
+    "all_passed": true
+  },
+  "independent_review": "Astra raw-artifact audit passed configuration, identity, correctness, resources and recomputed decision",
+  "limitations": [
+    "Two samples per mode in a shared native ARM64 Docker Desktop VM.",
+    "Mode medians do not establish confidence intervals or AWS performance.",
+    "Same-binary toggle comparison does not independently measure patch-off overhead versus unmodified source."
+  ],
+  "raw_artifacts": "bench/loadtest/runs/2026-09-22-sq-head-cache",
+  "default_promotion": false,
+  "confirmation_result": "bench/loadtest/results/sq-head-cache-confirmation-2026-09-22.json",
+  "additional_latency_audit": "All four pilot timed samples and four warmups pass runtime/concurrency latency consistency bounds."
+}

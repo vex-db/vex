@@ -1,0 +1,520 @@
+diff --git a/build.zig b/build.zig
+index a55b600..cb252f6 100644
+--- a/build.zig
++++ b/build.zig
+@@ -57,9 +57,11 @@ pub fn build(b: *std.Build) void {
+     // dedicated Makefile targets (test-tsan, test-release-safe).
+     const sanitize_thread = b.option(bool, "sanitize-thread", "Enable ThreadSanitizer") orelse false;
+     const sanitize_c = b.option(bool, "sanitize-c", "Enable UBSan / -fsanitize-c=full") orelse false;
++    const indirect_reactor_entries = b.option(bool, "indirect-reactor-entries", "Store ConcurrentKV reactor entries behind pointers") orelse false;
+ 
+     const build_opts = b.addOptions();
+     build_opts.addOption([]const u8, "version", vex_version);
++    build_opts.addOption(bool, "indirect_reactor_entries", indirect_reactor_entries);
+     const build_opts_mod = build_opts.createModule();
+ 
+     // ── vex binary ────────────────────────────────────────────────────
+diff --git a/src/engine/kv/concurrent_kv.zig b/src/engine/kv/concurrent_kv.zig
+index dc848cf..96efc56 100644
+--- a/src/engine/kv/concurrent_kv.zig
++++ b/src/engine/kv/concurrent_kv.zig
+@@ -3,6 +3,9 @@ const Allocator = std.mem.Allocator;
+ const KVStore = @import("kv.zig").KVStore;
+ const EvictionPolicy = @import("kv.zig").EvictionPolicy;
+ const obs_stats = @import("../../observability/stats.zig");
++const build_options = @import("build_options");
++
++const INDIRECT_REACTOR_ENTRIES = build_options.indirect_reactor_entries;
+ 
+ const STRIPE_COUNT = 256;
+ const STRIPE_MASK = STRIPE_COUNT - 1;
+@@ -97,11 +100,16 @@ pub const ConcurrentKV = struct {
+         }
+     };
+ 
++    /// The map stores compact values by default. The experiment stores one
++    /// separately allocated Entry per key while keeping this access helper
++    /// identical at call sites.
++    pub const StoredEntry = if (INDIRECT_REACTOR_ENTRIES) *Entry else Entry;
++
+     /// Cache-line aligned to prevent false sharing between workers.
+     /// Uses pthread_rwlock: GETs take read-lock (parallel), SETs take write-lock (exclusive).
+     const Stripe = struct {
+         rwlock: std.c.pthread_rwlock_t align(64) = std.mem.zeroes(std.c.pthread_rwlock_t),
+-        map: std.StringHashMap(Entry),
++        map: std.StringHashMap(StoredEntry),
+         ttl_count: u32 = 0,
+         tombstone_count: u32 = 0,
+     };
+@@ -123,12 +131,21 @@ pub const ConcurrentKV = struct {
+             .io = io,
+         };
+         for (&self.stripes) |*s| {
+-            s.map = std.StringHashMap(Entry).init(allocator);
++            s.map = std.StringHashMap(StoredEntry).init(allocator);
+             // Zero-init rwlock — works on Linux. macOS needs initStripes() after placement.
+         }
+         return self;
+     }
+ 
++    pub fn entryFromValuePtr(_: *ConcurrentKV, value: *StoredEntry) *Entry {
++        return if (INDIRECT_REACTOR_ENTRIES) value.* else value;
++    }
++
++    fn destroyEntry(self: *ConcurrentKV, entry: *Entry) void {
++        entry.freeValue(self.allocator);
++        if (INDIRECT_REACTOR_ENTRIES) self.allocator.destroy(entry);
++    }
++
+     /// Initialize rwlocks after placement for macOS compatibility. Maps grow
+     /// under their stripe's exclusive lock instead of reserving millions of slots.
+     pub fn initStripes(self: *ConcurrentKV) void {
+@@ -143,7 +160,7 @@ pub const ConcurrentKV = struct {
+             var iter = s.map.iterator();
+             while (iter.next()) |entry| {
+                 self.allocator.free(entry.key_ptr.*);
+-                entry.value_ptr.freeValue(self.allocator);
++                self.destroyEntry(self.entryFromValuePtr(entry.value_ptr));
+             }
+             s.map.deinit();
+         }
+@@ -155,19 +172,44 @@ pub const ConcurrentKV = struct {
+         while (iter.next()) |entry| {
+             const idx = stripeIndex(entry.key_ptr.*);
+             const s = &self.stripes[idx];
++            if (entry.value_ptr.flags.deleted) continue; // skip tombstones
+             const owned_key = try self.allocator.dupe(u8, entry.key_ptr.*);
+             errdefer self.allocator.free(owned_key);
+             const owned_val = try self.allocator.dupe(u8, entry.value_ptr.value);
+             errdefer self.allocator.free(owned_val);
+-            if (entry.value_ptr.flags.deleted) continue; // skip tombstones
+             var flags = entry.value_ptr.flags;
+             flags.is_inline = false; // imported values are heap-allocated, not inline
+-            try s.map.put(owned_key, .{
++            const owned_key_len = owned_key.len;
++            const imported: Entry = .{
+                 .storage = .{ .heap = .{ .ptr = owned_val.ptr, .len = owned_val.len, .capacity = owned_val.len } },
+                 .expires_at = entry.value_ptr.expires_at,
+                 .flags = flags,
+-            });
+-            _ = self.total_bytes.fetchAdd(owned_key.len + owned_val.len, .monotonic);
++            };
++            const imported_ptr: ?*Entry = if (INDIRECT_REACTOR_ENTRIES) blk: {
++                const ptr = self.allocator.create(Entry) catch return error.OutOfMemory;
++                ptr.* = imported;
++                break :blk ptr;
++            } else null;
++            errdefer if (imported_ptr) |ptr| self.allocator.destroy(ptr);
++            const gop = try s.map.getOrPut(owned_key);
++            if (gop.found_existing) {
++                self.allocator.free(owned_key);
++                const old = self.entryFromValuePtr(gop.value_ptr);
++                const old_key_len = gop.key_ptr.*.len;
++                const old_bytes = old.bytes().len;
++                self.destroyEntry(old);
++                if (INDIRECT_REACTOR_ENTRIES) {
++                    gop.value_ptr.* = imported_ptr.?;
++                } else {
++                    gop.value_ptr.* = imported;
++                }
++                _ = self.total_bytes.fetchSub(old_bytes + old_key_len, .monotonic);
++            } else if (INDIRECT_REACTOR_ENTRIES) {
++                gop.value_ptr.* = imported_ptr.?;
++            } else {
++                gop.value_ptr.* = imported;
++            }
++            _ = self.total_bytes.fetchAdd(owned_key_len + owned_val.len, .monotonic);
+         }
+     }
+ 
+@@ -178,7 +220,7 @@ pub const ConcurrentKV = struct {
+         readLockStripe(s);
+         defer readUnlockStripe(s);
+ 
+-        const entry = s.map.getPtr(key) orelse return null;
++        const entry = self.entryFromValuePtr(s.map.getPtr(key) orelse return null);
+         if (self.isExpired(entry)) return null;
+         if (entry.flags.is_integer) {
+             // Format native int to string
+@@ -215,17 +257,37 @@ pub const ConcurrentKV = struct {
+         const gop = s.map.getOrPut(owned_key) catch {
+             return .{ .stale_val = owned_value, .stale_key = owned_key };
+         };
+-        const old_len = if (gop.found_existing) gop.value_ptr.bytes().len else 0;
+-        const old_val = if (gop.found_existing and !gop.value_ptr.flags.is_inline)
+-            gop.value_ptr.allocation()
+-        else
+-            null;
++        const existing = if (gop.found_existing) self.entryFromValuePtr(gop.value_ptr) else null;
++        const old_len = if (existing) |entry| entry.bytes().len else 0;
++        const old_val = if (existing) |entry| if (!entry.flags.is_inline) entry.allocation() else null else null;
++        if (INDIRECT_REACTOR_ENTRIES) {
++            if (existing) |entry| {
++                entry.* = .{
++                    .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
++                    .expires_at = expires_at,
++                    .flags = .{ .has_ttl = expires_at != 0 },
++                };
++            } else {
++                const new_entry = self.allocator.create(Entry) catch {
++                    s.map.removeByPtr(gop.key_ptr);
++                    return .{ .stale_val = owned_value, .stale_key = owned_key };
++                };
++                new_entry.* = .{
++                    .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
++                    .expires_at = expires_at,
++                    .flags = .{ .has_ttl = expires_at != 0 },
++                };
++                gop.value_ptr.* = new_entry;
++            }
++        } else {
++            const entry = if (existing) |entry| entry else gop.value_ptr;
++            entry.* = .{
++                .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
++                .expires_at = expires_at,
++                .flags = .{ .has_ttl = expires_at != 0 },
++            };
++        }
+         gop.key_ptr.* = if (gop.found_existing) gop.key_ptr.* else owned_key;
+-        gop.value_ptr.* = .{
+-            .storage = .{ .heap = .{ .ptr = owned_value.ptr, .len = owned_value.len, .capacity = owned_value.len } },
+-            .expires_at = expires_at,
+-            .flags = .{ .has_ttl = expires_at != 0 },
+-        };
+         const added = owned_value.len + (if (gop.found_existing) @as(usize, 0) else owned_key.len);
+         if (added > old_len) _ = self.total_bytes.fetchAdd(added - old_len, .monotonic);
+         if (added < old_len) _ = self.total_bytes.fetchSub(old_len - added, .monotonic);
+@@ -247,10 +309,13 @@ pub const ConcurrentKV = struct {
+         writeLockStripe(s);
+         const result = s.map.fetchRemove(key);
+         writeUnlockStripe(s);
+-        if (result) |kv| {
++        if (result) |removed_value| {
++            var kv = removed_value;
+             // Inline values point into the entry's inline_buf (not heap-allocated) — don't free
+-            const stale_val = if (!kv.value.flags.is_inline) kv.value.allocation() else null;
+-            const removed_bytes = kv.key.len + kv.value.bytes().len;
++            const removed_entry = self.entryFromValuePtr(&kv.value);
++            const stale_val = if (!removed_entry.flags.is_inline) removed_entry.allocation() else null;
++            const removed_bytes = kv.key.len + removed_entry.bytes().len;
++            if (INDIRECT_REACTOR_ENTRIES) self.allocator.destroy(removed_entry);
+             _ = self.total_bytes.fetchSub(removed_bytes, .monotonic);
+             return .{ .found = true, .stale_key = kv.key, .stale_val = stale_val };
+         }
+@@ -269,7 +334,7 @@ pub const ConcurrentKV = struct {
+         readLockStripe(s);
+         defer readUnlockStripe(s);
+ 
+-        const entry = s.map.getPtr(key) orelse return false;
++        const entry = self.entryFromValuePtr(s.map.getPtr(key) orelse return false);
+         if (self.isExpired(entry)) return false;
+         return true;
+     }
+@@ -279,7 +344,7 @@ pub const ConcurrentKV = struct {
+         readLockStripe(s);
+         defer readUnlockStripe(s);
+ 
+-        const entry = s.map.getPtr(key) orelse return null;
++        const entry = self.entryFromValuePtr(s.map.getPtr(key) orelse return null);
+         if (self.isExpired(entry)) return null;
+         if (!entry.flags.has_ttl) return -1;
+         return @divTrunc(entry.expires_at - self.nowMillis(), 1000);
+@@ -298,13 +363,13 @@ pub const ConcurrentKV = struct {
+         for (&self.stripes) |*s| {
+             writeLockStripe(s);
+             var old_map = s.map;
+-            s.map = std.StringHashMap(Entry).init(alloc);
++            s.map = std.StringHashMap(StoredEntry).init(alloc);
+             writeUnlockStripe(s);
+ 
+             var iter = old_map.iterator();
+             while (iter.next()) |entry| {
+                 alloc.free(entry.key_ptr.*);
+-                entry.value_ptr.freeValue(alloc);
++                self.destroyEntry(self.entryFromValuePtr(entry.value_ptr));
+             }
+             old_map.deinit();
+         }
+@@ -348,7 +413,8 @@ pub const ConcurrentKV = struct {
+         writeLockStripe(s);
+ 
+         const result = s.map.getPtr(key);
+-        if (result) |existing| {
++        if (result) |stored| {
++            const existing = self.entryFromValuePtr(stored);
+             if (self.isExpired(existing)) {
+                 // Treat expired as 0
+                 existing.int_value = delta;
+@@ -385,15 +451,34 @@ pub const ConcurrentKV = struct {
+             writeUnlockStripe(s);
+             return error.OutOfMemory;
+         };
+-        s.map.put(owned_key, .{
+-            .int_value = delta,
+-            .last_access = self.cached_now_ms,
+-            .flags = .{ .is_integer = true },
+-        }) catch {
+-            alloc.free(owned_key);
+-            writeUnlockStripe(s);
+-            return error.OutOfMemory;
+-        };
++        if (INDIRECT_REACTOR_ENTRIES) {
++            const entry = alloc.create(Entry) catch {
++                alloc.free(owned_key);
++                writeUnlockStripe(s);
++                return error.OutOfMemory;
++            };
++            entry.* = .{
++                .int_value = delta,
++                .last_access = self.cached_now_ms,
++                .flags = .{ .is_integer = true },
++            };
++            s.map.put(owned_key, entry) catch {
++                alloc.destroy(entry);
++                alloc.free(owned_key);
++                writeUnlockStripe(s);
++                return error.OutOfMemory;
++            };
++        } else {
++            s.map.put(owned_key, .{
++                .int_value = delta,
++                .last_access = self.cached_now_ms,
++                .flags = .{ .is_integer = true },
++            }) catch {
++                alloc.free(owned_key);
++                writeUnlockStripe(s);
++                return error.OutOfMemory;
++            };
++        }
+ 
+         writeUnlockStripe(s);
+         return delta;
+@@ -430,8 +515,8 @@ pub const ConcurrentKV = struct {
+             // pre-check, subtract them from the projected delta.
+             var old_value_bytes: usize = 0;
+             var key_already_present: bool = false;
+-            if (s.map.getPtr(key)) |existing| {
+-                old_value_bytes = existing.bytes().len;
++            if (s.map.getPtr(key)) |stored| {
++                old_value_bytes = self.entryFromValuePtr(stored).bytes().len;
+                 key_already_present = true;
+             }
+ 
+@@ -448,7 +533,8 @@ pub const ConcurrentKV = struct {
+         }
+ 
+         const now = self.cached_now_ms;
+-        if (s.map.getPtr(key)) |existing| {
++        if (s.map.getPtr(key)) |stored| {
++            const existing = self.entryFromValuePtr(stored);
+             const old_value_len = existing.bytes().len;
+             try existing.replaceValue(alloc, value);
+             existing.flags = .{ .has_ttl = expires_at != 0, .is_inline = existing.flags.is_inline };
+@@ -464,7 +550,16 @@ pub const ConcurrentKV = struct {
+             errdefer entry.freeValue(alloc);
+             entry.flags.has_ttl = expires_at != 0;
+             // bytes() resolves inline storage at its current address after a move.
+-            try s.map.put(owned_key, entry);
++            if (INDIRECT_REACTOR_ENTRIES) {
++                const entry_ptr = try alloc.create(Entry);
++                entry_ptr.* = entry;
++                s.map.put(owned_key, entry_ptr) catch {
++                    alloc.destroy(entry_ptr);
++                    return error.OutOfMemory;
++                };
++            } else {
++                try s.map.put(owned_key, entry);
++            }
+             _ = self.total_bytes.fetchAdd(owned_key.len + value.len, .monotonic);
+         }
+     }
+@@ -489,9 +584,10 @@ pub const ConcurrentKV = struct {
+             var samples: usize = 0;
+             var it = s.map.iterator();
+             while (it.next()) |entry| {
+-                if (entry.value_ptr.flags.deleted) continue;
+-                if (entry.value_ptr.last_access < oldest_access) {
+-                    oldest_access = entry.value_ptr.last_access;
++                const candidate = self.entryFromValuePtr(entry.value_ptr);
++                if (candidate.flags.deleted) continue;
++                if (candidate.last_access < oldest_access) {
++                    oldest_access = candidate.last_access;
+                     oldest_key = entry.key_ptr.*;
+                 }
+                 samples += 1;
+@@ -501,9 +597,10 @@ pub const ConcurrentKV = struct {
+             const victim_key = oldest_key orelse return;
+ 
+             // Remove victim — this stripe is already write-locked, safe to mutate map.
+-            const removed = s.map.fetchRemove(victim_key) orelse return;
+-            const freed_bytes: usize = removed.key.len + removed.value.bytes().len;
+-            removed.value.freeValue(alloc);
++            var removed = s.map.fetchRemove(victim_key) orelse return;
++            const removed_entry = self.entryFromValuePtr(&removed.value);
++            const freed_bytes: usize = removed.key.len + removed_entry.bytes().len;
++            self.destroyEntry(removed_entry);
+             alloc.free(removed.key);
+ 
+             _ = self.total_bytes.fetchSub(freed_bytes, .monotonic);
+diff --git a/src/server/worker.zig b/src/server/worker.zig
+index 548e1c1..fbab88b 100644
+--- a/src/server/worker.zig
++++ b/src/server/worker.zig
+@@ -2497,7 +2497,7 @@ pub const Worker = struct {
+                         writeNullTo(&conn.write_buf, conn.protocol_version);
+                         return true;
+                     }
+-                    const entry = entry_opt.?;
++                    const entry = ckv.entryFromValuePtr(entry_opt.?);
+ 
+                     if (entry.flags.deleted or
+                         (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
+@@ -2631,7 +2631,7 @@ pub const Worker = struct {
+                             pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
+                             continue;
+                         }
+-                        const entry = entry_opt.?;
++                        const entry = ckv.entryFromValuePtr(entry_opt.?);
+                         if (entry.flags.deleted or
+                             (entry.flags.has_ttl and ckv.cached_now_ms > entry.expires_at))
+                         {
+@@ -2710,7 +2710,8 @@ pub const Worker = struct {
+                     const stripe = ckv.getStripePublic(ns_key);
+                     ckv.readLockStripePublic(stripe);
+                     var fast_new_val: ?i64 = null;
+-                    if (stripe.map.getPtr(ns_key)) |entry| {
++                    if (stripe.map.getPtr(ns_key)) |stored| {
++                        const entry = ckv.entryFromValuePtr(stored);
+                         if (entry.flags.is_integer and !entry.flags.deleted) {
+                             const int_ptr: *i64 = &entry.int_value;
+                             fast_new_val = @atomicRmw(i64, int_ptr, .Add, 1, .monotonic) + 1;
+@@ -3182,7 +3183,7 @@ pub const Worker = struct {
+                             if (pattern.len > 0 and pattern[pattern.len - 1] == '*') {
+                                 if (!std.mem.startsWith(u8, user_key, pattern[0 .. pattern.len - 1])) continue;
+                             } else if (!std.mem.eql(u8, user_key, pattern)) continue;
+-                            const e = entry.value_ptr;
++                            const e = ckv.entryFromValuePtr(entry.value_ptr);
+                             if (e.flags.deleted) continue;
+                             if (e.flags.has_ttl and ckv.cached_now_ms > e.expires_at) continue;
+                             // Write key
+@@ -3698,4 +3699,3 @@ fn constantTimeEql(a: []const u8, b: []const u8) bool {
+ fn log(comptime fmt: []const u8, args: anytype) void {
+     vex_log.info(fmt, args);
+ }
+-
+--- a/tests/unit/engine/concurrent_kv_test.zig
++++ b/tests/unit/engine/concurrent_kv_test.zig
+@@ -2,7 +2,9 @@
+ 
+ const std = @import("std");
+ const ConcurrentKV = @import("../../../src/engine/kv/concurrent_kv.zig").ConcurrentKV;
++const KVStore = @import("../../../src/engine/kv/kv.zig").KVStore;
+ const obs_stats = @import("../../../src/observability/stats.zig");
++const build_options = @import("build_options");
+ 
+ test "concurrent_kv basic set/get" {
+     var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+@@ -181,16 +183,16 @@
+     @memset(&small, 'c');
+     try store.set("k", &large);
+     const stripe = store.getStripePublic("k");
+-    const original = stripe.map.getPtr("k").?.bytes().ptr;
++    const original = store.entryFromValuePtr(stripe.map.getPtr("k").?).bytes().ptr;
+     try store.set("k", &medium);
+-    try std.testing.expectEqual(original, stripe.map.getPtr("k").?.bytes().ptr);
+-    try std.testing.expectEqual(@as(usize, 1024), stripe.map.getPtr("k").?.storage.heap.capacity);
++    try std.testing.expectEqual(original, store.entryFromValuePtr(stripe.map.getPtr("k").?).bytes().ptr);
++    try std.testing.expectEqual(@as(usize, 1024), store.entryFromValuePtr(stripe.map.getPtr("k").?).storage.heap.capacity);
+     try store.set("k", &large);
+-    try std.testing.expectEqual(original, stripe.map.getPtr("k").?.bytes().ptr);
++    try std.testing.expectEqual(original, store.entryFromValuePtr(stripe.map.getPtr("k").?).bytes().ptr);
+     try store.set("k", &small);
+-    try std.testing.expectEqual(@as(usize, 256), stripe.map.getPtr("k").?.storage.heap.capacity);
++    try std.testing.expectEqual(@as(usize, 256), store.entryFromValuePtr(stripe.map.getPtr("k").?).storage.heap.capacity);
+     try store.set("k", "42");
+-    try std.testing.expect(stripe.map.getPtr("k").?.flags.is_inline);
++    try std.testing.expect(store.entryFromValuePtr(stripe.map.getPtr("k").?).flags.is_inline);
+     try std.testing.expectEqual(@as(i64, 43), try store.incrBy("k", 1));
+     try store.set("k", &medium);
+     const got = store.get("k") orelse return error.TestUnexpectedResult;
+@@ -248,6 +250,80 @@
+     try std.testing.expectEqualStrings("new", value.data);
+     try std.testing.expectEqual(@as(u64, 4), store.total_bytes.load(.monotonic));
+     try store.set("k", "inline again");
++}
++
++test "concurrent_kv indirect entry allocation failure returns supplied ownership" {
++    if (!build_options.indirect_reactor_entries) return;
++    const alloc = std.testing.allocator;
++    var store = ConcurrentKV.init(alloc, std.testing.io);
++    store.initStripes();
++    defer store.deinit();
++
++    const key = try alloc.dupe(u8, "oom-key");
++    const value = try alloc.dupe(u8, "oom-value");
++    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
++    store.allocator = failing.allocator();
++    const stale = store.setPrealloc("oom-key", key, value, 0);
++    store.allocator = alloc;
++
++    try std.testing.expectEqual(@as(usize, 0), store.dbsize());
++    try std.testing.expect(stale.stale_key != null and stale.stale_val != null);
++    alloc.free(stale.stale_key.?);
++    alloc.free(stale.stale_val.?);
++}
++
++test "concurrent_kv import replaces entries and skips tombstones" {
++    var source = KVStore.init(std.testing.allocator, std.testing.io);
++    defer source.deinit();
++    try source.set("live", "value");
++    try source.set("deleted", "gone");
++    try std.testing.expect(source.delete("deleted"));
++
++    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
++    store.initStripes();
++    defer store.deinit();
++    try store.importFrom(&source);
++    try std.testing.expectEqual(@as(u64, 9), store.total_bytes.load(.monotonic));
++    try source.set("live", "longer-value");
++    try store.importFrom(&source);
++    try std.testing.expectEqual(@as(usize, 1), store.dbsize());
++    try std.testing.expectEqual(@as(u64, 16), store.total_bytes.load(.monotonic));
++    try std.testing.expect(store.get("deleted") == null);
++    const value = store.get("live") orelse return error.TestUnexpectedResult;
++    defer value.deinit();
++    try std.testing.expectEqualStrings("longer-value", value.data);
++}
++
++test "concurrent_kv insertion allocation failure leaves map empty" {
++    var value: [1024]u8 = undefined;
++    @memset(&value, 'x');
++    const attempts = if (build_options.indirect_reactor_entries) 4 else 3;
++    for (0..attempts) |fail_index| {
++        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
++        var store = ConcurrentKV.init(failing.allocator(), std.testing.io);
++        store.initStripes();
++        defer store.deinit();
++        try std.testing.expectError(error.OutOfMemory, store.set("allocation-failure", &value));
++        try std.testing.expectEqual(@as(usize, 0), store.dbsize());
++        try std.testing.expectEqual(@as(u64, 0), store.total_bytes.load(.monotonic));
++    }
++}
++
++test "concurrent_kv same-size overwrite keeps entry allocation" {
++    const alloc = std.testing.allocator;
++    var store = ConcurrentKV.init(alloc, std.testing.io);
++    store.initStripes();
++    defer store.deinit();
++    var value: [4096]u8 = undefined;
++    @memset(&value, 'a');
++    try store.set("stable", &value);
++    const before = store.entryFromValuePtr(store.getStripePublic("stable").map.getPtr("stable").?);
++    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
++    store.allocator = failing.allocator();
++    try store.set("stable", &value);
++    store.allocator = alloc;
++    const after = store.entryFromValuePtr(store.getStripePublic("stable").map.getPtr("stable").?);
++    try std.testing.expectEqual(before, after);
+ }
+ 
+ test "concurrent_kv mixed buffer sizes remain intact under contention" {

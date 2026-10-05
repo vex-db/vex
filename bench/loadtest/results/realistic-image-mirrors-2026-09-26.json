@@ -1,0 +1,10 @@
+{
+  "control": {
+    "original_image": "ghcr.io/vex-db/vex@sha256:6b26e41b1e9a4ae580a6df849ff23b0fac58f34fc517f3cfcabcbc7eb8fe5433",
+    "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:6b26e41b1e9a4ae580a6df849ff23b0fac58f34fc517f3cfcabcbc7eb8fe5433"
+  },
+  "candidate": {
+    "original_image": "ghcr.io/vex-db/vex@sha256:63436169f70cbfd38c94e0d35418bcef9594ddd4c561b5e3ee363a4106ba22b7",
+    "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:63436169f70cbfd38c94e0d35418bcef9594ddd4c561b5e3ee363a4106ba22b7"
+  }
+}

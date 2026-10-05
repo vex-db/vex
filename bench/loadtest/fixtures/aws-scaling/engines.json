@@ -1,0 +1,59 @@
+{
+  "redis": {
+    "image": "redis@sha256:2e940b1efbe5bae595d9cc7c4f5ecdc84497a63b2a8e1bfe7624a0fae2f05127",
+    "process_name": "redis-server",
+    "binary_path": "/usr/local/bin/redis-server",
+    "binary_sha256": "cb953788291192fcf2c312c4ea72573baf4d181ffc908bcad56dcad247f175a5",
+    "command": [
+      "/usr/local/bin/redis-server",
+      "--port",
+      "6379",
+      "--bind",
+      "0.0.0.0",
+      "--protected-mode",
+      "no",
+      "--save",
+      "",
+      "--appendonly",
+      "no",
+      "--io-threads",
+      "6"
+    ],
+    "version": "8.10.1",
+    "container": "engine"
+  },
+  "dragonfly": {
+    "image": "docker.dragonflydb.io/dragonflydb/dragonfly@sha256:f1749fc7d2f65abba9db8e6538d5a16e2ea617f0012346d33d3a295f1ea64231",
+    "process_name": "dragonfly",
+    "binary_path": "/usr/local/bin/dragonfly",
+    "binary_sha256": "8d4b7b6849690ab4952e1cb1d8ffce3d3594aea70ed3447c2946e0b443090f0f",
+    "command": [
+      "/usr/local/bin/dragonfly",
+      "--proactor_threads=6",
+      "--port=6379",
+      "--maxmemory=3gb",
+      "--snapshot_cron=",
+      "--cache_mode=false"
+    ],
+    "version": "2.0.0-40553fd842c2850b65787ed4da908d95aeab8834",
+    "container": "engine"
+  },
+  "candidate": {
+    "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:63436169f70cbfd38c94e0d35418bcef9594ddd4c561b5e3ee363a4106ba22b7",
+    "tag": "ghcr.io/vex-db/vex:0.8.1-rc.3",
+    "index_digest": "sha256:ca2ffef924b48bb3b0b18208ad0b33c43856800404aeb2167b4e1b4a48996752",
+    "binary_sha256": "f45260be52b1b8fe877c920c6cb2bdd993003fb54cb9f9a8414041b98c8aad65",
+    "source_commit": "e79ea4901427b0fdcb62817cd1606d72508e8983",
+    "process_name": "vex",
+    "command": [
+      "/usr/local/bin/vex",
+      "--reactor",
+      "--workers",
+      "6",
+      "--no-persistence",
+      "--port",
+      "6379"
+    ],
+    "original_image": "ghcr.io/vex-db/vex@sha256:63436169f70cbfd38c94e0d35418bcef9594ddd4c561b5e3ee363a4106ba22b7"
+  }
+}

@@ -1,0 +1,744 @@
+{
+  "settings": {
+    "namespace": "vex-service-path-20260922",
+    "context": "scrum-fresh",
+    "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+    "service": "benchmark-server",
+    "port": 6379,
+    "order": [
+      "A1-service",
+      "B1-pod",
+      "B2-pod",
+      "A2-service"
+    ],
+    "pipeline": 1,
+    "connections": 128,
+    "threads": 32,
+    "clients": 4,
+    "keys": 1000000,
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "ratio": "1:4",
+    "warmup_seconds": 10,
+    "sample_seconds": 60,
+    "backend": [
+      "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+      "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+      "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+      "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+      "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+      "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)"
+    ],
+    "server_machine": "c6a.2xlarge",
+    "server_cpu_quota": 6,
+    "server_memory_limit": "10Gi",
+    "client_machine": "c6a.8xlarge",
+    "client_cpu_quota": 24
+  },
+  "summary": [
+    {
+      "path": "Service ClusterIP",
+      "samples": 2,
+      "ops_median": 329446.33499999996,
+      "ops_range": [
+        326922.6,
+        331970.07
+      ],
+      "median_run_p99_ms": 0.703,
+      "p99_range_ms": [
+        0.703,
+        0.703
+      ],
+      "server_cpu_us_per_op": 17.899326878331877,
+      "server_user_us_per_op": 0.9916535131247772,
+      "server_system_us_per_op": 16.907673365207103,
+      "client_cpu_us_per_op": 38.03446023193599,
+      "peak_rss_mib": 459.9375,
+      "max_client_thread_avg_pct": 44.9,
+      "server_rx_packets_per_op": 1.0000329369950915,
+      "server_tx_packets_per_op": 1.0000164684975457,
+      "constrained": false
+    },
+    {
+      "path": "direct Pod IP",
+      "samples": 2,
+      "ops_median": 337409.005,
+      "ops_range": [
+        329905.56,
+        344912.45
+      ],
+      "median_run_p99_ms": 0.643,
+      "p99_range_ms": [
+        0.631,
+        0.655
+      ],
+      "server_cpu_us_per_op": 17.512256296463853,
+      "server_user_us_per_op": 1.0273930057868335,
+      "server_system_us_per_op": 16.48486326651645,
+      "client_cpu_us_per_op": 37.35157168137258,
+      "peak_rss_mib": 459.9296875,
+      "max_client_thread_avg_pct": 44.7,
+      "server_rx_packets_per_op": 1.0000322461393192,
+      "server_tx_packets_per_op": 1.0000161351499435,
+      "constrained": false
+    }
+  ],
+  "comparison": {
+    "pairs": [
+      {
+        "service_cell": "A1-service",
+        "pod_cell": "B1-pod",
+        "winner": "pod",
+        "throughput_gap": 0.00912436154612739,
+        "service_ops_per_sec": 326922.6,
+        "pod_ops_per_sec": 329905.56,
+        "service_p99_ms": 0.703,
+        "pod_p99_ms": 0.655,
+        "service_cpu_seconds_per_op": 1.8038980911319532e-05,
+        "pod_cpu_seconds_per_op": 1.7892763712842496e-05
+      },
+      {
+        "service_cell": "A2-service",
+        "pod_cell": "B2-pod",
+        "winner": "pod",
+        "throughput_gap": 0.03898658695345647,
+        "service_ops_per_sec": 331970.07,
+        "pod_ops_per_sec": 344912.45,
+        "service_p99_ms": 0.703,
+        "pod_p99_ms": 0.631,
+        "service_cpu_seconds_per_op": 1.7759672845344223e-05,
+        "pod_cpu_seconds_per_op": 1.7131748880085208e-05
+      }
+    ],
+    "winner": "pod",
+    "median_throughput_gap": 0.02405547424979193,
+    "measurement_valid": true,
+    "signal_pass": false,
+    "invalid_reasons": [],
+    "signal_reasons": [
+      "median throughput gap below 5%"
+    ]
+  },
+  "pod_vs_service_median_throughput_change": 0.024169854553094394,
+  "notes": [
+    "CPU counters include small control-execution overhead outside timed workload.",
+    "p99 summary is median of two run p99s, not combined request percentile.",
+    "Network deltas are pod eth0 counters and slightly wider than workload timing.",
+    "Same process and allocator history across ABBA; RSS is descriptive, not independent memory test."
+  ],
+  "runs": [
+    {
+      "cell": "A1-service",
+      "pipeline": 1,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 19615447,
+      "ops_per_sec": 326922.6,
+      "p99_ms": 0.703,
+      "runtime_ms": 60000,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "destination_port": 6379,
+      "backend": [
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)"
+      ],
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 459.8984375,
+        "mean_rss_mib": 459.89375,
+        "sample_span_seconds": 59.1399040222168,
+        "process_cpu_seconds": 348.76,
+        "process_cpu_cores": 5.89720267163408
+      },
+      "client_rss": {
+        "peak_rss_mib": 41.84375,
+        "mean_rss_mib": 39.468815104166666,
+        "sample_span_seconds": 59.06708383560181,
+        "process_cpu_seconds": 733.58,
+        "process_cpu_cores": 12.419438244856192
+      },
+      "server_cpu_delta": {
+        "usage_usec": 353842674,
+        "user_usec": 19502263,
+        "system_usec": 334340411,
+        "nr_periods": 604,
+        "nr_throttled": 1,
+        "throttled_usec": 518
+      },
+      "client_cpu_delta": {
+        "usage_usec": 745286817,
+        "user_usec": 183691196,
+        "system_usec": 561595621,
+        "nr_periods": 606,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.89720267163408,
+      "server_cgroup_cpu_seconds_per_op": 1.8038980911319532e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.799489336133916e-05,
+      "client_process_cpu_cores": 12.419438244856192,
+      "client_cpu_headroom_cores": 11.580561755143808,
+      "client_cpu_headroom_fraction": 0.48252340646432534,
+      "client_memtier_cpu_cores": 12.42,
+      "client_max_thread_avg_pct": 44.9,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 1.438888888888889e-06,
+          "throttled_wall_ratio": 8.633333333333333e-06,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "A1-service-server-before-proc-stat.txt",
+            "softirq": "A1-service-server-before-softirq.txt",
+            "netdev": "A1-service-server-before-netdev.txt",
+            "snmp": "A1-service-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "A1-service-client-before-proc-stat.txt",
+            "softirq": "A1-service-client-before-softirq.txt",
+            "netdev": "A1-service-client-before-netdev.txt",
+            "snmp": "A1-service-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "A1-service-server-after-proc-stat.txt",
+            "softirq": "A1-service-server-after-softirq.txt",
+            "netdev": "A1-service-server-after-netdev.txt",
+            "snmp": "A1-service-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "A1-service-client-after-proc-stat.txt",
+            "softirq": "A1-service-client-after-softirq.txt",
+            "netdev": "A1-service-client-after-netdev.txt",
+            "snmp": "A1-service-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 60.0,
+      "destination_path": "A",
+      "network_delta": {
+        "server": {
+          "rx_bytes": 3036529022,
+          "rx_packets": 19616101,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 5457027140,
+          "tx_packets": 19615774,
+          "tx_errors": 0,
+          "tx_drops": 0
+        },
+        "client": {
+          "rx_bytes": 5457022254,
+          "rx_packets": 19615705,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 3036519586,
+          "tx_packets": 19615963,
+          "tx_errors": 0,
+          "tx_drops": 0
+        }
+      }
+    },
+    {
+      "cell": "B1-pod",
+      "pipeline": 1,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 19794419,
+      "ops_per_sec": 329905.56,
+      "p99_ms": 0.655,
+      "runtime_ms": 60001,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "destination_port": 6379,
+      "backend": [
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)"
+      ],
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 459.9140625,
+        "mean_rss_mib": 459.91197916666664,
+        "sample_span_seconds": 59.12419080734253,
+        "process_cpu_seconds": 348.96999999999997,
+        "process_cpu_cores": 5.902321794764623
+      },
+      "client_rss": {
+        "peak_rss_mib": 41.94140625,
+        "mean_rss_mib": 39.52582097457627,
+        "sample_span_seconds": 58.05656027793884,
+        "process_cpu_seconds": 714.02,
+        "process_cpu_cores": 12.298696246930831
+      },
+      "server_cpu_delta": {
+        "usage_usec": 354176862,
+        "user_usec": 20490252,
+        "system_usec": 333686610,
+        "nr_periods": 604,
+        "nr_throttled": 3,
+        "throttled_usec": 1468
+      },
+      "client_cpu_delta": {
+        "usage_usec": 737904716,
+        "user_usec": 186536695,
+        "system_usec": 551368022,
+        "nr_periods": 607,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.902321794764623,
+      "server_cgroup_cpu_seconds_per_op": 1.7892763712842496e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.727842256951315e-05,
+      "client_process_cpu_cores": 12.298696246930831,
+      "client_cpu_headroom_cores": 11.701303753069169,
+      "client_cpu_headroom_fraction": 0.4875543230445487,
+      "client_memtier_cpu_cores": 12.297,
+      "client_max_thread_avg_pct": 43.1,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 4.077709815947512e-06,
+          "throttled_wall_ratio": 2.446625889568507e-05,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "B1-pod-server-before-proc-stat.txt",
+            "softirq": "B1-pod-server-before-softirq.txt",
+            "netdev": "B1-pod-server-before-netdev.txt",
+            "snmp": "B1-pod-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "B1-pod-client-before-proc-stat.txt",
+            "softirq": "B1-pod-client-before-softirq.txt",
+            "netdev": "B1-pod-client-before-netdev.txt",
+            "snmp": "B1-pod-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "B1-pod-server-after-proc-stat.txt",
+            "softirq": "B1-pod-server-after-softirq.txt",
+            "netdev": "B1-pod-server-after-netdev.txt",
+            "snmp": "B1-pod-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "B1-pod-client-after-proc-stat.txt",
+            "softirq": "B1-pod-client-after-softirq.txt",
+            "netdev": "B1-pod-client-after-netdev.txt",
+            "snmp": "B1-pod-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 60.001,
+      "destination_path": "B",
+      "network_delta": {
+        "server": {
+          "rx_bytes": 3064234442,
+          "rx_packets": 19795071,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 5506816407,
+          "tx_packets": 19794745,
+          "tx_errors": 0,
+          "tx_drops": 0
+        },
+        "client": {
+          "rx_bytes": 5506811591,
+          "rx_packets": 19794677,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 3064225006,
+          "tx_packets": 19794933,
+          "tx_errors": 0,
+          "tx_drops": 0
+        }
+      }
+    },
+    {
+      "cell": "B2-pod",
+      "pipeline": 1,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 20694878,
+      "ops_per_sec": 344912.45,
+      "p99_ms": 0.631,
+      "runtime_ms": 60001,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "destination_port": 6379,
+      "backend": [
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)"
+      ],
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 459.9296875,
+        "mean_rss_mib": 459.92955729166664,
+        "sample_span_seconds": 59.11799931526184,
+        "process_cpu_seconds": 349.33000000000004,
+        "process_cpu_cores": 5.9090294672711865
+      },
+      "client_rss": {
+        "peak_rss_mib": 41.9296875,
+        "mean_rss_mib": 39.5470703125,
+        "sample_span_seconds": 59.05249857902527,
+        "process_cpu_seconds": 762.1899999999999,
+        "process_cpu_cores": 12.90698985378276
+      },
+      "server_cpu_delta": {
+        "usage_usec": 354539453,
+        "user_usec": 21101181,
+        "system_usec": 333438271,
+        "nr_periods": 604,
+        "nr_throttled": 1,
+        "throttled_usec": 1404
+      },
+      "client_cpu_delta": {
+        "usage_usec": 774500031,
+        "user_usec": 189126426,
+        "system_usec": 585373605,
+        "nr_periods": 607,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.9090294672711865,
+      "server_cgroup_cpu_seconds_per_op": 1.7131748880085208e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.7424720793232026e-05,
+      "client_process_cpu_cores": 12.90698985378276,
+      "client_cpu_headroom_cores": 11.09301014621724,
+      "client_cpu_headroom_fraction": 0.462208756092385,
+      "client_memtier_cpu_cores": 12.907,
+      "client_max_thread_avg_pct": 44.7,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 3.899935001083315e-06,
+          "throttled_wall_ratio": 2.3399610006499893e-05,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "B2-pod-server-before-proc-stat.txt",
+            "softirq": "B2-pod-server-before-softirq.txt",
+            "netdev": "B2-pod-server-before-netdev.txt",
+            "snmp": "B2-pod-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "B2-pod-client-before-proc-stat.txt",
+            "softirq": "B2-pod-client-before-softirq.txt",
+            "netdev": "B2-pod-client-before-netdev.txt",
+            "snmp": "B2-pod-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "B2-pod-server-after-proc-stat.txt",
+            "softirq": "B2-pod-server-after-softirq.txt",
+            "netdev": "B2-pod-server-after-netdev.txt",
+            "snmp": "B2-pod-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "B2-pod-client-after-proc-stat.txt",
+            "softirq": "B2-pod-client-after-softirq.txt",
+            "netdev": "B2-pod-client-after-netdev.txt",
+            "snmp": "B2-pod-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 60.001,
+      "destination_path": "B",
+      "network_delta": {
+        "server": {
+          "rx_bytes": 3203625350,
+          "rx_packets": 20695531,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 5757324378,
+          "tx_packets": 20695205,
+          "tx_errors": 0,
+          "tx_drops": 0
+        },
+        "client": {
+          "rx_bytes": 5757319492,
+          "rx_packets": 20695136,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 3203615914,
+          "tx_packets": 20695393,
+          "tx_errors": 0,
+          "tx_drops": 0
+        }
+      }
+    },
+    {
+      "cell": "A2-service",
+      "pipeline": 1,
+      "connections": 128,
+      "threads": 32,
+      "clients": 4,
+      "ratio": "1:4",
+      "value_bytes": 256,
+      "key_count_before": 1000000,
+      "key_count_after": 1000000,
+      "operations": 19918286,
+      "ops_per_sec": 331970.07,
+      "p99_ms": 0.703,
+      "runtime_ms": 60000,
+      "connection_errors": 0,
+      "misses_per_sec": 0.0,
+      "destination_port": 6379,
+      "backend": [
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)",
+        "[2026-09-22T08:16:50Z] [INFO] event_loop: io_uring backend active (opt_flags=true, deferred_enable=true)"
+      ],
+      "binary_sha256": "200015d348ba5b5ce642fa3dd502d8249e3bb02c229f3bfef43a260f01778f0e",
+      "sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "post_sampled_values": {
+        "sampled_keys": 32,
+        "key_bytes": 16,
+        "value_bytes": 256,
+        "valid": true
+      },
+      "server_rss": {
+        "peak_rss_mib": 459.9375,
+        "mean_rss_mib": 459.9360677083333,
+        "sample_span_seconds": 59.155999183654785,
+        "process_cpu_seconds": 348.76,
+        "process_cpu_cores": 5.895598161012296
+      },
+      "client_rss": {
+        "peak_rss_mib": 41.765625,
+        "mean_rss_mib": 39.38821614583333,
+        "sample_span_seconds": 59.065027475357056,
+        "process_cpu_seconds": 746.4,
+        "process_cpu_cores": 12.63691954281086
+      },
+      "server_cpu_delta": {
+        "usage_usec": 353742243,
+        "user_usec": 19700722,
+        "system_usec": 334041521,
+        "nr_periods": 605,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "client_cpu_delta": {
+        "usage_usec": 758369361,
+        "user_usec": 183209004,
+        "system_usec": 575160357,
+        "nr_periods": 606,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "server_process_cpu_cores": 5.895598161012296,
+      "server_cgroup_cpu_seconds_per_op": 1.7759672845344223e-05,
+      "client_cgroup_cpu_seconds_per_op": 3.807402710253282e-05,
+      "client_process_cpu_cores": 12.63691954281086,
+      "client_cpu_headroom_cores": 11.36308045718914,
+      "client_cpu_headroom_fraction": 0.47346168571621416,
+      "client_memtier_cpu_cores": 12.638,
+      "client_max_thread_avg_pct": 44.4,
+      "client_headroom_constrained": false,
+      "throttle": [
+        {
+          "scope": "server",
+          "threshold": 0.01,
+          "cpu_quota": 6,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        },
+        {
+          "scope": "client",
+          "threshold": 0.01,
+          "cpu_quota": 24,
+          "throttled_quota_capacity_ratio": 0.0,
+          "throttled_wall_ratio": 0.0,
+          "significant": false
+        }
+      ],
+      "constrained": false,
+      "constraint_reasons": [],
+      "kernel_snapshots": {
+        "before": {
+          "server": {
+            "proc-stat": "A2-service-server-before-proc-stat.txt",
+            "softirq": "A2-service-server-before-softirq.txt",
+            "netdev": "A2-service-server-before-netdev.txt",
+            "snmp": "A2-service-server-before-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "A2-service-client-before-proc-stat.txt",
+            "softirq": "A2-service-client-before-softirq.txt",
+            "netdev": "A2-service-client-before-netdev.txt",
+            "snmp": "A2-service-client-before-snmp.txt"
+          }
+        },
+        "after": {
+          "server": {
+            "proc-stat": "A2-service-server-after-proc-stat.txt",
+            "softirq": "A2-service-server-after-softirq.txt",
+            "netdev": "A2-service-server-after-netdev.txt",
+            "snmp": "A2-service-server-after-snmp.txt"
+          },
+          "client": {
+            "proc-stat": "A2-service-client-after-proc-stat.txt",
+            "softirq": "A2-service-client-after-softirq.txt",
+            "netdev": "A2-service-client-after-netdev.txt",
+            "snmp": "A2-service-client-after-snmp.txt"
+          }
+        }
+      },
+      "wall_seconds": 60.0,
+      "destination_path": "A",
+      "network_delta": {
+        "server": {
+          "rx_bytes": 3083407092,
+          "rx_packets": 19918934,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 5541277724,
+          "tx_packets": 19918610,
+          "tx_errors": 0,
+          "tx_drops": 0
+        },
+        "client": {
+          "rx_bytes": 5541273048,
+          "rx_packets": 19918544,
+          "rx_errors": 0,
+          "rx_drops": 0,
+          "tx_bytes": 3083397928,
+          "tx_packets": 19918800,
+          "tx_errors": 0,
+          "tx_drops": 0
+        }
+      }
+    }
+  ],
+  "identity_checks": {
+    "same_server_process": true,
+    "same_server_and_endpoint": true,
+    "same_client": true
+  }
+}

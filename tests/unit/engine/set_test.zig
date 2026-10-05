@@ -4,7 +4,7 @@ const std = @import("std");
 const SetStore = @import("../../../src/engine/types/set.zig").SetStore;
 
 test "SADD and SISMEMBER" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     const added = try store.sadd("s", &[_][]const u8{ "a", "b", "c", "a" });
@@ -15,7 +15,7 @@ test "SADD and SISMEMBER" {
 }
 
 test "SREM" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.sadd("s", &[_][]const u8{ "a", "b", "c" });
@@ -26,7 +26,7 @@ test "SREM" {
 }
 
 test "SMEMBERS" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.sadd("s", &[_][]const u8{ "x", "y" });
@@ -36,7 +36,7 @@ test "SMEMBERS" {
 }
 
 test "SUNION" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.sadd("a", &[_][]const u8{ "1", "2" });
@@ -47,7 +47,7 @@ test "SUNION" {
 }
 
 test "SINTER" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.sadd("a", &[_][]const u8{ "1", "2", "3" });
@@ -58,7 +58,7 @@ test "SINTER" {
 }
 
 test "SDIFF" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.sadd("a", &[_][]const u8{ "1", "2", "3" });
@@ -69,7 +69,7 @@ test "SDIFF" {
 }
 
 test "empty after SREM auto-deletes" {
-    var store = SetStore.init(std.testing.allocator);
+    var store = try SetStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.sadd("tmp", &[_][]const u8{"x"});

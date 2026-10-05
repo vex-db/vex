@@ -14,7 +14,6 @@ const is_darwin = builtin.os.tag == .macos or builtin.os.tag == .ios or
     builtin.os.tag == .visionos;
 
 const MAX_EVENTS = 256;
-const FD_TABLE_SIZE = 4096;
 
 // io_uring operation tags encoded in upper bits of user_data
 const OP_POLL: u64 = 0;
@@ -121,6 +120,45 @@ fn readUringFlags() u32 {
     return URING_OPT_FLAGS;
 }
 
+fn readSqHeadCache() bool {
+    const raw = std.c.getenv("VEX_SQ_HEAD_CACHE") orelse return false;
+    const s = std.mem.trim(u8, std.mem.span(raw), " \t\r\n");
+    return std.mem.eql(u8, s, "1");
+}
+
+fn sqHasCapacity(head: u32, tail: u32, entries: usize) bool {
+    return tail +% 1 -% head <= entries;
+}
+
+const SqHeadCache = struct {
+    head: u32 = 0,
+    valid: bool = false,
+
+    fn invalidate(self: *SqHeadCache) void {
+        self.valid = false;
+    }
+
+    fn reserve(self: *SqHeadCache, tail: u32, entries: usize, actual_head: *const u32) ?u32 {
+        const next = tail +% 1;
+        if (!self.valid) {
+            self.head = @atomicLoad(u32, actual_head, .acquire);
+            self.valid = true;
+        }
+        if (!sqHasCapacity(self.head, tail, entries)) {
+            self.head = @atomicLoad(u32, actual_head, .acquire);
+            if (!sqHasCapacity(self.head, tail, entries)) return null;
+        }
+        return next;
+    }
+};
+
+const FdState = struct {
+    data: usize = 0,
+    active: bool = false,
+    want_write: bool = false,
+    poll_rearm: bool = false,
+};
+
 pub const EventLoop = struct {
     pub const Event = struct {
         fd: i32,
@@ -148,15 +186,10 @@ pub const EventLoop = struct {
     // --- macOS event buffer ---
     events_buf: if (is_darwin) [MAX_EVENTS]std.c.Kevent else void,
 
-    // --- Linux: fd -> user data + tracking which fds have active polls ---
-    fd_data: if (is_linux) [FD_TABLE_SIZE]usize else void,
-    fd_active: if (is_linux) [FD_TABLE_SIZE]bool else void,
-    fd_want_write: if (is_linux) [FD_TABLE_SIZE]bool else void,
-    /// Whether OP_POLL completions for this fd should re-arm the poll.
-    /// True for poll-driven fds (TLS, legacy); false for recv-mode fds,
-    /// which are driven by recv/send SQEs and only arm a poll transiently
-    /// while write interest is registered (send(2) EAGAIN fallback).
-    fd_poll_rearm: if (is_linux) [FD_TABLE_SIZE]bool else void,
+    // Worker-owned table, grown only when registering a new high fd. Polling
+    // stays a direct indexed lookup. recv-mode fds re-arm polls only for writes.
+    fd_entries: if (is_linux) std.ArrayList(FdState) else void,
+    fd_allocator: std.mem.Allocator = std.heap.page_allocator,
 
     /// use_uring is set at init time; if io_uring fails we fall back to epoll.
     use_uring: if (is_linux) bool else void,
@@ -186,6 +219,11 @@ pub const EventLoop = struct {
     /// be enabled from the worker thread before first submit. enableRing()
     /// (called in Worker.run on the worker's own thread) flips this to false.
     pending_enable: bool,
+    /// Opt-in only for the deferred SINGLE_ISSUER ring. recv/send use a
+    /// conservative cached SQ head between poll boundaries; poll/AOF remain
+    /// on stdlib get_sqe() so mixed callers cannot make this cache unsafe.
+    sq_head_cache_enabled: if (is_linux) bool else void,
+    sq_head_cache: if (is_linux) SqHeadCache else void,
 
     pub fn init() !EventLoop {
         if (is_linux) {
@@ -233,14 +271,13 @@ pub const EventLoop = struct {
             .notify_read_fd = efd,
             .notify_write_fd = efd,
             .events_buf = {},
-            .fd_data = @splat(0),
-            .fd_active = @splat(false),
-            .fd_want_write = @splat(false),
-            .fd_poll_rearm = @splat(false),
+            .fd_entries = .empty,
             .spin_ns = readSpinNs(),
             .spin_hot = false,
             .spin_adaptive = readSpinAdaptive(),
             .pending_enable = defer_enable,
+            .sq_head_cache_enabled = defer_enable and readSqHeadCache(),
+            .sq_head_cache = .{},
         };
 
         // A R_DISABLED ring cannot be submitted to until enabled from the sole
@@ -256,7 +293,7 @@ pub const EventLoop = struct {
         }
 
         probes_mod.ring_mode.store(2, .monotonic);
-        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={})", .{ defer_enable, defer_enable });
+        vex_log.info("event_loop: io_uring backend active (opt_flags={}, deferred_enable={}, sq_head_cache={})", .{ defer_enable, defer_enable, self.sq_head_cache_enabled });
 
         return self;
     }
@@ -321,14 +358,13 @@ pub const EventLoop = struct {
             .notify_read_fd = efd,
             .notify_write_fd = efd,
             .events_buf = {},
-            .fd_data = @splat(0),
-            .fd_active = @splat(false),
-            .fd_want_write = @splat(false),
-            .fd_poll_rearm = @splat(false),
+            .fd_entries = .empty,
             .spin_ns = 0, // epoll path parks via epoll_wait timeout, no CQ to peek
             .spin_hot = false,
             .spin_adaptive = true,
             .pending_enable = false,
+            .sq_head_cache_enabled = false,
+            .sq_head_cache = .{},
         };
     }
 
@@ -368,10 +404,7 @@ pub const EventLoop = struct {
             .notify_read_fd = pipe_fds[0],
             .notify_write_fd = pipe_fds[1],
             .events_buf = undefined,
-            .fd_data = {},
-            .fd_active = {},
-            .fd_want_write = {},
-            .fd_poll_rearm = {},
+            .fd_entries = {},
             .notify_rearm_pending = {},
             .use_uring = {},
             .epoll_events_buf = {},
@@ -379,11 +412,14 @@ pub const EventLoop = struct {
             .spin_hot = false,
             .spin_adaptive = true,
             .pending_enable = false,
+            .sq_head_cache_enabled = {},
+            .sq_head_cache = {},
         };
     }
 
     pub fn deinit(self: *EventLoop) void {
         if (is_linux) {
+            self.fd_entries.deinit(self.fd_allocator);
             if (self.use_uring) {
                 self.ring.deinit();
             } else {
@@ -414,11 +450,13 @@ pub const EventLoop = struct {
         setNonBlocking(fd);
 
         if (is_linux) {
-            const idx = fdIdx(fd) orelse return error.FdOutOfRange;
-            self.fd_data[idx] = data;
-            self.fd_active[idx] = true;
-            self.fd_want_write[idx] = false;
-            self.fd_poll_rearm[idx] = poll_mode;
+            const idx = try self.ensureFd(fd);
+            const previous = self.fd_entries.items[idx];
+            errdefer self.fd_entries.items[idx] = previous;
+            self.fd_entries.items[idx].data = data;
+            self.fd_entries.items[idx].active = true;
+            self.fd_entries.items[idx].want_write = false;
+            self.fd_entries.items[idx].poll_rearm = poll_mode;
             if (self.use_uring) {
                 if (poll_mode) try self.submitPollAdd(fd, @as(u32, linux.POLL.IN));
             } else {
@@ -442,11 +480,11 @@ pub const EventLoop = struct {
 
     pub fn removeFd(self: *EventLoop, fd: i32) void {
         if (is_linux) {
-            if (fdIdx(fd)) |idx| {
-                self.fd_active[idx] = false;
-                self.fd_data[idx] = 0;
-                self.fd_want_write[idx] = false;
-                self.fd_poll_rearm[idx] = false;
+            if (self.fdIdx(fd)) |idx| {
+                self.fd_entries.items[idx].active = false;
+                self.fd_entries.items[idx].data = 0;
+                self.fd_entries.items[idx].want_write = false;
+                self.fd_entries.items[idx].poll_rearm = false;
             }
             if (!self.use_uring) {
                 _ = linux.epoll_ctl(self.kq_or_epfd, linux.EPOLL.CTL_DEL, fd, null);
@@ -462,14 +500,14 @@ pub const EventLoop = struct {
 
     pub fn enableWrite(self: *EventLoop, fd: i32, data: usize) !void {
         if (is_linux) {
-            if (fdIdx(fd)) |idx| {
-                self.fd_data[idx] = data;
-                self.fd_want_write[idx] = true;
+            if (self.fdIdx(fd)) |idx| {
+                self.fd_entries.items[idx].data = data;
+                self.fd_entries.items[idx].want_write = true;
                 // recv-mode fds have no poll_add in flight, so arm one now;
-                // pollIoUring keeps re-arming it while fd_want_write holds.
+                // pollIoUring keeps re-arming it while want_write holds.
                 // OUT only: reads stay owned by the pending recv SQE.
                 // Poll-mode fds pick up OUT interest on their next re-arm.
-                if (self.use_uring and !self.fd_poll_rearm[idx]) {
+                if (self.use_uring and !self.fd_entries.items[idx].poll_rearm) {
                     try self.submitPollAdd(fd, @as(u32, linux.POLL.OUT));
                 }
             }
@@ -493,9 +531,9 @@ pub const EventLoop = struct {
 
     pub fn disableWrite(self: *EventLoop, fd: i32, data: usize) !void {
         if (is_linux) {
-            if (fdIdx(fd)) |idx| {
-                self.fd_data[idx] = data;
-                self.fd_want_write[idx] = false;
+            if (self.fdIdx(fd)) |idx| {
+                self.fd_entries.items[idx].data = data;
+                self.fd_entries.items[idx].want_write = false;
             }
             if (!self.use_uring) {
                 var ev = linux.epoll_event{ .events = linux.EPOLL.IN | linux.EPOLL.ET, .data = .{ .fd = fd } };
@@ -529,6 +567,10 @@ pub const EventLoop = struct {
 
     fn pollIoUring(self: *EventLoop, out: []Event, timeout_ms: i32) ![]Event {
         _ = timeout_ms; // io_uring submit_and_wait with wait_nr=1 blocks until at least 1 completion
+
+        // A new poll batch may include stdlib get_sqe() callers (poll/AOF), so
+        // never carry a cached head across this boundary.
+        if (is_linux and self.sq_head_cache_enabled) self.sq_head_cache.invalidate();
 
         // A R_DISABLED ring rejects submit_and_wait with BADFD until enabled.
         // The worker normally calls enableRing() explicitly before its poll loop
@@ -620,11 +662,11 @@ pub const EventLoop = struct {
             if (op == OP_RECV) {
                 n_recv += 1;
                 // recv completion — deliver bytes to worker
-                const idx = fdIdx(fd) orelse continue;
-                if (!self.fd_active[idx]) continue;
+                const idx = self.fdIdx(fd) orelse continue;
+                if (!self.fd_entries.items[idx].active) continue;
                 out[out_idx] = .{
                     .fd = fd,
-                    .data = self.fd_data[idx],
+                    .data = self.fd_entries.items[idx].data,
                     .readable = false,
                     .writable = false,
                     .err = res < 0,
@@ -652,11 +694,11 @@ pub const EventLoop = struct {
             } else if (op == OP_SEND) {
                 n_send += 1;
                 // send completion — deliver result to worker
-                const idx = fdIdx(fd) orelse continue;
-                if (!self.fd_active[idx]) continue;
+                const idx = self.fdIdx(fd) orelse continue;
+                if (!self.fd_entries.items[idx].active) continue;
                 out[out_idx] = .{
                     .fd = fd,
-                    .data = self.fd_data[idx],
+                    .data = self.fd_entries.items[idx].data,
                     .readable = false,
                     .writable = false,
                     .err = res < 0,
@@ -679,11 +721,11 @@ pub const EventLoop = struct {
                     continue;
                 }
 
-                const idx = fdIdx(fd) orelse continue;
-                if (!self.fd_active[idx]) continue;
+                const idx = self.fdIdx(fd) orelse continue;
+                if (!self.fd_entries.items[idx].active) continue;
 
                 if (res < 0) {
-                    out[out_idx] = .{ .fd = fd, .data = self.fd_data[idx], .readable = false, .writable = false, .err = true, .hup = false };
+                    out[out_idx] = .{ .fd = fd, .data = self.fd_entries.items[idx].data, .readable = false, .writable = false, .err = true, .hup = false };
                     out_idx += 1;
                     continue;
                 }
@@ -691,7 +733,7 @@ pub const EventLoop = struct {
                 const revents: u32 = @intCast(res);
                 out[out_idx] = .{
                     .fd = fd,
-                    .data = self.fd_data[idx],
+                    .data = self.fd_entries.items[idx].data,
                     .readable = (revents & linux.POLL.IN) != 0,
                     .writable = (revents & linux.POLL.OUT) != 0,
                     .err = (revents & linux.POLL.ERR) != 0,
@@ -700,14 +742,14 @@ pub const EventLoop = struct {
                 out_idx += 1;
 
                 // Re-arm the poll for this fd (io_uring poll_add is one-shot).
-                // recv-mode fds (fd_poll_rearm=false) only keep a poll alive
+                // recv-mode fds (poll_rearm=false) only keep a poll alive
                 // while write interest is registered (send EAGAIN fallback).
-                if (self.fd_active[idx] and (self.fd_poll_rearm[idx] or self.fd_want_write[idx])) {
+                if (self.fd_entries.items[idx].active and (self.fd_entries.items[idx].poll_rearm or self.fd_entries.items[idx].want_write)) {
                     const poll_in: u32 = linux.POLL.IN;
                     const poll_out: u32 = linux.POLL.OUT;
-                    const poll_mask: u32 = if (!self.fd_poll_rearm[idx])
+                    const poll_mask: u32 = if (!self.fd_entries.items[idx].poll_rearm)
                         poll_out // recv-mode: write interest only; recv SQEs own reads
-                    else if (self.fd_want_write[idx])
+                    else if (self.fd_entries.items[idx].want_write)
                         poll_in | poll_out
                     else
                         poll_in;
@@ -742,8 +784,8 @@ pub const EventLoop = struct {
         for (0..n) |i| {
             const ev = self.epoll_events_buf[i];
             const fd = ev.data.fd;
-            const idx = fdIdx(fd);
-            const udata: usize = if (idx) |j| self.fd_data[j] else 0;
+            const idx = self.fdIdx(fd);
+            const udata: usize = if (idx) |j| self.fd_entries.items[j].data else 0;
             out[i] = .{
                 .fd = fd,
                 .data = udata,
@@ -816,18 +858,43 @@ pub const EventLoop = struct {
 
     // --- io_uring helpers ---
 
+    fn getSqeRecvSend(self: *EventLoop) !*linux.io_uring_sqe {
+        if (!self.sq_head_cache_enabled) return self.ring.get_sqe();
+
+        const sq = &self.ring.sq;
+        // An old head only makes us report full conservatively. Refresh once
+        // before returning SubmissionQueueFull, and advance tail only after
+        // the actual capacity check succeeds.
+        const next = self.sq_head_cache.reserve(sq.sqe_tail, sq.sqes.len, sq.head) orelse return error.SubmissionQueueFull;
+        const sqe = &sq.sqes[sq.sqe_tail & sq.mask];
+        sq.sqe_tail = next;
+        return sqe;
+    }
+
     fn submitPollAdd(self: *EventLoop, fd: i32, poll_mask: u32) !void {
         _ = try self.ring.poll_add(encodeUserData(OP_POLL, fd), fd, poll_mask);
     }
 
     /// Submit a recv SQE. Buffer must remain valid until CQE.
     pub fn submitRecv(self: *EventLoop, fd: i32, buf: []u8) !void {
-        _ = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
+        if (is_linux and self.use_uring and self.sq_head_cache_enabled) {
+            const sqe = try self.getSqeRecvSend();
+            sqe.prep_recv(fd, buf, 0);
+            sqe.user_data = encodeUserData(OP_RECV, fd);
+        } else {
+            _ = try self.ring.recv(encodeUserData(OP_RECV, fd), fd, .{ .buffer = buf }, 0);
+        }
     }
 
     /// Submit a send SQE. Buffer must remain valid until CQE.
     pub fn submitSend(self: *EventLoop, fd: i32, buf: []const u8) !void {
-        _ = try self.ring.send(encodeUserData(OP_SEND, fd), fd, buf, 0);
+        if (is_linux and self.use_uring and self.sq_head_cache_enabled) {
+            const sqe = try self.getSqeRecvSend();
+            sqe.prep_send(fd, buf, 0);
+            sqe.user_data = encodeUserData(OP_SEND, fd);
+        } else {
+            _ = try self.ring.send(encodeUserData(OP_SEND, fd), fd, buf, 0);
+        }
     }
 
     /// Submit a write SQE linked to fsync for AOF durability.
@@ -854,8 +921,20 @@ pub const EventLoop = struct {
         }
     }
 
-    fn fdIdx(fd: i32) ?usize {
-        if (fd >= 0 and @as(usize, @intCast(fd)) < FD_TABLE_SIZE) {
+    fn ensureFd(self: *EventLoop, fd: i32) !usize {
+        if (fd < 0) return error.FdOutOfRange;
+        const idx: usize = @intCast(fd);
+        if (idx >= self.fd_entries.items.len) {
+            const old_len = self.fd_entries.items.len;
+            // ArrayList grows geometrically; on OOM it preserves existing state.
+            try self.fd_entries.resize(self.fd_allocator, idx + 1);
+            @memset(self.fd_entries.items[old_len..], .{});
+        }
+        return idx;
+    }
+
+    fn fdIdx(self: *const EventLoop, fd: i32) ?usize {
+        if (fd >= 0 and @as(usize, @intCast(fd)) < self.fd_entries.items.len) {
             return @intCast(fd);
         }
         return null;
@@ -869,5 +948,96 @@ fn setNonBlocking(fd: i32) void {
     _ = std.c.fcntl(fd, std.c.F.SETFL, @as(c_int, flags) | o_nonblock);
 }
 
+test "SQ head cache uses real recv/send SQEs conservatively" {
+    if (!is_linux) return;
+    var el: EventLoop = undefined;
+    var head: u32 = 0;
+    var sqes: [4]linux.io_uring_sqe = undefined;
+    var buf: [8]u8 = undefined;
+    el.use_uring = true;
+    el.sq_head_cache_enabled = true;
+    el.sq_head_cache = .{};
+    el.ring.sq.head = &head;
+    el.ring.sq.sqes = sqes[0..];
+    el.ring.sq.mask = 3;
+    el.ring.sq.sqe_tail = 0;
+
+    try el.submitRecv(3, buf[0..]);
+    try std.testing.expectEqual(linux.IORING_OP.RECV, sqes[0].opcode);
+    try std.testing.expectEqual(@as(i32, 3), sqes[0].fd);
+    try std.testing.expectEqual(@as(u32, buf.len), sqes[0].len);
+    try std.testing.expectEqual(encodeUserData(OP_RECV, 3), sqes[0].user_data);
+    try std.testing.expectEqual(@as(u32, 1), el.ring.sq.sqe_tail);
+
+    // A normal poll/AOF allocation can interleave without making the cached
+    // head unsafe; the cached path uses the real producer tail afterward.
+    _ = try el.ring.get_sqe();
+    try el.submitSend(3, buf[0..]);
+    try std.testing.expectEqual(linux.IORING_OP.SEND, sqes[2].opcode);
+    try std.testing.expectEqual(encodeUserData(OP_SEND, 3), sqes[2].user_data);
+    try std.testing.expectEqual(@as(u32, 3), el.ring.sq.sqe_tail);
+
+    try el.submitRecv(3, buf[0..]);
+    try std.testing.expectEqual(@as(u32, 4), el.ring.sq.sqe_tail);
+    // Full with the old head: refresh sees no capacity and leaves tail still 4.
+    try std.testing.expectError(error.SubmissionQueueFull, el.submitSend(3, buf[0..]));
+    try std.testing.expectEqual(@as(u32, 4), el.ring.sq.sqe_tail);
+    // Kernel consumption makes the refresh succeed.
+    head = 1;
+    try el.submitSend(3, buf[0..]);
+    try std.testing.expectEqual(@as(u32, 5), el.ring.sq.sqe_tail);
+
+    // Poll-boundary invalidation reloads the head lazily, and tail arithmetic wraps.
+    el.sq_head_cache.invalidate();
+    head = std.math.maxInt(u32);
+    el.ring.sq.sqe_tail = std.math.maxInt(u32);
+    try el.submitRecv(3, buf[0..]);
+    try std.testing.expectEqual(@as(u32, 0), el.ring.sq.sqe_tail);
+    try std.testing.expectEqual(linux.IORING_OP.RECV, sqes[3].opcode);
+}
+
 // c_int is a builtin type, no need to redefine
 
+test "descriptor table grows without losing registrations and handles allocation failure" {
+    if (!is_linux) return;
+    var el: EventLoop = undefined;
+    el.fd_entries = .empty;
+    el.fd_allocator = std.testing.allocator;
+    defer el.fd_entries.deinit(std.testing.allocator);
+    const low = try el.ensureFd(8);
+    el.fd_entries.items[low] = .{ .data = 42, .active = true, .want_write = true, .poll_rearm = true };
+    const high = try el.ensureFd(8192);
+    try std.testing.expectEqual(@as(usize, 8192), high);
+    try std.testing.expectEqual(@as(usize, 42), el.fd_entries.items[low].data);
+    try std.testing.expect(el.fd_entries.items[low].active and el.fd_entries.items[low].want_write and el.fd_entries.items[low].poll_rearm);
+    for (el.fd_entries.items[low + 1 ..]) |entry| {
+        try std.testing.expectEqual(@as(usize, 0), entry.data);
+        try std.testing.expect(!entry.active and !entry.want_write and !entry.poll_rearm);
+    }
+    try std.testing.expectEqual(@as(?usize, high), el.fdIdx(8192));
+    try std.testing.expectEqual(@as(?usize, null), el.fdIdx(-1));
+    try std.testing.expectError(error.FdOutOfRange, el.ensureFd(-1));
+    const old_len = el.fd_entries.items.len;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0, .resize_fail_index = 0 });
+    el.fd_allocator = failing.allocator();
+    try std.testing.expectError(error.OutOfMemory, el.ensureFd(@intCast(el.fd_entries.capacity + 1)));
+    try std.testing.expectEqual(old_len, el.fd_entries.items.len);
+    try std.testing.expectEqual(@as(usize, 42), el.fd_entries.items[low].data);
+}
+
+test "failed epoll registration preserves existing descriptor state" {
+    if (!is_linux) return;
+    var el = try EventLoop.initLinuxEpoll();
+    defer el.deinit();
+    var pipes: [2]std.c.fd_t = undefined;
+    if (std.c.pipe(&pipes) != 0) return error.PipeFailed;
+    defer _ = std.c.close(pipes[0]);
+    defer _ = std.c.close(pipes[1]);
+    try el.addFd(pipes[0], 42);
+    try std.testing.expectError(error.EpollCtlFailed, el.addFd(pipes[0], 99));
+    const idx = el.fdIdx(pipes[0]).?;
+    try std.testing.expectEqual(@as(usize, 42), el.fd_entries.items[idx].data);
+    try std.testing.expect(el.fd_entries.items[idx].active);
+    el.removeFd(pipes[0]);
+    try std.testing.expect(!el.fd_entries.items[idx].active);
+}

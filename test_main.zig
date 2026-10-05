@@ -17,6 +17,7 @@ test {
     _ = @import("tests/unit/cluster/replication_test.zig");
     _ = @import("tests/unit/command/comptime_dispatch_test.zig");
     _ = @import("tests/unit/command/handler_test.zig");
+    _ = @import("tests/unit/command/key_lifecycle_test.zig");
     _ = @import("tests/unit/config_test.zig");
     _ = @import("tests/unit/engine/ch_test.zig");
     _ = @import("tests/unit/engine/concurrent_kv_test.zig");

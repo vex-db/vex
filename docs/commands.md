@@ -105,6 +105,7 @@ OK
 | `LRANGE key start stop` | Get range of elements (0-based, inclusive) |
 | `LSET key index value` | Set element at index |
 | `LREM key count value` | Remove count occurrences of value |
+| `LTRIM key start stop` | Keep an inclusive index range; supports negative indices |
 
 ---
 
@@ -149,6 +150,7 @@ OK
 | `ZREM key member [member ...]` | Remove members |
 | `ZCARD key` | Number of members |
 | `ZRANK key member` | Rank of member (0-based, by ascending score) |
+| `ZREVRANK key member` | Rank of member in descending score/member order |
 | `ZSCORE key member` | Score of a member |
 | `ZINCRBY key increment member` | Increment the score of a member |
 | `ZCOUNT key min max` | Count members with scores in range |

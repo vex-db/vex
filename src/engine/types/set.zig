@@ -1,11 +1,24 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const SortedSetStore = @import("sorted_set.zig").SortedSetStore;
 
 /// Set storage: maps key -> unordered set of unique string members.
 pub const SetStore = struct {
-    sets: std.StringHashMap(MemberSet),
+    // Maps use the same hash/count as the command partitions. The caller owns
+    // the corresponding command lock through response serialization; global
+    // and multi-key operations own all command partitions.
+    const Partition = struct { map: std.StringHashMap(MemberSet) align(64) };
+    partitions: []Partition,
     allocator: Allocator,
-    map_mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+
+    pub fn partitionIndex(self: *const SetStore, key: []const u8) usize {
+        return std.hash.Wyhash.hash(0, key) & (self.partitions.len - 1);
+    }
+
+    fn mapFor(self: *SetStore, key: []const u8) *std.StringHashMap(MemberSet) {
+        return &self.partitions[self.partitionIndex(key)].map;
+    }
+
 
     const MemberSet = struct {
         members: std.StringHashMap(void),
@@ -22,24 +35,34 @@ pub const SetStore = struct {
         }
     };
 
-    pub fn init(allocator: Allocator) SetStore {
-        var store = SetStore{ .sets = std.StringHashMap(MemberSet).init(allocator), .allocator = allocator };
-        store.sets.ensureTotalCapacity(4096) catch {};
-        return store;
+    pub fn init(allocator: Allocator) !SetStore {
+        return initWithPartitionCount(allocator, SortedSetStore.default_partition_count);
     }
 
+    /// Startup-only; must match the command lock coordinator's partition count.
+    pub fn initWithPartitionCount(allocator: Allocator, count: usize) !SetStore {
+        try SortedSetStore.validatePartitionCount(count);
+        const partitions = try allocator.alloc(Partition, count);
+        for (partitions) |*part| part.* = .{ .map = std.StringHashMap(MemberSet).init(allocator) };
+        return .{ .partitions = partitions, .allocator = allocator };
+    }
+
+    /// Caller owns all command partitions, or exclusive access to the store.
     pub fn flush(self: *SetStore) void {
-        var it = self.sets.iterator();
-        while (it.next()) |entry| {
-            entry.value_ptr.deinit();
-            self.allocator.free(entry.key_ptr.*);
+        for (self.partitions) |*part| {
+            var it = part.map.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+                self.allocator.free(entry.key_ptr.*);
+            }
+            part.map.clearRetainingCapacity();
         }
-        self.sets.clearRetainingCapacity();
     }
 
     pub fn deinit(self: *SetStore) void {
         self.flush();
-        self.sets.deinit();
+        for (self.partitions) |*part| part.map.deinit();
+        self.allocator.free(self.partitions);
     }
 
     /// SADD key member [member ...] — add members, returns count of NEW members added.
@@ -75,7 +98,7 @@ pub const SetStore = struct {
 
     /// SREM key member [member ...] — remove members, returns count removed.
     pub fn srem(self: *SetStore, key: []const u8, members: []const []const u8) usize {
-        const s = self.sets.getPtr(key) orelse return 0;
+        const s = self.mapFor(key).getPtr(key) orelse return 0;
         var removed: usize = 0;
         for (members) |member| {
             const entry = s.members.fetchRemove(member) orelse continue;
@@ -88,19 +111,19 @@ pub const SetStore = struct {
 
     /// SISMEMBER key member — check membership.
     pub fn sismember(self: *SetStore, key: []const u8, member: []const u8) bool {
-        const s = self.sets.getPtr(key) orelse return false;
+        const s = self.mapFor(key).getPtr(key) orelse return false;
         return s.members.contains(member);
     }
 
     /// SCARD key — cardinality (number of members).
     pub fn scard(self: *SetStore, key: []const u8) usize {
-        const s = self.sets.getPtr(key) orelse return 0;
+        const s = self.mapFor(key).getPtr(key) orelse return 0;
         return s.members.count();
     }
 
     /// SMEMBERS key — return all members.
     pub fn smembers(self: *SetStore, key: []const u8, allocator: Allocator) ![]const []const u8 {
-        const s = self.sets.getPtr(key) orelse return &[_][]const u8{};
+        const s = self.mapFor(key).getPtr(key) orelse return &[_][]const u8{};
         const count = s.members.count();
         if (count == 0) return &[_][]const u8{};
         const result = try allocator.alloc([]const u8, count);
@@ -118,7 +141,7 @@ pub const SetStore = struct {
         var union_set = std.StringHashMap(void).init(allocator);
         defer union_set.deinit();
         for (keys) |key| {
-            const s = self.sets.getPtr(key) orelse continue;
+            const s = self.mapFor(key).getPtr(key) orelse continue;
             var it = s.members.iterator();
             while (it.next()) |entry| {
                 try union_set.put(entry.key_ptr.*, {});
@@ -139,14 +162,14 @@ pub const SetStore = struct {
     pub fn sinter(self: *SetStore, keys: []const []const u8, allocator: Allocator) ![]const []const u8 {
         if (keys.len == 0) return &[_][]const u8{};
         // Start with the first set
-        const first = self.sets.getPtr(keys[0]) orelse return &[_][]const u8{};
+        const first = self.mapFor(keys[0]).getPtr(keys[0]) orelse return &[_][]const u8{};
         var result_list = std.array_list.Managed([]const u8).init(allocator);
         defer result_list.deinit();
         var it = first.members.iterator();
         while (it.next()) |entry| {
             var in_all = true;
             for (keys[1..]) |other_key| {
-                const other = self.sets.getPtr(other_key) orelse {
+                const other = self.mapFor(other_key).getPtr(other_key) orelse {
                     in_all = false;
                     break;
                 };
@@ -164,14 +187,14 @@ pub const SetStore = struct {
     /// SDIFF key [key ...] — return members in first set but not in others.
     pub fn sdiff(self: *SetStore, keys: []const []const u8, allocator: Allocator) ![]const []const u8 {
         if (keys.len == 0) return &[_][]const u8{};
-        const first = self.sets.getPtr(keys[0]) orelse return &[_][]const u8{};
+        const first = self.mapFor(keys[0]).getPtr(keys[0]) orelse return &[_][]const u8{};
         var result_list = std.array_list.Managed([]const u8).init(allocator);
         defer result_list.deinit();
         var it = first.members.iterator();
         while (it.next()) |entry| {
             var in_other = false;
             for (keys[1..]) |other_key| {
-                const other = self.sets.getPtr(other_key) orelse continue;
+                const other = self.mapFor(other_key).getPtr(other_key) orelse continue;
                 if (other.members.contains(entry.key_ptr.*)) {
                     in_other = true;
                     break;
@@ -185,34 +208,30 @@ pub const SetStore = struct {
 
     /// Check if a key exists as a set.
     pub fn exists(self: *SetStore, key: []const u8) bool {
-        return self.sets.contains(key);
+        return self.mapFor(key).contains(key);
     }
 
     /// Delete a set key entirely.
     pub fn delete(self: *SetStore, key: []const u8) bool {
-        var entry = self.sets.fetchRemove(key) orelse return false;
+        var entry = self.mapFor(key).fetchRemove(key) orelse return false;
         entry.value.deinit();
         self.allocator.free(entry.key);
         return true;
     }
 
     fn getOrCreate(self: *SetStore, key: []const u8) !*MemberSet {
-        if (self.sets.getPtr(key)) |existing| return existing;
-        _ = std.c.pthread_mutex_lock(&self.map_mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.map_mutex);
-        if (self.sets.getPtr(key)) |existing| return existing;
-        const gop = try self.sets.getOrPut(key);
-        gop.key_ptr.* = try self.allocator.dupe(u8, key);
-        var ms = MemberSet.init(self.allocator);
-        ms.members.ensureTotalCapacity(32) catch {};
-        gop.value_ptr.* = ms;
+        const map = self.mapFor(key);
+        if (map.getPtr(key)) |existing| return existing;
+        const owned = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned);
+        const gop = try map.getOrPut(owned);
+        gop.key_ptr.* = owned;
+        gop.value_ptr.* = MemberSet.init(self.allocator);
         return gop.value_ptr;
     }
 
     fn removeKey(self: *SetStore, key: []const u8) void {
-        _ = std.c.pthread_mutex_lock(&self.map_mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.map_mutex);
-        var entry = self.sets.fetchRemove(key) orelse return;
+        var entry = self.mapFor(key).fetchRemove(key) orelse return;
         entry.value.deinit();
         self.allocator.free(entry.key);
     }

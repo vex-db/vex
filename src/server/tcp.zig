@@ -794,6 +794,7 @@ pub const Server = struct {
     data_dir: ?[]const u8,
     enable_timings: bool = false,
     slowlog_threshold_us: u64 = 10_000,
+    sorted_set_partitions: usize = @import("../engine/types/sorted_set.zig").SortedSetStore.default_partition_count,
     active_connections: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub fn init(
@@ -996,6 +997,21 @@ pub const Server = struct {
     /// Multi-reactor accept loop. N worker threads each run their own event loop.
     pub fn runReactor(self: *Server, num_workers: usize, shutdown: *std.atomic.Value(bool)) !void {
         const Worker = @import("worker.zig").Worker;
+        const AdaptiveOwner = @import("adaptive_owner.zig").AdaptiveOwner;
+        const owner_key: ?[]const u8 = if (std.c.getenv("VEX_EXPERIMENTAL_OWNER_KEY")) |raw| std.mem.span(raw) else null;
+        const adaptive_raw = std.c.getenv("VEX_EXPERIMENTAL_ADAPTIVE_OWNER");
+        const adaptive_enabled = if (adaptive_raw) |raw| std.mem.eql(u8, std.mem.span(raw), "1") else false;
+        if (adaptive_raw) |raw| {
+            if ((!adaptive_enabled and !std.mem.eql(u8, std.mem.span(raw), "0")) or
+                (adaptive_enabled and (owner_key != null or num_workers == 0 or self.aof != null or
+                    self.repl_follower != null or self.repl_leader != null or self.tls_ctx != null)))
+                return error.InvalidExperimentalOwnerConfiguration;
+        }
+        var adaptive_policy: AdaptiveOwner = .{};
+        if (owner_key) |key| {
+            if (key.len == 0 or num_workers == 0 or self.aof != null or self.repl_follower != null or self.repl_leader != null)
+                return error.InvalidExperimentalOwnerConfiguration;
+        }
 
         var addr = self.bind_address;
         var net_server = try std.Io.net.IpAddress.listen(&addr, self.io, .{
@@ -1028,21 +1044,14 @@ pub const Server = struct {
         const HashStore = @import("../engine/types/hash.zig").HashStore;
         const SetStore = @import("../engine/types/set.zig").SetStore;
         const SortedSetStore = @import("../engine/types/sorted_set.zig").SortedSetStore;
-        var list_store = ListStore.init(self.allocator);
+        var list_store = try ListStore.initWithPartitionCount(self.allocator, self.sorted_set_partitions);
         defer list_store.deinit();
         var hash_store = HashStore.init(self.allocator);
         defer hash_store.deinit();
-        var set_store = SetStore.init(self.allocator);
+        var set_store = try SetStore.initWithPartitionCount(self.allocator, self.sorted_set_partitions);
         defer set_store.deinit();
-        var sorted_set_store = SortedSetStore.init(self.allocator);
+        var sorted_set_store = try SortedSetStore.initWithPartitionCount(self.allocator, self.sorted_set_partitions);
         defer sorted_set_store.deinit();
-        // Explicit pthread_mutex_init — PTHREAD_MUTEX_INITIALIZER may not survive struct copy on macOS
-        {
-            const mutex_init_fn = @extern(*const fn (*std.c.pthread_mutex_t, ?*const anyopaque) callconv(.c) c_int, .{ .name = "pthread_mutex_init" });
-            _ = mutex_init_fn(&list_store.map_mutex, null);
-            _ = mutex_init_fn(&set_store.map_mutex, null);
-            _ = mutex_init_fn(&sorted_set_store.map_mutex, null);
-        }
         // HashStore migrated to per-stripe rwlocks (32 stripes). Same post-
         // construct init dance as ConcurrentKV: rwlocks must be initialised
         // at their final address for macOS.
@@ -1114,6 +1123,22 @@ pub const Server = struct {
             );
         }
 
+        if (owner_key) |key| {
+            for (workers) |*w| {
+                w.fixed_owner = &workers[0];
+                w.fixed_owner_key = key;
+            }
+            log("experimental sorted-set owner enabled (DB 0, worker 0, batch limit 32)", .{});
+        }
+        if (adaptive_enabled) {
+            for (workers, 0..) |*w, i| {
+                w.fixed_owner = &workers[0];
+                w.adaptive_owner = &adaptive_policy;
+                w.sample_rng = @intCast(i + 1);
+            }
+            log("experimental adaptive owner enabled (DB 0, async, worker 0)", .{});
+        }
+
         // Register each worker's stats in the observability global registry.
         // Safe to take stable pointers now — workers slice lives for the
         // remainder of runReactor.
@@ -1124,13 +1149,42 @@ pub const Server = struct {
             probes_mod.register(&w.probes);
         }
 
+        // io_uring can block indefinitely while idle, so expiry maintenance is
+        // a joined thread rather than work piggybacked on worker-0's poll loop.
+        // It owns the cursors and takes the same mutex as EXEC before touching
+        // WATCH state or a stripe.
+        const Maintenance = struct {
+            fn run(store: *ConcurrentKV, mutex: *std.atomic.Mutex, watches: *WM, stop_flag: *std.atomic.Value(bool)) void {
+                var cursor: ConcurrentKV.SweepCursor = .{};
+                var removed: [512]ConcurrentKV.Expired = undefined;
+                while (!stop_flag.load(.acquire)) {
+                    var delay: std.c.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+                    _ = std.c.nanosleep(&delay, null);
+                    if (!store.has_expiry.load(.acquire) or !mutex.tryLock()) continue;
+                    const now = std.Io.Timestamp.now(store.io, .real).toMilliseconds();
+                    const count = store.sweepExpired(now, &cursor, &removed);
+                    for (removed[0..count]) |stale| {
+                        watches.bumpVersion(stale.key);
+                        store.allocator.free(stale.key);
+                        if (stale.value) |value| store.allocator.free(value);
+                    }
+                    mutex.unlock();
+                }
+            }
+        };
+        const maintenance_thread = try std.Thread.spawn(.{}, Maintenance.run, .{ &ckv, &kv_mutex, &watch_map, shutdown });
+        defer {
+            shutdown.store(true, .release);
+            maintenance_thread.join();
+        }
+
         // Spawn worker threads.
         for (workers) |*w| {
             const t = try std.Thread.spawn(.{}, Worker.run, .{w});
             t.detach();
         }
 
-        log("listening on :{d} (reactor, workers={d})", .{ self.listen_port, num_workers });
+        log("listening on :{d} (reactor, workers={d}, sorted-set-partitions={d})", .{ self.listen_port, num_workers, sorted_set_store.partitions.len });
 
         // Start Unix Domain Socket listener thread (if configured)
         var uds_thread: ?std.Thread = null;

@@ -52,10 +52,10 @@ def stress(i):
     c = Client()
     try:
         for j in range(1000):
-            n = (16, 32, 33, 128, 256, 257, 768, 1024)[j % 8]
+            n = (16, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192)[j % 11]
             assert c.call('SET', key('contended'), bytes([65 + i]) * n) == b'OK'
             data = c.call('GET', key('contended'))
-            assert data and len(data) in (16, 32, 33, 128, 256, 257, 768, 1024)
+            assert data and len(data) in (16, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192)
             assert data == data[:1] * len(data), 'torn value'
     finally:
         c.close()
@@ -78,6 +78,7 @@ assert c.call('SET', key('expiry'), 'x' * 256, 'PX', 10000) == b'OK'
 assert c.call('TTL', key('expiry')) > 0
 assert c.call('SET', key('expiry'), 'x' * 32) == b'OK'
 assert c.call('TTL', key('expiry')) == -1
-c.call('DEL', *(key(k) for k in ('contended', 'src', 'dst', 'integer', 'expiry')))
+for name in ('contended', 'src', 'dst', 'integer', 'expiry'):
+    c.call('DEL', key(name))
 c.close()
 print('PASS: 8 concurrent clients × 1000 varying-size updates; GET/MGET/DEL/INCR/TTL; binary values intact')

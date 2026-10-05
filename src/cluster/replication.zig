@@ -1116,6 +1116,7 @@ pub fn isWriteCommand(args: []const []const u8) bool {
     if (std.mem.eql(u8, upper, "RPOP")) return true;
     if (std.mem.eql(u8, upper, "LSET")) return true;
     if (std.mem.eql(u8, upper, "LREM")) return true;
+    if (std.mem.eql(u8, upper, "LTRIM")) return true;
     // Hash write commands
     if (std.mem.eql(u8, upper, "HSET")) return true;
     if (std.mem.eql(u8, upper, "HDEL")) return true;

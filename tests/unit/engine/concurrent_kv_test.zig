@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const ConcurrentKV = @import("../../../src/engine/kv/concurrent_kv.zig").ConcurrentKV;
+const KVStore = @import("../../../src/engine/kv/kv.zig").KVStore;
 const obs_stats = @import("../../../src/observability/stats.zig");
 
 test "concurrent_kv basic set/get" {
@@ -120,9 +121,9 @@ test "concurrent_kv maxmemory + allkeys_lru evicts on overflow" {
 
     const before = obs_stats.evicted_keys.load(.monotonic);
 
-    store.cached_now_ms = 1000;
+    store.cached_now_ms.store(1000, .release);
     try store.set("a", "x");
-    store.cached_now_ms = 2000;
+    store.cached_now_ms.store(2000, .release);
     try store.set(second_key, "y"); // triggers eviction of "a"
 
     try std.testing.expect(store.get("a") == null);
@@ -164,6 +165,166 @@ test "concurrent_kv total_bytes decrements on delete" {
 
     try std.testing.expect(store.delete("hello"));
     try std.testing.expectEqual(@as(u64, 0), store.total_bytes.load(.monotonic));
+}
+
+test "concurrent_kv bounded sweep reclaims expired heap and inline entries once" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    store.cached_now_ms.store(1000, .release);
+    var heap: [128]u8 = @splat('h');
+    try store.setInternal("expired-heap", &heap, 1500);
+    try store.setInternal("expired-inline", "small", 1500);
+    try store.setInternal("future", "live", 3000);
+    const before = obs_stats.expired_keys.load(.monotonic);
+    var cursor: ConcurrentKV.SweepCursor = .{};
+    var removed: [512]ConcurrentKV.Expired = undefined;
+    const count = store.sweepExpired(2000, &cursor, &removed);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    for (removed[0..count]) |stale| {
+        std.testing.allocator.free(stale.key);
+        if (stale.value) |value| std.testing.allocator.free(value);
+    }
+    try std.testing.expect(store.get("expired-heap") == null);
+    try std.testing.expect(store.get("expired-inline") == null);
+    const future = store.get("future") orelse return error.TestUnexpectedResult;
+    defer future.deinit();
+    try std.testing.expectEqualStrings("live", future.data);
+    try std.testing.expectEqual(before + 2, obs_stats.expired_keys.load(.monotonic));
+    try std.testing.expectEqual(@as(u64, "future".len + "live".len), store.total_bytes.load(.monotonic));
+    try std.testing.expectEqual(@as(usize, 0), store.sweepExpired(2000, &cursor, &removed));
+}
+
+test "concurrent_kv refreshed TTL survives sweep and import skips deleted source entries" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    store.cached_now_ms.store(1000, .release);
+    try store.setInternal("refresh", "old", 1500);
+    try store.set("refresh", "live");
+    var cursor: ConcurrentKV.SweepCursor = .{};
+    var removed: [512]ConcurrentKV.Expired = undefined;
+    try std.testing.expectEqual(@as(usize, 0), store.sweepExpired(2000, &cursor, &removed));
+    const refreshed = store.get("refresh") orelse return error.TestUnexpectedResult;
+    defer refreshed.deinit();
+    try std.testing.expectEqualStrings("live", refreshed.data);
+
+    var source = KVStore.init(std.testing.allocator, std.testing.io);
+    defer source.deinit();
+    try source.set("deleted", "source-value");
+    _ = source.delete("deleted");
+    var imported = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    imported.initStripes();
+    defer imported.deinit();
+    try imported.importFrom(&source);
+    try std.testing.expectEqual(@as(usize, 0), imported.dbsize());
+}
+
+test "concurrent_kv preallocated TTL enables a fresh store sweep" {
+    const alloc = std.testing.allocator;
+    var store = ConcurrentKV.init(alloc, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    store.cached_now_ms.store(1000, .release);
+    const key = try alloc.dupe(u8, "prealloc-ttl");
+    const value = try alloc.dupe(u8, "value");
+    const stale = store.setPrealloc("prealloc-ttl", key, value, 1500);
+    try std.testing.expect(stale.stale_key == null and stale.stale_val == null);
+    var cursor: ConcurrentKV.SweepCursor = .{};
+    var removed: [512]ConcurrentKV.Expired = undefined;
+    const count = store.sweepExpired(2000, &cursor, &removed);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    for (removed[0..count]) |item| {
+        alloc.free(item.key);
+        if (item.value) |bytes| alloc.free(bytes);
+    }
+}
+
+test "concurrent_kv INCR-created TTL reconciles bytes after expiry" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    store.cached_now_ms.store(1000, .release);
+    try std.testing.expectEqual(@as(i64, 1), try store.incrBy("count", 1));
+    try store.setInternal("count", "1", 1500);
+    try std.testing.expectEqual(@as(u64, "count".len + 1), store.total_bytes.load(.monotonic));
+    var cursor: ConcurrentKV.SweepCursor = .{};
+    var removed: [512]ConcurrentKV.Expired = undefined;
+    const count = store.sweepExpired(2000, &cursor, &removed);
+    for (removed[0..count]) |item| {
+        std.testing.allocator.free(item.key);
+        if (item.value) |value| std.testing.allocator.free(value);
+    }
+    try std.testing.expectEqual(@as(u64, 0), store.total_bytes.load(.monotonic));
+}
+
+test "concurrent_kv expiry cursor crosses sparse prefix after growth and frees empty stripe" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    store.cached_now_ms.store(1000, .release);
+    const target = ConcurrentKV.stripeIndex("cursor-anchor");
+    var key_buf: [48]u8 = undefined;
+    var expired: usize = 0;
+    var permanent: usize = 0;
+    var candidate: usize = 0;
+    while (expired < 96 or permanent < 96) : (candidate += 1) {
+        const key = try std.fmt.bufPrint(&key_buf, "cursor-{d}", .{candidate});
+        if (ConcurrentKV.stripeIndex(key) != target) continue;
+        if (expired < 96) {
+            try store.setInternal(key, "gone", 1500);
+            expired += 1;
+        } else {
+            try store.set(key, "keep");
+            permanent += 1;
+        }
+    }
+    var cursor: ConcurrentKV.SweepCursor = .{};
+    var removed: [512]ConcurrentKV.Expired = undefined;
+    var reclaimed: usize = 0;
+    for (0..2) |_| {
+        const count = store.sweepExpired(2000, &cursor, &removed);
+        try std.testing.expect(count <= removed.len);
+        reclaimed += count;
+        for (removed[0..count]) |item| {
+            std.testing.allocator.free(item.key);
+            if (item.value) |value| std.testing.allocator.free(value);
+        }
+    }
+    // Rehash between cursor passes; the saved physical cursor must clamp and
+    // continue rather than repeatedly scanning the first sparse prefix.
+    while (permanent < 192) : (candidate += 1) {
+        const key = try std.fmt.bufPrint(&key_buf, "cursor-grow-{d}", .{candidate});
+        if (ConcurrentKV.stripeIndex(key) != target) continue;
+        try store.set(key, "keep");
+        permanent += 1;
+    }
+    for (0..32) |_| {
+        if (reclaimed == expired) break;
+        const count = store.sweepExpired(2000, &cursor, &removed);
+        try std.testing.expect(count <= removed.len);
+        reclaimed += count;
+        for (removed[0..count]) |item| {
+            std.testing.allocator.free(item.key);
+            if (item.value) |value| std.testing.allocator.free(value);
+        }
+    }
+    try std.testing.expectEqual(expired, reclaimed);
+    try std.testing.expectEqual(permanent, store.dbsize());
+
+    var empty = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    empty.initStripes();
+    defer empty.deinit();
+    empty.cached_now_ms.store(1000, .release);
+    try empty.setInternal("empty-stripe", "x", 1500);
+    var empty_cursor: ConcurrentKV.SweepCursor = .{};
+    var empty_removed: [512]ConcurrentKV.Expired = undefined;
+    const count = empty.sweepExpired(2000, &empty_cursor, &empty_removed);
+    for (empty_removed[0..count]) |item| {
+        std.testing.allocator.free(item.key);
+        if (item.value) |value| std.testing.allocator.free(value);
+    }
+    try std.testing.expectEqual(@as(u32, 0), empty.getStripePublic("empty-stripe").map.capacity());
 }
 
 // The compact layout must retain ownership of the full allocation even when
@@ -208,7 +369,7 @@ test "concurrent_kv failed buffer growth preserves existing value and TTL" {
     var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
     store.initStripes();
     defer store.deinit();
-    store.cached_now_ms = 1000;
+    store.cached_now_ms.store(1000, .release);
     var old: [256]u8 = undefined;
     @memset(&old, 'o');
     var larger: [1024]u8 = undefined;
@@ -256,10 +417,10 @@ test "concurrent_kv mixed buffer sizes remain intact under contention" {
     defer store.deinit();
     const Runner = struct {
         fn run(s: *ConcurrentKV, id: usize) void {
-            var bytes: [1024]u8 = undefined;
+            var bytes: [8192]u8 = undefined;
             @memset(&bytes, @intCast('a' + id));
             for (0..500) |iteration| {
-                const sizes = [_]usize{ 16, 32, 33, 128, 256, 257, 768, 1024 };
+                const sizes = [_]usize{ 16, 32, 33, 128, 256, 257, 768, 1024, 4096, 4097, 8192 };
                 const size = sizes[iteration % sizes.len];
                 s.set("contended", bytes[0..size]) catch @panic("SET failed");
                 const value = s.get("contended") orelse @panic("value lost");
@@ -330,4 +491,51 @@ test "concurrent_kv stripe keys retain bucket and fingerprint diversity" {
     try std.testing.expectEqual(@as(usize, 64), found);
     try std.testing.expect(std.mem.count(bool, &buckets, &.{true}) >= 32);
     try std.testing.expect(std.mem.count(bool, &fingerprints, &.{true}) >= 24);
+}
+
+// The large-value write benchmark must not allocate a replacement on every SET.
+test "concurrent_kv repeated 4KiB overwrites succeed without allocation" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+    var payload: [4096]u8 = @splat('a');
+    try store.set("large", &payload);
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    {
+        store.allocator = failing.allocator();
+        defer store.allocator = std.testing.allocator;
+        for (0..100) |i| {
+            @memset(&payload, @intCast(i));
+            try store.set("large", &payload);
+        }
+    }
+    const value = store.get("large") orelse return error.TestUnexpectedResult;
+    defer value.deinit();
+    try std.testing.expectEqualSlices(u8, &payload, value.data);
+    try std.testing.expectEqual(@as(u64, 4101), store.total_bytes.load(.monotonic));
+}
+
+test "concurrent_kv checked increments preserve value and expiry" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+
+    try store.set("max", "9223372036854775807");
+    try std.testing.expectError(error.Overflow, store.incrBy("max", 1));
+    const unchanged = store.get("max") orelse return error.TestUnexpectedResult;
+    defer unchanged.deinit();
+    try std.testing.expectEqualStrings("9223372036854775807", unchanged.data);
+    try std.testing.expectEqual(std.math.maxInt(i64), try store.incrBy("native", std.math.maxInt(i64)));
+    try std.testing.expectError(error.Overflow, store.incrBy("native", 1));
+    try std.testing.expectEqual(std.math.minInt(i64), try store.incrBy("min", std.math.minInt(i64)));
+    try std.testing.expectError(error.Overflow, store.incrBy("min", -1));
+
+    store.cached_now_ms.store(1000, .release);
+    try store.setPx("ttl", "41", 100);
+    try std.testing.expectEqual(@as(i64, 42), try store.incrBy("ttl", 1));
+    try std.testing.expectEqual(@as(?i64, 100), store.pttl("ttl"));
+    store.cached_now_ms.store(1100, .release);
+    try std.testing.expect(!store.exists("ttl"));
+    try std.testing.expect(store.get("ttl") == null);
+    try std.testing.expectEqual(@as(i64, 1), try store.incrBy("ttl", 1));
 }

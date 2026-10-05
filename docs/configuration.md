@@ -24,6 +24,7 @@ Vex can be configured via CLI flags, config files, or environment variables.
 | `--host`, `-h` | 0.0.0.0 | Bind address |
 | `--reactor` | off | Enable multi-reactor mode (recommended for production) |
 | `--workers N` | auto (CPU cores, max 8) | Worker threads for reactor mode |
+| `--sorted-set-partitions N` | 256 | Shared command locks and list/set/sorted-set map partitions in reactor mode; power of two, 1–4096; startup only |
 | `--data-dir`, `-d` | ./data | Persistence directory |
 | `--no-persistence` | off | Disable AOF/snapshot entirely |
 | `--requirepass` | none | Password for AUTH |
@@ -121,6 +122,7 @@ latency-monitor-threshold 100000
 | `maxmemory-policy` | `--maxmemory-policy` | `noeviction` or `allkeys-lru` |
 | `reactor` | `--reactor` | Boolean flag (presence = enabled) |
 | `workers` | `--workers` | |
+| `sorted-set-partitions` | `--sorted-set-partitions` | Power of two, 1–4096; default 256 |
 | `log-level` or `loglevel` | `--log-level` | Both aliases work |
 | `log-file` or `logfile` | `--log-file` | Path; falls back to stderr if open fails |
 | `log-format` or `logformat` | `--log-format` | `text` or `json` |
@@ -200,3 +202,81 @@ The `--maxmemory` flag and `maxmemory` config key accept human-readable sizes:
 | `256MB` | 268,435,456 (case-insensitive) |
 
 See [Memory Management](memory.md) for eviction policy details.
+
+### Sorted-set partition tuning
+
+`--reactor --workers 8 --sorted-set-partitions 512` starts eight workers with
+512 shared command lock partitions. List and set maps use the same partition
+count and key hash, allowing single-key collection operations and expiry cleanup
+to run under one lock. Hash maps retain their internal stripe locks as well.
+The equivalent config entry is
+`sorted-set-partitions 512`; CLI values override config values. Invalid or missing
+counts fail startup. The count is fixed for the lifetime of the store and logged
+with the reactor worker count. It does not automatically follow CPU count.
+
+Keep 256 unless a representative benchmark supports another count. More partitions
+can reduce collisions between unrelated keys, but do not parallelize
+access to a single hot key. They also use more memory and require more lock
+operations for global commands such as FLUSHALL and EXEC. The historical option
+name is retained; it now also sizes the reactor list and set map partitions.
+
+### Experimental fixed key owner
+
+For diagnostic use only, `VEX_EXPERIMENTAL_OWNER_KEY=lb:0` routes ordinary
+sorted-set commands for that exact key in DB 0 to reactor worker 0. It requires
+`--no-persistence` and no replication configuration. The default is disabled;
+the sorted-set partition default remains 256.
+
+The prototype forwards consecutive complete RESP commands in batches of up to
+32. It waits for the owner before processing more commands on the originating
+worker, preserving request-buffer lifetime and per-connection reply order.
+That wait can delay unrelated connections assigned to the same worker. Inline
+and larger commands use the same owner individually. Transactions, global
+commands, other databases and other keys retain their existing execution paths
+and locks; this is not an exclusive lock-free ownership scheme.
+
+This setting does not pin CPUs, detect hot keys, migrate ownership, or provide
+general key-based sharding. Evaluate throughput, CPU cost and cold-key latency
+before using it beyond a disposable benchmark.
+
+### Experimental adaptive key owner
+
+`VEX_EXPERIMENTAL_ADAPTIVE_OWNER=1` enables sampled hot-key detection and
+asynchronous routing to worker 0. It is disabled by default, mutually exclusive
+with `VEX_EXPERIMENTAL_OWNER_KEY`, and requires reactor workers, no persistence,
+no replication and no TLS. `0` disables it; other values are rejected.
+
+The first prototype tracks one dominant sorted-set key in DB 0, up to 128 bytes.
+Workers sample roughly one in 64 sorted-set commands. Activation requires three
+consecutive 200 ms windows with at least 128 samples, at least 60% candidate
+share, at least 10% contended candidate samples and average candidate lock wait
+of at least 500 ns. These are experimental thresholds, not an automatic sizing
+formula. The sorted-set partition default remains 256.
+
+Ownership lasts at least one second. Three consecutive windows with fewer than
+128 samples, less than 20% active-key share, or average sampled owner queue wait
+over 5 ms release it, followed by a two-second cooldown. Decisions advance when
+samples arrive; an idle server does not run a separate policy timer.
+
+Requests are copied and batched, with at most 32 commands per batch. Only the
+requesting connection waits for its reply; unrelated connections on its worker
+can continue. Queued requests are limited to 1,024 batches and 16 MiB of payload;
+these limits exclude completed replies. Allocation or queue-limit failures fall
+back to ordinary execution. Existing partition locks, transaction handling and
+WATCH invalidation remain authoritative across routing changes. This prototype
+does not provide multiple simultaneous owners, choose a less busy worker, or
+make execution lock-free. Benchmark uniform traffic, hot/cold transitions and
+cold-client latency before considering a production default.
+
+## Reactor file descriptors
+
+On Linux, each worker's descriptor table grows on demand when registering a
+higher file descriptor. There is no fixed 4,096-entry table limit. Lookup stays
+constant-time; registration may allocate memory, and allocation failure closes
+the new connection without discarding existing registrations. The table keeps
+its allocated capacity until the worker exits.
+
+The operating system's file-descriptor limit (`ulimit -n`) and available memory
+still bound concurrent connections. Configure the process/container limit high
+enough for client sockets plus listeners, notification descriptors, and storage
+files. Table growth does not raise that operating-system limit automatically.

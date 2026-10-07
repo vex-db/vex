@@ -24,6 +24,7 @@ const ListStore = @import("../engine/types/list.zig").ListStore;
 const HashStore = @import("../engine/types/hash.zig").HashStore;
 const SetStore = @import("../engine/types/set.zig").SetStore;
 const SortedSetStore = @import("../engine/types/sorted_set.zig").SortedSetStore;
+const AdaptiveOwner = @import("adaptive_owner.zig").AdaptiveOwner;
 
 const builtin = @import("builtin");
 const is_linux = builtin.os.tag == .linux;
@@ -260,6 +261,7 @@ pub const DsStripeLocks = struct {
 /// EXEC aborts if any watched key's version changed.
 pub const WatchMap = struct {
     versions: std.StringHashMap(u64),
+    flush_version: u64 = 0,
     mutex: std.c.pthread_mutex_t,
     allocator: Allocator,
     /// Number of active watches across all connections. When 0, bumpVersion is a no-op.
@@ -282,7 +284,13 @@ pub const WatchMap = struct {
     pub fn getVersion(self: *WatchMap, key: []const u8) u64 {
         _ = std.c.pthread_mutex_lock(&self.mutex);
         defer _ = std.c.pthread_mutex_unlock(&self.mutex);
-        return self.versions.get(key) orelse 0;
+        return (self.versions.get(key) orelse 0) +% self.flush_version;
+    }
+
+    pub fn bumpFlushVersion(self: *WatchMap) void {
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
+        self.flush_version +%= 1;
     }
 
     pub fn bumpVersion(self: *WatchMap, key: []const u8) void {
@@ -328,6 +336,7 @@ const Connection = struct {
     watch_dirty: bool,
     /// io_uring recv/send state (only meaningful when worker.use_uring_io and ssl==null)
     recv_pending: bool,
+    owner_pending: bool = false,
     send_pending: bool,
     recv_buf: [READ_BUF_SIZE]u8,
     /// Stable scratch buffer the kernel reads from for io_uring SEND.
@@ -504,6 +513,252 @@ pub const Worker = struct {
     /// per-worker slowlog ring. Only consulted when enable_timings.
     slowlog_threshold_us: u64 = 10_000,
 
+    /// Experimental fixed owner for ordinary sorted-set commands in DB 0.
+    /// Transactions/global commands retain the normal partition locks.
+    fixed_owner: ?*Worker = null,
+    fixed_owner_key: ?[]const u8 = null,
+    owner_head: ?*OwnedBatch = null,
+    owner_tail: ?*OwnedBatch = null,
+    owner_mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    owner_ready: std.c.pthread_cond_t = std.c.PTHREAD_COND_INITIALIZER,
+    adaptive_owner: ?*AdaptiveOwner = null,
+    adaptive_generation: u64 = 0,
+    adaptive_key: [AdaptiveOwner.max_key]u8 = undefined,
+    adaptive_key_len: usize = 0,
+    sample_remaining: u32 = 1,
+    sample_rng: u32 = 1,
+    owner_queue_delay: u64 = 0,
+    async_mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    async_head: ?*AsyncBatch = null,
+    async_tail: ?*AsyncBatch = null,
+    completed_head: ?*AsyncBatch = null,
+    completed_tail: ?*AsyncBatch = null,
+    async_count: usize = 0,
+    async_bytes: usize = 0,
+
+    const AsyncBatch = struct {
+        origin: *Worker,
+        fd: i32,
+        client_id: u64,
+        bytes: []u8,
+        reply: std.array_list.Managed(u8),
+        protocol: resp.ProtocolVersion,
+        db: u8,
+        queued: u64,
+        last_cmd_idx: u8 = 0xFF,
+        failed: bool = false,
+        next: ?*AsyncBatch = null,
+    };
+
+    const OwnedBatch = struct {
+        origin: *Worker,
+        conn: *Connection,
+        bytes: ?[]const u8 = null,
+        args: ?[]const []const u8 = null,
+        next: ?*OwnedBatch = null,
+        done: bool = false,
+    };
+
+    fn shouldRoute(self: *Worker, conn: *Connection, args: []const []const u8) bool {
+        const owner = self.fixed_owner orelse return false;
+        if (owner == self or !conn.authenticated or conn.pubsub_mode or conn.tx_queue != null or
+            conn.selected_db != 0 or args.len < 2) return false;
+        if (self.adaptive_owner) |policy| {
+            if (policy.generation.load(.acquire) != self.adaptive_generation)
+                self.adaptive_generation = policy.snapshot(&self.adaptive_key, &self.adaptive_key_len);
+            return self.adaptive_key_len > 0 and std.mem.eql(u8, args[1], self.adaptive_key[0..self.adaptive_key_len]) and SortedSetStore.isCommand(args[0]);
+        }
+        return std.mem.eql(u8, args[1], self.fixed_owner_key.?) and SortedSetStore.isCommand(args[0]);
+    }
+
+    fn routeAsync(self: *Worker, conn: *Connection, bytes: []const u8) bool {
+        const owner = self.fixed_owner.?;
+        if (bytes.len > self.max_client_buffer) return false;
+        const copy = self.allocator.dupe(u8, bytes) catch return false;
+        const batch = self.allocator.create(AsyncBatch) catch {
+            self.allocator.free(copy);
+            return false;
+        };
+        batch.* = .{ .origin = self, .fd = conn.fd, .client_id = conn.client_id,
+            .bytes = copy, .reply = std.array_list.Managed(u8).init(self.allocator),
+            .protocol = conn.protocol_version, .db = conn.selected_db, .queued = AdaptiveOwner.now() };
+        if (self.ds_locks) |dsl| dsl.releaseAll(&self.last_stripe);
+        _ = std.c.pthread_mutex_lock(&owner.async_mutex);
+        if (owner.async_count >= 1024 or owner.async_bytes + bytes.len > 16 * 1024 * 1024) {
+            _ = std.c.pthread_mutex_unlock(&owner.async_mutex);
+            self.allocator.free(copy);
+            self.allocator.destroy(batch);
+            return false; // Existing partition locks make local fallback safe.
+        }
+        owner.async_count += 1;
+        owner.async_bytes += bytes.len;
+        if (owner.async_tail) |tail| tail.next = batch else owner.async_head = batch;
+        owner.async_tail = batch;
+        conn.owner_pending = true;
+        _ = std.c.pthread_mutex_unlock(&owner.async_mutex);
+        owner.loop.notify();
+        return true;
+    }
+
+    fn executeAsyncCommand(self: *Worker, batch: *AsyncBatch, args: []const []const u8) void {
+        const cmd_idx = cmd_table.lookup(args[0]);
+        batch.last_cmd_idx = cmd_idx;
+        self.stats.recordCall(cmd_idx);
+        const began = if (self.enable_timings) AdaptiveOwner.now() else 0;
+        defer if (self.enable_timings) {
+            const micros = (AdaptiveOwner.now() - began) / std.time.ns_per_us;
+            if (micros >= self.slowlog_threshold_us)
+                self.stats.pushSlowlog(self.allocator, cmd_idx, micros, nowMillisAccept(), args);
+        };
+        if (stats_mod.persistence_broken.load(.monotonic) and cmd_table.isWriteCommand(args[0])) {
+            batch.reply.appendSlice("-MISCONF persistence is in STOP-WRITE state\r\n") catch { batch.failed = true; };
+            return;
+        }
+        _ = self.executeCommandTo(&batch.db, &batch.protocol, &batch.reply, args, false);
+        if (batch.reply.items.len > self.max_client_buffer) batch.failed = true;
+    }
+
+    fn drainAsyncBatches(self: *Worker) void {
+        _ = std.c.pthread_mutex_lock(&self.async_mutex);
+        var next = self.async_head;
+        self.async_head = null;
+        self.async_tail = null;
+        _ = std.c.pthread_mutex_unlock(&self.async_mutex);
+        while (next) |batch| {
+            const following = batch.next;
+            self.owner_queue_delay = AdaptiveOwner.now() - batch.queued;
+            var pos: usize = 0;
+            while (pos < batch.bytes.len and !batch.failed) {
+                if (parseFastResp(batch.bytes[pos..])) |parsed| {
+                    self.executeAsyncCommand(batch, parsed.args[0..parsed.argc]);
+                    pos += parsed.consumed;
+                } else {
+                    var parser = resp.Parser.init(batch.bytes[pos..]);
+                    var value = parser.parse(self.allocator) catch { batch.failed = true; break; };
+                    defer value.deinit(self.allocator);
+                    var args = std.array_list.Managed([]const u8).init(self.allocator);
+                    defer args.deinit();
+                    for (value.array.?) |item| args.append(item.bulk_string.?) catch { batch.failed = true; break; };
+                    if (batch.failed) break;
+                    self.executeAsyncCommand(batch, args.items);
+                    pos += parser.pos;
+                }
+            }
+            self.owner_queue_delay = 0;
+            _ = std.c.pthread_mutex_lock(&self.async_mutex);
+            self.async_count -= 1;
+            self.async_bytes -= batch.bytes.len;
+            _ = std.c.pthread_mutex_unlock(&self.async_mutex);
+            batch.next = null;
+            const origin = batch.origin;
+            _ = std.c.pthread_mutex_lock(&origin.async_mutex);
+            if (origin.completed_tail) |tail| tail.next = batch else origin.completed_head = batch;
+            origin.completed_tail = batch;
+            _ = std.c.pthread_mutex_unlock(&origin.async_mutex);
+            origin.loop.notify();
+            next = following;
+        }
+    }
+
+    fn drainOwnerReplies(self: *Worker) void {
+        _ = std.c.pthread_mutex_lock(&self.async_mutex);
+        var next = self.completed_head;
+        self.completed_head = null;
+        self.completed_tail = null;
+        _ = std.c.pthread_mutex_unlock(&self.async_mutex);
+        while (next) |batch| {
+            next = batch.next;
+            defer self.allocator.destroy(batch);
+            defer self.allocator.free(batch.bytes);
+            defer batch.reply.deinit();
+            const conn = self.conns.get(batch.fd) orelse continue;
+            if (conn.client_id != batch.client_id) continue; // fd reuse after disconnect
+            if (batch.failed) { self.closeConn(batch.fd); continue; }
+            conn.write_buf.appendSlice(batch.reply.items) catch { self.closeConn(batch.fd); continue; };
+            conn.view.last_cmd_idx = batch.last_cmd_idx;
+            conn.view.last_interaction_ts_ms = nowMillisAccept();
+            conn.view.qbuf = @intCast(conn.accum.items.len);
+            conn.view.obl = @intCast(conn.write_buf.items.len - conn.write_offset);
+            conn.owner_pending = false;
+            while (!conn.owner_pending and conn.accumData().len > 0) {
+                if (!self.processOneCommand(conn)) break;
+            }
+            if (self.use_uring_io and conn.ssl == null) self.submitUringWrite(conn) else self.directFlush(conn);
+            // Flush may have closed the connection. Reacquire before resuming I/O.
+            if (self.conns.get(batch.fd)) |live| {
+                if (live.client_id == batch.client_id and !live.owner_pending) {
+                    if (self.use_uring_io and live.ssl == null) self.rearmRecv(live) else self.handleRead(live);
+                }
+            }
+            if (self.ds_locks) |dsl| dsl.releaseAll(&self.last_stripe);
+        }
+    }
+
+    fn routeBatch(self: *Worker, batch: *OwnedBatch) void {
+        const owner = self.fixed_owner.?;
+        // Never wait for another worker while retaining a data-store lease.
+        if (self.ds_locks) |dsl| dsl.releaseAll(&self.last_stripe);
+        _ = std.c.pthread_mutex_lock(&owner.owner_mutex);
+        if (owner.owner_tail) |tail| tail.next = batch else owner.owner_head = batch;
+        owner.owner_tail = batch;
+        owner.loop.notify();
+        // ponytail: park the connection's worker to preserve buffer lifetime and
+        // reply order. Async completion is needed if cold-client latency suffers.
+        while (!batch.done) _ = std.c.pthread_cond_wait(&self.owner_ready, &owner.owner_mutex);
+        _ = std.c.pthread_mutex_unlock(&owner.owner_mutex);
+    }
+
+    fn drainOwnedBatches(self: *Worker) void {
+        _ = std.c.pthread_mutex_lock(&self.owner_mutex);
+        var next = self.owner_head;
+        self.owner_head = null;
+        self.owner_tail = null;
+        _ = std.c.pthread_mutex_unlock(&self.owner_mutex);
+        // Take a finite snapshot so new traffic cannot starve owner connections.
+        while (next) |batch| {
+            const following = batch.next;
+            if (batch.bytes) |bytes| {
+                var pos: usize = 0;
+                while (pos < bytes.len) {
+                    const parsed = parseFastResp(bytes[pos..]).?;
+                    batch.origin.dispatchCommandLocal(batch.conn, parsed.args[0..parsed.argc]);
+                    pos += parsed.consumed;
+                }
+            } else {
+                batch.origin.dispatchCommandLocal(batch.conn, batch.args.?);
+            }
+            _ = std.c.pthread_mutex_lock(&self.owner_mutex);
+            batch.done = true;
+            _ = std.c.pthread_cond_signal(&batch.origin.owner_ready);
+            _ = std.c.pthread_mutex_unlock(&self.owner_mutex);
+            // The stack batch belongs to the origin and may already be gone.
+            next = following;
+        }
+    }
+
+    fn dispatchFastBatch(self: *Worker, conn: *Connection, data: []const u8) ?usize {
+        const first = parseFastResp(data) orelse return null;
+        if (!self.shouldRoute(conn, first.args[0..first.argc])) {
+            self.dispatchCommandLocal(conn, first.args[0..first.argc]);
+            return first.consumed;
+        }
+        var consumed = first.consumed;
+        var count: usize = 1;
+        while (count < 32 and consumed < data.len) : (count += 1) {
+            const parsed = parseFastResp(data[consumed..]) orelse break;
+            if (!self.shouldRoute(conn, parsed.args[0..parsed.argc])) break;
+            consumed += parsed.consumed;
+        }
+        if (self.adaptive_owner != null) {
+            if (self.routeAsync(conn, data[0..consumed])) return consumed;
+            self.dispatchCommandLocal(conn, first.args[0..first.argc]);
+            return first.consumed;
+        }
+        var batch: OwnedBatch = .{ .origin = self, .conn = conn, .bytes = data[0..consumed] };
+        self.routeBatch(&batch);
+        return consumed;
+    }
+
     pub fn init(
         allocator: Allocator,
         id: u16,
@@ -641,6 +896,11 @@ pub const Worker = struct {
             for (events) |ev| {
                 if (self.loop.isNotifyFd(ev.fd)) {
                     self.loop.drainNotify();
+                    if (self.adaptive_owner != null) {
+                        self.drainAsyncBatches();
+                        self.drainOwnerReplies();
+                    }
+                    self.drainOwnedBatches();
                     self.acceptQueuedFds();
                     self.drainPushQueue();
                     continue;
@@ -718,9 +978,9 @@ pub const Worker = struct {
         if (args.len < 2 or !std.mem.eql(u8, args[0], "_REPL")) return false;
         const real_args = args[1..];
         if (self.ckv) |ckv| {
-            if (self.executeHotFast(conn, real_args, ckv)) return true;
+            if (self.executeHotFast(conn, real_args, ckv, false)) return true;
         }
-        self.executeCommand(conn, real_args);
+        _ = self.executeCommand(conn, real_args, false);
         return true;
     }
 
@@ -909,11 +1169,12 @@ pub const Worker = struct {
     }
 
     fn handleRead(self: *Worker, conn: *Connection) void {
+        if (conn.owner_pending) return;
         // Read drain loop: process all available data before flushing.
         // If more data arrived while processing commands, read it too.
         // This effectively increases pipeline depth for free.
         var reads: u32 = 0;
-        while (reads < 8) : (reads += 1) {
+        while (reads < 8 and !conn.owner_pending) : (reads += 1) {
             var read_buf: [READ_BUF_SIZE]u8 = undefined;
             const rc = self.connRead(conn, &read_buf, READ_BUF_SIZE);
             if (rc <= 0) {
@@ -930,12 +1191,11 @@ pub const Worker = struct {
                 conn.accum_pos = 0;
 
                 var pos: usize = 0;
-                while (pos < n) {
+                while (pos < n and !conn.owner_pending) {
                     const data = read_buf[pos..n];
                     if (data.len >= 4 and data[0] == '*') {
-                        if (parseFastResp(data)) |result| {
-                            self.dispatchCommand(conn, result.args[0..result.argc]);
-                            pos += result.consumed;
+                        if (self.dispatchFastBatch(conn, data)) |consumed| {
+                            pos += consumed;
                             continue;
                         }
                     }
@@ -947,7 +1207,7 @@ pub const Worker = struct {
                         self.closeConn(conn.fd);
                         return;
                     };
-                    while (conn.accumData().len > 0) {
+                    while (!conn.owner_pending and conn.accumData().len > 0) {
                         if (!self.processOneCommand(conn)) break;
                     }
                 }
@@ -963,7 +1223,7 @@ pub const Worker = struct {
                     return;
                 }
 
-                while (conn.accumData().len > 0) {
+                while (!conn.owner_pending and conn.accumData().len > 0) {
                     if (!self.processOneCommand(conn)) break;
                 }
             }
@@ -997,12 +1257,11 @@ pub const Worker = struct {
             conn.accum_pos = 0;
 
             var pos: usize = 0;
-            while (pos < n) {
+            while (pos < n and !conn.owner_pending) {
                 const data = conn.recv_buf[pos..n];
                 if (data.len >= 4 and data[0] == '*') {
-                    if (parseFastResp(data)) |result| {
-                        self.dispatchCommand(conn, result.args[0..result.argc]);
-                        pos += result.consumed;
+                    if (self.dispatchFastBatch(conn, data)) |consumed| {
+                        pos += consumed;
                         continue;
                     }
                 }
@@ -1014,7 +1273,7 @@ pub const Worker = struct {
                     self.closeConn(conn.fd);
                     return;
                 };
-                while (conn.accumData().len > 0) {
+                while (!conn.owner_pending and conn.accumData().len > 0) {
                     if (!self.processOneCommand(conn)) break;
                 }
             }
@@ -1035,7 +1294,7 @@ pub const Worker = struct {
                 return;
             }
 
-            while (conn.accumData().len > 0) {
+            while (!conn.owner_pending and conn.accumData().len > 0) {
                 if (!self.processOneCommand(conn)) break;
             }
         }
@@ -1215,7 +1474,7 @@ pub const Worker = struct {
     }
 
     fn rearmRecv(self: *Worker, conn: *Connection) void {
-        if (conn.recv_pending or conn.ssl != null) return;
+        if (conn.recv_pending or conn.ssl != null or conn.owner_pending) return;
         conn.recv_pending = true;
         if (is_linux) {
             self.loop.submitRecv(conn.fd, &conn.recv_buf) catch {
@@ -1227,12 +1486,13 @@ pub const Worker = struct {
     }
 
     fn processOneCommand(self: *Worker, conn: *Connection) bool {
+        if (conn.owner_pending) return false;
         const data = conn.accumData();
         // Fast RESP path: zero-allocation manual parse.
         if (data.len >= 4 and data[0] == '*') {
-            if (parseFastResp(data)) |result| {
-                self.dispatchCommand(conn, result.args[0..result.argc]);
-                conn.advanceAccum(result.consumed);                return true;
+            if (self.dispatchFastBatch(conn, data)) |consumed| {
+                conn.advanceAccum(consumed);
+                return true;
             }
         }
 
@@ -1308,6 +1568,23 @@ pub const Worker = struct {
     }
 
     fn dispatchCommand(self: *Worker, conn: *Connection, args: []const []const u8) void {
+        if (self.shouldRoute(conn, args)) {
+            if (self.adaptive_owner != null) {
+                var encoded = std.array_list.Managed(u8).init(self.allocator);
+                defer encoded.deinit();
+                var header: [32]u8 = undefined;
+                const start = std.fmt.bufPrint(&header, "*{d}\r\n", .{args.len}) catch unreachable;
+                encoded.appendSlice(start) catch { self.dispatchCommandLocal(conn, args); return; };
+                for (args) |arg| writeBulkTo(&encoded, arg);
+                if (!self.routeAsync(conn, encoded.items)) self.dispatchCommandLocal(conn, args);
+                return;
+            }
+            var batch: OwnedBatch = .{ .origin = self, .conn = conn, .args = args };
+            self.routeBatch(&batch);
+        } else self.dispatchCommandLocal(conn, args);
+    }
+
+    fn dispatchCommandLocal(self: *Worker, conn: *Connection, args: []const []const u8) void {
         if (args.len == 0) return;
 
         const probe_on = probes.isEnabled();
@@ -1388,7 +1665,7 @@ pub const Worker = struct {
 
             // Hot path engine dispatch
             if (self.ckv) |ckv| {
-                if (self.executeHotFast(conn, args, ckv)) {
+                if (self.executeHotFast(conn, args, ckv, false)) {
                     self.maybeBroadcast(args);
                     return;
                 }
@@ -1436,8 +1713,7 @@ pub const Worker = struct {
             }
 
             // Fall through to CommandHandler for non-hot-path commands
-            self.executeCommand(conn, args);
-            self.maybeBroadcast(args);
+            _ = self.executeCommand(conn, args, true);
             return;
         }
 
@@ -1562,25 +1838,9 @@ pub const Worker = struct {
             return;
         }
 
-        // UNLINK — non-blocking DEL (we alias to DEL since our DEL is already fast)
-        if (args[0].len == 6 and equalsAsciiUpper(args[0], "UNLINK")) {
-            if (self.ckv) |ckv| {
-                var count: i64 = 0;
-                for (args[1..]) |user_key| {
-                    const ns = nsKey(conn.selected_db, user_key) orelse continue;
-                    const stale = ckv.deleteStale(ns);
-                    if (stale.stale_key) |k| self.allocator.free(k);
-                    if (stale.stale_val) |v| self.allocator.free(v);
-                    if (stale.found) count += 1;
-                }
-                if (count > 0) {
-                    if (self.aof) |a| a.logCommand(args);
-                    self.maybeBroadcast(args);
-                }
-                writeIntTo(&conn.write_buf, count);
-                return;
-            }
-            // Fallthrough to CommandHandler (DEL logic)
+        if (equalsAsciiUpper(args[0], "UNLINK")) {
+            _ = self.executeCommand(conn, args, true);
+            return;
         }
 
         // TIME — server time as [seconds, microseconds]
@@ -1658,7 +1918,7 @@ pub const Worker = struct {
         if (self.tryForwardToLeader(conn, args)) return;
 
         if (self.ckv) |ckv| {
-            if (self.executeHotFast(conn, args, ckv)) {
+            if (self.executeHotFast(conn, args, ckv, false)) {
                 // Leader: broadcast write mutations to followers
                 self.maybeBroadcast(args);
                 return;
@@ -1676,8 +1936,7 @@ pub const Worker = struct {
             return;
         }
 
-        self.executeCommand(conn, args);
-        self.maybeBroadcast(args);
+        _ = self.executeCommand(conn, args, true);
     }
 
     /// If this node is the leader and the command is a write, broadcast to followers.
@@ -1701,26 +1960,6 @@ pub const Worker = struct {
 
     // ── Pool helpers ──────────────────────────────────────────────────
 
-
-    // ── Flush all stores ──────────────────────────────────────────────
-
-    fn flushAllStores(self: *Worker, ckv: *ConcurrentKV) void {
-        ckv.flushdb();
-        // Flush data stores: free all data but retain pre-allocated HashMap capacity
-        if (self.list_store) |ls| ls.flush();
-        if (self.hash_store) |hs| hs.flush();
-        if (self.set_store) |ss| ss.flush();
-        if (self.sorted_set_store) |zs| zs.flush();
-        // Reset the graph engine under its write lock. The hot-path bypasses the
-        // CommandHandler entirely, so without this FLUSHALL/FLUSHDB would leave
-        // graph nodes/edges/properties intact and the next ADDNODE would surface
-        // DuplicateNode errors.
-        _ = std.c.pthread_rwlock_wrlock(self.graph_rwlock);
-        self.graph.deinit();
-        self.graph.* = GraphEngine.init(self.allocator);
-        _ = std.c.pthread_rwlock_unlock(self.graph_rwlock);
-        ckv.trimAfterFlush();
-    }
 
     // ── WATCH/UNWATCH ─────────────────────────────────────────────────
 
@@ -2400,23 +2639,31 @@ pub const Worker = struct {
             return;
         };
 
+        // EXEC consumes the transaction even when lock acquisition fails.
+        defer {
+            for (q.items) |*cmd| cmd.deinit(self.allocator);
+            q.deinit();
+            conn.tx_queue = null;
+            self.clearWatches(conn);
+        }
+
         // Serialize WATCH validation with expiry maintenance before emitting a
         // response header; otherwise a sweep could invalidate the watch between
         // this check and queued execution.
         if (!acquireKvMutexWithBackoff(self.kv_mutex)) {
             vex_log.err("worker {d}: kv_mutex acquire timed out after 5s — aborting command", .{self.id});
+            conn.write_buf.appendSlice("-ERR command lock timeout; command was not executed\r\n") catch {};
             return;
         }
         defer self.kv_mutex.unlock();
+
+        if (self.sorted_set_store) |store| store.lockAll();
+        defer if (self.sorted_set_store) |store| store.unlockAll();
 
         // WATCH check: if any watched key was modified, abort the transaction
         if (self.isWatchDirty(conn)) {
             // Abort: return nil array (Redis convention for WATCH failure)
             conn.write_buf.appendSlice("*-1\r\n") catch {};
-            for (q.items) |*cmd| cmd.deinit(self.allocator);
-            q.deinit();
-            conn.tx_queue = null;
-            self.clearWatches(conn);
             return;
         }
 
@@ -2433,7 +2680,7 @@ pub const Worker = struct {
             const args: []const []const u8 = @ptrCast(cmd.args);
 
             if (self.ckv) |ckv| {
-                if (self.executeHotFast(conn, args, ckv)) continue;
+                if (self.executeHotFast(conn, args, ckv, true)) continue;
             }
 
             // Fall back to CommandHandler for non-hot-path commands
@@ -2443,6 +2690,11 @@ pub const Worker = struct {
                 &selected_db, self.keys_mode,
             );
             handler.ckv = self.ckv;
+            handler.list_store = self.list_store;
+            handler.hash_store = self.hash_store;
+            handler.set_store = self.set_store;
+            handler.sorted_set_store = self.sorted_set_store;
+            handler.sorted_sets_locked = true;
             handler.data_dir = self.data_dir;
             handler.protocol_version = conn.protocol_version;
             handler.kv_mutex = self.kv_mutex;
@@ -2456,24 +2708,47 @@ pub const Worker = struct {
                 continue;
             };
             handler.kvGetCleanup();
+            self.recordHandlerMutation(conn.selected_db, args, aw.written());
             conn.selected_db = selected_db.load(.monotonic);
             conn.protocol_version = handler.protocol_version;
             conn.write_buf.appendSlice(aw.written()) catch {};
         }
 
-        // Clean up transaction queue + watched keys
-        for (q.items) |*cmd| cmd.deinit(self.allocator);
-        q.deinit();
-        conn.tx_queue = null;
-        self.clearWatches(conn);
     }
 
-    /// Hot-path command dispatch using nested switch (compiler generates jump tables).
-    /// Comptime response literals from ct module avoid runtime formatting.
-    fn executeHotFast(self: *Worker, conn: *Connection, args: []const []const u8, ckv: *ConcurrentKV) bool {
+    /// Audited string shortcuts share the key partition lock with the handler.
+    /// Comptime response literals avoid runtime formatting.
+    fn executeHotFast(self: *Worker, conn: *Connection, args: []const []const u8, ckv: *ConcurrentKV, sorted_sets_locked: bool) bool {
         if (args.len == 0) return false;
         const cmd = args[0];
         if (cmd.len == 0) return false;
+        // Only audited string shortcuts remain here. Collection and multi-key
+        // operations use the shared handler contract, including inside EXEC.
+        const simple_set = args.len == 3 and equalsAsciiUpper(cmd, "SET");
+        const simple_get = args.len == 2 and equalsAsciiUpper(cmd, "GET");
+        const simple_incr = args.len == 2 and equalsAsciiUpper(cmd, "INCR");
+        if (!simple_set and !simple_get and !simple_incr) return false;
+        const store = self.sorted_set_store orelse return false;
+        const key = nsKey(conn.selected_db, args[1]) orelse return false;
+        const partition = if (!sorted_sets_locked) store.lockKey(key) else null;
+        defer if (partition) |index| store.unlockKey(index);
+        // Collection expiry is reclaimed under this same command partition.
+        var selected_db = std.atomic.Value(u8).init(conn.selected_db);
+        var contract = CommandHandler.init(self.allocator, self.io, self.kv, self.graph, self.aof, &selected_db, self.keys_mode);
+        contract.ckv = ckv;
+        contract.hash_store = self.hash_store;
+        contract.list_store = self.list_store;
+        contract.set_store = self.set_store;
+        contract.sorted_set_store = store;
+        // A live string entry proves GET's type under the command lock.
+        // Missing/expired entries still use the shared cross-type contract.
+        const kind = if (simple_get) .none else contract.keyType(key);
+        if (kind != .none and kind != .string) {
+            if (simple_set) return false;
+            conn.write_buf.appendSlice("-WRONGTYPE Operation against a key holding the wrong kind of value\r\n") catch {};
+            return true;
+        }
+
 
         const probe_on = probes.isEnabled();
         const op_t0: u64 = if (probe_on) probes.start() else 0;
@@ -2483,10 +2758,7 @@ pub const Worker = struct {
             if (probe_on) probes.finish(&self.probes.storage_op, op_t0);
         }
 
-        const first = std.ascii.toUpper(cmd[0]);
-        switch (cmd.len) {
-            3 => switch (first) {
-                'G' => if (args.len >= 2 and equalsAsciiUpper(cmd, "GET")) {
+        if (args.len >= 2 and equalsAsciiUpper(cmd, "GET")) {
                     // Hot-path GET. SeqLock alone is not enough: getPtr walks
                     // the HashMap bucket array, which a concurrent
                     // ConcurrentKV.setInternal can free during a rehash.
@@ -2498,22 +2770,21 @@ pub const Worker = struct {
                     const stripe = ckv.getStripePublic(ns_key);
                     ckv.readLockStripePublic(stripe);
                     if (probe_on) probes.finish(&self.probes.get_stripe_lock, lock_t0);
-                    defer ckv.readUnlockStripePublic(stripe);
-
                     const lookup_t0: u64 = if (probe_on) probes.start() else 0;
                     const entry_opt = stripe.map.getPtr(ns_key);
                     if (probe_on) probes.finish(&self.probes.get_hashmap_lookup, lookup_t0);
-                    if (entry_opt == null) {
-                        writeNullTo(&conn.write_buf, conn.protocol_version);
-                        return true;
-                    }
-                    const entry = entry_opt.?;
-
-                    if (entry.hasTtl() and ckv.nowMillis() > entry.expiresAt())
+                    if (entry_opt == null or entry_opt.?.flags().deleted or
+                        (entry_opt.?.hasTtl() and ckv.nowMillis() >= entry_opt.?.expiresAt()))
                     {
-                        writeNullTo(&conn.write_buf, conn.protocol_version);
+                        ckv.readUnlockStripePublic(stripe);
+                        const missing_kind = contract.keyType(key);
+                        if (missing_kind != .none and missing_kind != .string) {
+                            conn.write_buf.appendSlice("-WRONGTYPE Operation against a key holding the wrong kind of value\r\n") catch {};
+                        } else writeNullTo(&conn.write_buf, conn.protocol_version);
                         return true;
                     }
+                    defer ckv.readUnlockStripePublic(stripe);
+                    const entry = entry_opt.?;
 
                     if (entry.isInteger()) {
                         const int_val = entry.integerValue();
@@ -2543,8 +2814,8 @@ pub const Worker = struct {
                     if (probe_on) probes.finish(&self.probes.get_value_copy, copy_t0);
                     conn.write_buf.appendSliceAssumeCapacity("\r\n");
                     return true;
-                },
-                'S' => if (args.len >= 3 and equalsAsciiUpper(cmd, "SET")) {
+                }
+        if (args.len >= 3 and equalsAsciiUpper(cmd, "SET")) {
                     // Bail to CommandHandler for NX/XX flags (require exists check)
                     if (args.len >= 4 and args[3].len == 2) {
                         if (equalsAsciiUpper(args[3], "NX") or equalsAsciiUpper(args[3], "XX")) return false;
@@ -2568,134 +2839,9 @@ pub const Worker = struct {
                     self.bumpWatchVersion(conn.selected_db, args[1]);
                     conn.write_buf.appendSlice(ct.resp_ok) catch {};
                     return true;
-                },
-                'D' => if (args.len >= 2 and equalsAsciiUpper(cmd, "DEL")) {
-                    const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
-                    const stale = ckv.deleteStale(ns_key);
-                    // Free OUTSIDE lock
-                    if (stale.stale_key) |k| self.allocator.free(k);
-                    if (stale.stale_val) |v| self.allocator.free(v);
-                    if (stale.found) {
-                        if (self.aof) |a| a.logCommand(args);
-                        self.bumpWatchVersion(conn.selected_db, args[1]);
-                        conn.write_buf.appendSlice(ct.RespInts.@"1") catch {};
-                    } else {
-                        conn.write_buf.appendSlice(ct.RespInts.@"0") catch {};
-                    }
-                    return true;
-                },
-                'T' => if (args.len >= 2 and equalsAsciiUpper(cmd, "TTL")) {
-                    const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
-                    if (!ckv.exists(ns_key)) {
-                        conn.write_buf.appendSlice(ct.RespInts.@"-2") catch {};
-                    } else if (ckv.ttl(ns_key)) |sec| {
-                        writeIntTo(&conn.write_buf, sec);
-                    } else {
-                        conn.write_buf.appendSlice(ct.RespInts.@"-1") catch {};
-                    }
-                    return true;
-                },
-                else => {},
-            },
-            4 => switch (first) {
-                'M' => if (args.len >= 3 and (args.len - 1) % 2 == 0 and equalsAsciiUpper(cmd, "MSET")) {
-                    // Hot-path MSET via ConcurrentKV
-                    var i: usize = 1;
-                    while (i + 1 < args.len) : (i += 2) {
-                        const ns = nsKey(conn.selected_db, args[i]) orelse continue;
-                        ckv.setInternal(ns, args[i + 1], 0) catch continue;
-                    }
-                    if (self.aof) |a| a.logCommand(args);
-                    conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                    return true;
-                } else if (args.len >= 2 and equalsAsciiUpper(cmd, "MGET")) {
-                    // MGET: build response in staging buffer, single write_buf append
-                    // One alloc+free per call beats 300 appendSlice calls (1 memcpy vs 300)
-                    const KVS = ConcurrentKV;
-                    const key_count = args.len - 1;
-                    const est = 32 + key_count * 80;
-                    var resp_buf = self.allocator.alloc(u8, est) catch return false;
-                    defer self.allocator.free(resp_buf);
-                    var pos: usize = 0;
-
-                    const hdr = std.fmt.bufPrint(resp_buf[pos..], "*{d}\r\n", .{key_count}) catch return false;
-                    pos += hdr.len;
-
-                    for (args[1..]) |user_key| {
-                        if (pos + 128 > resp_buf.len) {
-                            resp_buf = self.allocator.realloc(resp_buf, resp_buf.len * 2) catch break;
-                        }
-                        const ns = nsKey(conn.selected_db, user_key) orelse {
-                            pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
-                            continue;
-                        };
-                        const stripe = ckv.getStripePublic(ns);
-                        ckv.readLockStripePublic(stripe);
-                        const entry_opt = stripe.map.getPtr(ns);
-                        if (entry_opt == null) {
-                            ckv.readUnlockStripePublic(stripe);
-                            pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
-                            continue;
-                        }
-                        const entry = entry_opt.?;
-                        if (entry.hasTtl() and ckv.nowMillis() > entry.expiresAt())
-                        {
-                            ckv.readUnlockStripePublic(stripe);
-                            pos += writeNullBuf(resp_buf, pos, conn.protocol_version);
-                            continue;
-                        }
-
-                        if (entry.isInteger()) {
-                            const int_val = entry.integerValue();
-                            ckv.readUnlockStripePublic(stripe);
-                            const s = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n{d}\r\n", .{
-                                std.fmt.count("{d}", .{int_val}), int_val,
-                            }) catch continue;
-                            pos += s.len;
-                            continue;
-                        }
-
-                        if (entry.isInline()) {
-                            var val_copy: [KVS.INLINE_BUF_SIZE]u8 = undefined;
-                            const vlen = entry.bytes().len;
-                            @memcpy(val_copy[0..vlen], entry.bytes());
-                            ckv.readUnlockStripePublic(stripe);
-                            const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch continue;
-                            pos += vh.len;
-                            @memcpy(resp_buf[pos .. pos + vlen], val_copy[0..vlen]);
-                            pos += vlen;
-                            resp_buf[pos] = '\r'; resp_buf[pos + 1] = '\n'; pos += 2;
-                            continue;
-                        }
-
-                        const value = entry.bytes();
-                        const vlen = value.len;
-                        if (pos + vlen + 32 > resp_buf.len) {
-                            resp_buf = self.allocator.realloc(resp_buf, pos + vlen + 64) catch {
-                                ckv.readUnlockStripePublic(stripe);
-                                continue;
-                            };
-                        }
-                        const vh = std.fmt.bufPrint(resp_buf[pos..], "${d}\r\n", .{vlen}) catch {
-                            ckv.readUnlockStripePublic(stripe);
-                            continue;
-                        };
-                        pos += vh.len;
-                        @memcpy(resp_buf[pos .. pos + vlen], value);
-                        pos += vlen;
-                        resp_buf[pos] = '\r'; resp_buf[pos + 1] = '\n'; pos += 2;
-                        ckv.readUnlockStripePublic(stripe);
-                    }
-
-                    conn.write_buf.appendSlice(resp_buf[0..pos]) catch {};
-                    return true;
-                },
-                'P' => if (equalsAsciiUpper(cmd, "PING")) {
-                    if (args.len > 1) writeBulkTo(&conn.write_buf, args[1]) else conn.write_buf.appendSlice(ct.resp_pong) catch {};
-                    return true;
-                },
-                'I' => if (args.len >= 2 and equalsAsciiUpper(cmd, "INCR")) {
-                    // Ultra-fast INCR: inline nsKey + batch reservation
+                }
+        if (args.len == 2 and equalsAsciiUpper(cmd, "INCR")) {
+                    // INCR uses the shared checked mutation under the stripe write lock.
                     const user_key = args[1];
                     const db = conn.selected_db;
                     if (db >= 16) return false;
@@ -2707,33 +2853,11 @@ pub const Worker = struct {
                     @memcpy(IK.buf[prefix.len..total_len], user_key);
                     const ns_key = IK.buf[0..total_len];
 
-                    // Fast path: atomic increment on an existing integer entry.
-                    // Holds rdlock across getPtr + atomic update so a
-                    // concurrent setInternal rehash cannot free the bucket.
-                    // Must release before the incrBy fallback (which takes
-                    // wrlock) to avoid deadlock.
-                    const stripe = ckv.getStripePublic(ns_key);
-                    ckv.readLockStripePublic(stripe);
-                    var fast_new_val: ?i64 = null;
-                    if (stripe.map.getPtr(ns_key)) |entry| {
-                        if (entry.isInteger()) {
-                            const int_ptr = entry.integerPtr().?;
-                            fast_new_val = @atomicRmw(i64, int_ptr, .Add, 1, .monotonic) + 1;
-                        }
-                    }
-                    ckv.readUnlockStripePublic(stripe);
-                    if (fast_new_val) |nv| {
-                        if (self.aof) |a| a.logCommand(args);
-                        var incr_resp: [32]u8 = undefined;
-                        const ir = std.fmt.bufPrint(&incr_resp, ":{d}\r\n", .{nv}) catch return false;
-                        conn.write_buf.appendSlice(ir) catch {};
-                        return true;
-                    }
-
-                    // Fallback: new key or non-integer — use write lock
                     const new_val = ckv.incrBy(ns_key, 1) catch |err| {
                         if (err == error.NotAnInteger) {
                             conn.write_buf.appendSlice("-ERR value is not an integer or out of range\r\n") catch {};
+                        } else if (err == error.Overflow) {
+                            conn.write_buf.appendSlice("-ERR increment or decrement would overflow\r\n") catch {};
                         } else {
                             conn.write_buf.appendSlice("-ERR internal error\r\n") catch {};
                         }
@@ -2743,509 +2867,33 @@ pub const Worker = struct {
                     self.bumpWatchVersion(conn.selected_db, args[1]);
                     writeIntTo(&conn.write_buf, new_val);
                     return true;
-                },
-                'H' => {
-                    // HashStore now owns its per-stripe rwlocks; no DsStripeLocks
-                    // lease acquire is needed on this path (probe data showed
-                    // dsl.acquire was ~300ns/op of pure overhead here).
-                    if (args.len >= 4 and equalsAsciiUpper(cmd, "HSET")) {
-                        if (self.hash_store) |hs| {
-                            const nskey_t0: u64 = if (probe_on) probes.start() else 0;
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            if (probe_on) probes.finish(&self.probes.nskey, nskey_t0);
-
-                            const hset_t0: u64 = if (probe_on) probes.start() else 0;
-                            const added = hs.hset(ns, args[2..]) catch return false;
-                            if (probe_on) probes.finish(&self.probes.hset_total, hset_t0);
-
-                            if (self.aof) |a| a.logCommand(args);
-
-                            const bw_t0: u64 = if (probe_on) probes.start() else 0;
-                            self.bumpWatchVersion(conn.selected_db, args[1]);
-                            if (probe_on) probes.finish(&self.probes.bump_watch, bw_t0);
-
-                            const rw_t0: u64 = if (probe_on) probes.start() else 0;
-                            writeIntTo(&conn.write_buf, @intCast(added));
-                            if (probe_on) probes.finish(&self.probes.reply_write, rw_t0);
-                            return true;
-                        }
-                    }
-                    if (args.len >= 3 and equalsAsciiUpper(cmd, "HGET")) {
-                        if (self.hash_store) |hs| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            if (hs.hget(ns, args[2])) |val| {
-                                writeBulkTo(&conn.write_buf, val);
-                            } else {
-                                writeNullTo(&conn.write_buf, conn.protocol_version);
-                            }
-                            return true;
-                        }
-                    }
-                    if (args.len >= 2 and equalsAsciiUpper(cmd, "HLEN")) {
-                        if (self.hash_store) |hs| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            writeIntTo(&conn.write_buf, @intCast(hs.hlen(ns)));
-                            return true;
-                        }
-                    }
-                    // HMGET: stack buffer for typical requests, heap for large
-                    if (args.len >= 3 and equalsAsciiUpper(cmd, "HMGET")) {
-                        if (self.hash_store) |hs| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const fields = args[2..];
-                            var stack_buf: [8192]u8 = undefined;
-                            const need_heap = fields.len * 80 > stack_buf.len;
-                            const heap_buf: ?[]u8 = if (need_heap)
-                                self.allocator.alloc(u8, 32 + fields.len * 80) catch null
-                            else
-                                null;
-                            defer if (heap_buf) |hb| self.allocator.free(hb);
-                            const buf: []u8 = heap_buf orelse &stack_buf;
-                            var pos: usize = 0;
-                            const arr_hdr = std.fmt.bufPrint(buf[pos..], "*{d}\r\n", .{fields.len}) catch return false;
-                            pos += arr_hdr.len;
-                            for (fields) |field| {
-                                if (pos + 64 > buf.len) break;
-                                if (hs.hget(ns, field)) |val| {
-                                    if (pos + val.len + 16 > buf.len) break;
-                                    const vh = std.fmt.bufPrint(buf[pos..], "${d}\r\n", .{val.len}) catch continue;
-                                    pos += vh.len;
-                                    @memcpy(buf[pos .. pos + val.len], val);
-                                    pos += val.len;
-                                    buf[pos] = '\r'; buf[pos + 1] = '\n'; pos += 2;
-                                } else {
-                                    pos += writeNullBuf(buf, pos, conn.protocol_version);
-                                }
-                            }
-                            conn.write_buf.appendSlice(buf[0..pos]) catch {};
-                            return true;
-                        }
-                    }
-                    // HMSET: batch field set
-                    if (args.len >= 4 and equalsAsciiUpper(cmd, "HMSET")) {
-                        if (self.hash_store) |hs| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            _ = hs.hset(ns, args[2..]) catch return false;
-                            if (self.aof) |a| a.logCommand(args);
-                            self.bumpWatchVersion(conn.selected_db, args[1]);
-                            conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                            return true;
-                        }
-                    }
-                },
-                'L' => {
-                    if (args.len >= 2 and equalsAsciiUpper(cmd, "LLEN")) {
-                        if (self.list_store) |ls| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            writeIntTo(&conn.write_buf, @intCast(ls.llen(ns)));
-                            return true;
-                        }
-                    }
-                    if (args.len >= 2 and equalsAsciiUpper(cmd, "LPOP")) {
-                        if (self.list_store) |ls| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            const val = ls.lpop(ns);
-                            if (val) |v| {
-                                if (self.aof) |a| a.logCommand(args);
-                                writeBulkTo(&conn.write_buf, v);
-                            } else {
-                                writeNullTo(&conn.write_buf, conn.protocol_version);
-                            }
-                            return true;
-                        }
-                    }
-                },
-                'R' => if (args.len >= 2 and equalsAsciiUpper(cmd, "RPOP")) {
-                    if (self.list_store) |ls| {
-                        const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                        const dsl = self.ds_locks orelse return false;
-                        dsl.acquire(ns, self.id, &self.last_stripe);
-                        const val = ls.rpop(ns);
-                        if (val) |v| {
-                            if (self.aof) |a| a.logCommand(args);
-                            writeBulkTo(&conn.write_buf, v);
-                        } else {
-                            writeNullTo(&conn.write_buf, conn.protocol_version);
-                        }
-                        return true;
-                    }
-                },
-                'S' => if (args.len >= 3 and equalsAsciiUpper(cmd, "SADD")) {
-                    if (self.set_store) |ss| {
-                        const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                        const dsl = self.ds_locks orelse return false;
-                        const members = args[2..];
-                        var owned_buf: [16][]u8 = undefined;
-                        if (members.len > owned_buf.len) return false;
-                        for (members, 0..) |m, i| {
-                            owned_buf[i] = self.allocator.dupe(u8, m) catch return false;
-                        }
-                        const owned = owned_buf[0..members.len];
-                        dsl.acquire(ns, self.id, &self.last_stripe);
-                        const added = ss.saddOwned(ns, owned) catch {
-                            for (owned) |o| self.allocator.free(o);
-                            return false;
-                        };
-                        if (self.aof) |a| a.logCommand(args);
-                        self.bumpWatchVersion(conn.selected_db, args[1]);
-                        writeIntTo(&conn.write_buf, @intCast(added));
-                        return true;
-                    }
-                },
-                'Z' => {
-                    if (args.len >= 4 and equalsAsciiUpper(cmd, "ZADD")) {
-                        if (self.sorted_set_store) |zs| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            const added = zs.zadd(ns, args[2..]) catch return false;
-                            if (self.aof) |a| a.logCommand(args);
-                            self.bumpWatchVersion(conn.selected_db, args[1]);
-                            writeIntTo(&conn.write_buf, @intCast(added));
-                            return true;
-                        }
-                    }
-                },
-                else => {},
-            },
-            5 => switch (first) {
-                'L' => {
-                    if (args.len >= 3 and equalsAsciiUpper(cmd, "LPUSH")) {
-                        if (self.list_store) |ls| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            const list_len = ls.lpush(ns, args[2..]) catch return false;
-                            if (self.aof) |a| a.logCommand(args);
-                            self.bumpWatchVersion(conn.selected_db, args[1]);
-                            writeIntTo(&conn.write_buf, @intCast(list_len));
-                            return true;
-                        }
-                    }
-                    // LPOPN key count — batch pop from list head
-                    if (args.len >= 3 and equalsAsciiUpper(cmd, "LPOPN")) {
-                        if (self.list_store) |ls| {
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const count = std.fmt.parseInt(usize, args[2], 10) catch return false;
-                            const dsl = self.ds_locks orelse return false;
-                            dsl.acquire(ns, self.id, &self.last_stripe);
-                            var stack_buf: [8192]u8 = undefined;
-                            var pos: usize = 16; // reserve for array header
-                            var popped: usize = 0;
-                            var i: usize = 0;
-                            while (i < count) : (i += 1) {
-                                const val = ls.lpop(ns) orelse break;
-                                if (pos + val.len + 16 > stack_buf.len) break;
-                                const vh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{val.len}) catch break;
-                                pos += vh.len;
-                                @memcpy(stack_buf[pos .. pos + val.len], val);
-                                pos += val.len;
-                                stack_buf[pos] = '\r'; stack_buf[pos + 1] = '\n'; pos += 2;
-                                popped += 1;
-                            }
-                            const hdr = std.fmt.bufPrint(stack_buf[0..16], "*{d}\r\n", .{popped}) catch return false;
-                            if (hdr.len < 16) {
-                                const data_len = pos - 16;
-                                std.mem.copyForwards(u8, stack_buf[hdr.len .. hdr.len + data_len], stack_buf[16 .. 16 + data_len]);
-                                pos = hdr.len + data_len;
-                            }
-                            if (popped > 0) {
-                                if (self.aof) |a| a.logCommand(args);
-                            }
-                            conn.write_buf.appendSlice(stack_buf[0..pos]) catch {};
-                            return true;
-                        }
-                    }
-                },
-                'R' => if (args.len >= 3 and equalsAsciiUpper(cmd, "RPUSH")) {
-                    if (self.list_store) |ls| {
-                        const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                        const dsl = self.ds_locks orelse return false;
-                        dsl.acquire(ns, self.id, &self.last_stripe);
-                        const list_len = ls.rpush(ns, args[2..]) catch return false;
-                        if (self.aof) |a| a.logCommand(args);
-                        self.bumpWatchVersion(conn.selected_db, args[1]);
-                        writeIntTo(&conn.write_buf, @intCast(list_len));
-                        return true;
-                    }
-                },
-                'S' => if (args.len >= 2 and equalsAsciiUpper(cmd, "SCARD")) {
-                    if (self.set_store) |ss| {
-                        const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                        const dsl = self.ds_locks orelse return false;
-                        dsl.acquire(ns, self.id, &self.last_stripe);
-                        writeIntTo(&conn.write_buf, @intCast(ss.scard(ns)));
-                        return true;
-                    }
-                },
-                'Z' => if (args.len >= 2 and equalsAsciiUpper(cmd, "ZCARD")) {
-                    if (self.sorted_set_store) |zs| {
-                        const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                        const dsl = self.ds_locks orelse return false;
-                        dsl.acquire(ns, self.id, &self.last_stripe);
-                        writeIntTo(&conn.write_buf, @intCast(zs.zcard(ns)));
-                        return true;
-                    }
-                },
-                else => {},
-            },
-            6 => switch (first) {
-                'E' => if (args.len >= 2 and equalsAsciiUpper(cmd, "EXISTS")) {
-                    const ns_key = nsKey(conn.selected_db, args[1]) orelse return false;
-                    if (ckv.exists(ns_key)) {
-                        conn.write_buf.appendSlice(ct.RespInts.@"1") catch {};
-                    } else {
-                        conn.write_buf.appendSlice(ct.RespInts.@"0") catch {};
-                    }
-                    return true;
-                },
-                'D' => if (equalsAsciiUpper(cmd, "DBSIZE")) {
-                    writeIntTo(&conn.write_buf, @intCast(ckv.dbsize()));
-                    return true;
-                },
-                'M' => {
-                    // MSETEX key1 val1 ttl1 key2 val2 ttl2 ...
-                    if (args.len >= 4 and (args.len - 1) % 3 == 0 and equalsAsciiUpper(cmd, "MSETEX")) {
-                        var i: usize = 1;
-                        while (i + 2 < args.len) : (i += 3) {
-                            const ns = nsKey(conn.selected_db, args[i]) orelse continue;
-                            const ttl = std.fmt.parseInt(i64, args[i + 2], 10) catch continue;
-                            ckv.setEx(ns, args[i + 1], ttl) catch continue;
-                        }
-                        if (self.aof) |a| a.logCommand(args);
-                        conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                        return true;
-                    }
-                    // MSETNX key1 val1 key2 val2 ... — atomic all-or-nothing
-                    if (args.len >= 3 and (args.len - 1) % 2 == 0 and equalsAsciiUpper(cmd, "MSETNX")) {
-                        // Check all keys first
-                        var any_exists = false;
-                        var i: usize = 1;
-                        while (i + 1 < args.len) : (i += 2) {
-                            const ns = nsKey(conn.selected_db, args[i]) orelse continue;
-                            if (ckv.exists(ns)) { any_exists = true; break; }
-                        }
-                        if (any_exists) {
-                            conn.write_buf.appendSlice(ct.RespInts.@"0") catch {};
-                        } else {
-                            i = 1;
-                            while (i + 1 < args.len) : (i += 2) {
-                                const ns = nsKey(conn.selected_db, args[i]) orelse continue;
-                                ckv.setInternal(ns, args[i + 1], 0) catch continue;
-                            }
-                            if (self.aof) |a| a.logCommand(args);
-                            conn.write_buf.appendSlice(ct.RespInts.@"1") catch {};
-                        }
-                        return true;
-                    }
-                },
-                else => {},
-            },
-            7 => switch (first) {
-                'H' => {
-                    // HGETALL: serialized straight into write_buf under the
-                    // stripe lock (wire-cached for large hashes, exact-sized,
-                    // no intermediate buffer). NOTE: this arm is cmd.len == 7
-                    // — "HGETALL" never matches in the len-4 'H' arm where
-                    // HSET/HGET live (a previous version of this path was
-                    // unreachable for exactly that reason).
-                    if (equalsAsciiUpper(cmd, "HGETALL")) {
-                        if (self.hash_store) |hs| {
-                            if (args.len != 2) {
-                                conn.write_buf.appendSlice("-ERR wrong number of arguments for 'hgetall' command\r\n") catch {};
-                                return true;
-                            }
-                            const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                            const resp3 = conn.protocol_version == .resp3;
-                            hs.hgetallWrite(ns, &conn.write_buf, resp3) catch {
-                                // OOM reserving the reply — nothing was
-                                // appended, so an empty reply keeps the
-                                // stream well-formed.
-                                conn.write_buf.appendSlice(if (resp3) "%0\r\n" else "*0\r\n") catch {};
-                            };
-                            return true;
-                        }
-                    }
-                },
-                'M' => {
-                    // MEXISTS key1 key2 key3 ... — count of existing keys
-                    if (args.len >= 2 and equalsAsciiUpper(cmd, "MEXISTS")) {
-                        var count: i64 = 0;
-                        for (args[1..]) |user_key| {
-                            const ns = nsKey(conn.selected_db, user_key) orelse continue;
-                            if (ckv.exists(ns)) count += 1;
-                        }
-                        writeIntTo(&conn.write_buf, count);
-                        return true;
-                    }
-                    // MGETDEL key1 key2 ... — GET+DEL each key atomically
-                    if (args.len >= 2 and equalsAsciiUpper(cmd, "MGETDEL")) {
-                        const key_count = args.len - 1;
-                        var stack_buf: [8192]u8 = undefined;
-                        const need_heap = key_count * 80 > stack_buf.len;
-                        const heap_buf: ?[]u8 = if (need_heap) self.allocator.alloc(u8, 32 + key_count * 80) catch null else null;
-                        defer if (heap_buf) |hb| self.allocator.free(hb);
-                        const buf: []u8 = heap_buf orelse &stack_buf;
-                        var pos: usize = 0;
-                        const hdr = std.fmt.bufPrint(buf[pos..], "*{d}\r\n", .{key_count}) catch return false;
-                        pos += hdr.len;
-                        for (args[1..]) |user_key| {
-                            const ns = nsKey(conn.selected_db, user_key) orelse {
-                                pos += writeNullBuf(buf, pos, conn.protocol_version); continue;
-                            };
-                            if (ckv.get(ns)) |owned| {
-                                if (pos + owned.data.len + 16 > buf.len) { owned.deinit(); pos += writeNullBuf(buf, pos, conn.protocol_version); continue; }
-                                const vh = std.fmt.bufPrint(buf[pos..], "${d}\r\n", .{owned.data.len}) catch { owned.deinit(); continue; };
-                                pos += vh.len;
-                                @memcpy(buf[pos .. pos + owned.data.len], owned.data);
-                                pos += owned.data.len;
-                                buf[pos] = '\r'; buf[pos + 1] = '\n'; pos += 2;
-                                owned.deinit();
-                                _ = ckv.delete(ns);
-                            } else {
-                                pos += writeNullBuf(buf, pos, conn.protocol_version);
-                            }
-                        }
-                        if (self.aof) |a| a.logCommand(args);
-                        conn.write_buf.appendSlice(buf[0..pos]) catch {};
-                        return true;
-                    }
-                },
-                'I' => if (args.len >= 2 and equalsAsciiUpper(cmd, "INCRTTL")) {
-                    // INCRTTL key [delta] [EX ttl] — increment + set TTL
-                    const ns = nsKey(conn.selected_db, args[1]) orelse return false;
-                    var delta: i64 = 1;
-                    var ttl: ?i64 = null;
-                    var i: usize = 2;
-                    while (i < args.len) : (i += 1) {
-                        if (i + 1 < args.len and equalsAsciiUpper(args[i], "EX")) {
-                            ttl = std.fmt.parseInt(i64, args[i + 1], 10) catch null;
-                            i += 1;
-                        } else {
-                            delta = std.fmt.parseInt(i64, args[i], 10) catch 1;
-                        }
-                    }
-                    const new_val = ckv.incrBy(ns, delta) catch |err| {
-                        if (err == error.NotAnInteger) {
-                            conn.write_buf.appendSlice("-ERR value is not an integer\r\n") catch {};
-                        } else {
-                            conn.write_buf.appendSlice("-ERR internal error\r\n") catch {};
-                        }
-                        return true;
-                    };
-                    if (ttl) |t| {
-                        // Re-set the value with TTL (preserve the integer)
-                        var val_buf: [24]u8 = undefined;
-                        const val_str = std.fmt.bufPrint(&val_buf, "{d}", .{new_val}) catch return false;
-                        ckv.setEx(ns, val_str, t) catch {};
-                    }
-                    if (self.aof) |a| a.logCommand(args);
-                    writeIntTo(&conn.write_buf, new_val);
-                    return true;
-                },
-                'S' => if (args.len >= 3 and equalsAsciiUpper(cmd, "SCANGET")) {
-                    // SCANGET cursor pattern [COUNT n] — SCAN + inline values
-                    // Returns [next_cursor, [k1, v1, k2, v2, ...]]
-                    // For now, simple prefix scan on CKV (no cursor state)
-                    const pattern = args[2];
-                    var max_count: usize = 10;
-                    if (args.len >= 5 and equalsAsciiUpper(args[3], "COUNT")) {
-                        max_count = std.fmt.parseInt(usize, args[4], 10) catch 10;
-                    }
-                    // Use CKV's stripe iteration
-                    var stack_buf: [16384]u8 = undefined;
-                    var pos: usize = 0;
-                    // Reserve space for outer array header (will be *2\r\n)
-                    @memcpy(stack_buf[pos .. pos + 4], "*2\r\n"); pos += 4;
-                    // Cursor (always 0 for now — full scan)
-                    @memcpy(stack_buf[pos .. pos + 4], "$1\r\n"); pos += 4;
-                    stack_buf[pos] = '0'; pos += 1;
-                    @memcpy(stack_buf[pos .. pos + 2], "\r\n"); pos += 2;
-                    // Collect matching key-value pairs
-                    var match_count: usize = 0;
-                    const pairs_start = pos;
-                    // Reserve array header for pairs (will patch)
-                    pos += 16; // reserve for "*N\r\n"
-                    const db_prefix_str = DB_PREFIXES[conn.selected_db];
-                    for (0..256) |si| {
-                        if (match_count >= max_count) break;
-                        const stripe = &ckv.stripes[si];
-                        ckv.readLockStripePublic(stripe);
-                        var it = stripe.map.iterator();
-                        while (it.next()) |entry| {
-                            if (match_count >= max_count) break;
-                            if (pos + 256 > stack_buf.len) break;
-                            const raw_key = entry.key_ptr.*;
-                            // Strip db prefix
-                            if (!std.mem.startsWith(u8, raw_key, db_prefix_str)) continue;
-                            const user_key = raw_key[db_prefix_str.len..];
-                            // Simple prefix match (pattern without glob)
-                            if (pattern.len > 0 and pattern[pattern.len - 1] == '*') {
-                                if (!std.mem.startsWith(u8, user_key, pattern[0 .. pattern.len - 1])) continue;
-                            } else if (!std.mem.eql(u8, user_key, pattern)) continue;
-                            const e = entry.value_ptr;
-                            if (e.hasTtl() and ckv.nowMillis() > e.expiresAt()) continue;
-                            // Write key
-                            const kh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{user_key.len}) catch break;
-                            pos += kh.len;
-                            @memcpy(stack_buf[pos .. pos + user_key.len], user_key);
-                            pos += user_key.len;
-                            stack_buf[pos] = '\r'; stack_buf[pos + 1] = '\n'; pos += 2;
-                            // Write value
-                            const val = e.bytes();
-                            const vh = std.fmt.bufPrint(stack_buf[pos..], "${d}\r\n", .{val.len}) catch break;
-                            pos += vh.len;
-                            if (pos + val.len + 2 > stack_buf.len) break;
-                            @memcpy(stack_buf[pos .. pos + val.len], val);
-                            pos += val.len;
-                            stack_buf[pos] = '\r'; stack_buf[pos + 1] = '\n'; pos += 2;
-                            match_count += 1;
-                        }
-                        ckv.readUnlockStripePublic(stripe);
-                    }
-                    // Patch pairs array/map header
-                    const pairs_hdr = if (conn.protocol_version == .resp3)
-                        std.fmt.bufPrint(stack_buf[pairs_start..], "%{d}\r\n", .{match_count}) catch return false
-                    else
-                        std.fmt.bufPrint(stack_buf[pairs_start..], "*{d}\r\n", .{match_count * 2}) catch return false;
-                    // If header is shorter than reserved, shift data
-                    if (pairs_hdr.len < 16) {
-                        const data_start = pairs_start + 16;
-                        const data_len = pos - data_start;
-                        const new_data_start = pairs_start + pairs_hdr.len;
-                        std.mem.copyForwards(u8, stack_buf[new_data_start .. new_data_start + data_len], stack_buf[data_start .. data_start + data_len]);
-                        pos = new_data_start + data_len;
-                    }
-                    conn.write_buf.appendSlice(stack_buf[0..pos]) catch {};
-                    return true;
-                },
-                'C' => if (equalsAsciiUpper(cmd, "COMMAND")) {
-                    conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                    return true;
-                },
-                'F' => if (equalsAsciiUpper(cmd, "FLUSHDB")) {
-                    self.flushAllStores(ckv);
-                    conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                    return true;
-                },
-                else => {},
-            },
-            8 => if (first == 'F' and equalsAsciiUpper(cmd, "FLUSHALL")) {
-                self.flushAllStores(ckv);
-                conn.write_buf.appendSlice(ct.resp_ok) catch {};
-                return true;
-            },
-            else => {},
-        }
+                }
         return false;
     }
 
-    fn executeCommand(self: *Worker, conn: *Connection, args: []const []const u8) void {
-        var selected_db = std.atomic.Value(u8).init(conn.selected_db);
+    fn recordHandlerMutation(self: *Worker, db: u8, args: []const []const u8, reply: []const u8) void {
+        if (args.len == 0 or reply.len == 0 or reply[0] == '-' or !cmd_table.isWriteCommand(args[0])) return;
+        const cmd = args[0];
+        if (equalsAsciiUpper(cmd, "FLUSHDB") or equalsAsciiUpper(cmd, "FLUSHALL")) {
+            if (self.watch_map) |wm| wm.bumpFlushVersion();
+            return;
+        }
+        if (equalsAsciiUpper(cmd, "DEL") or equalsAsciiUpper(cmd, "UNLINK") or equalsAsciiUpper(cmd, "MGETDEL")) {
+            for (args[1..]) |key| self.bumpWatchVersion(db, key);
+        } else if (equalsAsciiUpper(cmd, "MSET") or equalsAsciiUpper(cmd, "MSETNX") or equalsAsciiUpper(cmd, "MSETEX")) {
+            if (equalsAsciiUpper(cmd, "MSETNX") and std.mem.eql(u8, reply, ":0\r\n")) return;
+            const stride: usize = if (equalsAsciiUpper(cmd, "MSETEX")) 3 else 2;
+            var i: usize = 1;
+            while (i < args.len) : (i += stride) self.bumpWatchVersion(db, args[i]);
+        } else if (args.len >= 2) self.bumpWatchVersion(db, args[1]);
+    }
+
+    fn executeCommand(self: *Worker, conn: *Connection, args: []const []const u8, broadcast: bool) bool {
+        return self.executeCommandTo(&conn.selected_db, &conn.protocol_version, &conn.write_buf, args, broadcast);
+    }
+
+    fn executeCommandTo(self: *Worker, db: *u8, protocol: *resp.ProtocolVersion, output: *std.array_list.Managed(u8), args: []const []const u8, broadcast: bool) bool {
+        var selected_db = std.atomic.Value(u8).init(db.*);
 
         const is_graph = isGraphCommand(args);
         const is_graph_write = if (is_graph) isGraphWriteCommand(args) else false;
@@ -3260,11 +2908,54 @@ pub const Worker = struct {
             _ = std.c.pthread_rwlock_unlock(self.graph_rwlock);
         };
 
-        if (!acquireKvMutexWithBackoff(self.kv_mutex)) {
-            vex_log.err("worker {d}: kv_mutex acquire timed out after 5s — aborting command", .{self.id});
-            return;
+        const key_command = self.ckv != null and args.len >= 2 and CommandHandler.isSingleKeyCollectionCommand(args[0]) and self.sorted_set_store != null;
+        var sorted_lock: ?usize = null;
+        if (key_command) {
+            var owned: ?[]u8 = null;
+            defer if (owned) |key| self.allocator.free(key);
+            const ns = nsKey(db.*, args[1]) orelse blk: {
+                owned = std.fmt.allocPrint(self.allocator, "db:{d}:{s}", .{ db.*, args[1] }) catch {
+                    output.appendSlice("-ERR out of memory\r\n") catch {};
+                    return false;
+                };
+                break :blk owned.?;
+            };
+            var sampled = false;
+            if (SortedSetStore.isCommand(args[0]) and self.adaptive_owner != null and db.* == 0) {
+                self.sample_remaining -= 1;
+                if (self.sample_remaining == 0) {
+                    self.sample_rng = self.sample_rng *% 1664525 +% 1013904223;
+                    self.sample_remaining = 48 + (self.sample_rng >> 24) % 32;
+                    sampled = true;
+                }
+            }
+            var waited: u64 = 0;
+            if (sampled) {
+                if (self.sorted_set_store.?.tryLockKey(ns)) |index| {
+                    sorted_lock = index;
+                } else {
+                    const began = AdaptiveOwner.now();
+                    sorted_lock = self.sorted_set_store.?.lockKey(ns);
+                    waited = @max(1, AdaptiveOwner.now() - began);
+                }
+                const change = self.adaptive_owner.?.observe(args[1], waited, self.owner_queue_delay, AdaptiveOwner.now());
+                if (change != .none) vex_log.info("adaptive-owner {s} monotonic_ns={d}", .{ @tagName(change), AdaptiveOwner.now() });
+            } else sorted_lock = self.sorted_set_store.?.lockKey(ns);
         }
-        defer self.kv_mutex.unlock();
+        if (!key_command and !acquireKvMutexWithBackoff(self.kv_mutex)) {
+            vex_log.err("worker {d}: kv_mutex acquire timed out after 5s — aborting command", .{self.id});
+            output.appendSlice("-ERR command lock timeout; command was not executed\r\n") catch {};
+            return false;
+        }
+        defer if (sorted_lock) |index| self.sorted_set_store.?.unlockKey(index) else self.kv_mutex.unlock();
+
+        const all_sorted = !key_command;
+        if (all_sorted) {
+            if (self.sorted_set_store) |store| store.lockAll();
+        }
+        defer if (all_sorted) {
+            if (self.sorted_set_store) |store| store.unlockAll();
+        };
 
         var handler = CommandHandler.init(
             self.allocator,
@@ -3276,12 +2967,14 @@ pub const Worker = struct {
             self.keys_mode,
         );
         handler.ckv = self.ckv;
+        defer handler.kvGetCleanup();
         handler.data_dir = self.data_dir;
         handler.list_store = self.list_store;
         handler.hash_store = self.hash_store;
         handler.set_store = self.set_store;
         handler.sorted_set_store = self.sorted_set_store;
-        handler.protocol_version = conn.protocol_version;
+        handler.sorted_sets_locked = key_command or all_sorted;
+        handler.protocol_version = protocol.*;
         handler.kv_mutex = self.kv_mutex;
 
         var list: std.ArrayList(u8) = .empty;
@@ -3289,11 +2982,15 @@ pub const Worker = struct {
         var aw = std.Io.Writer.Allocating.fromArrayList(self.allocator, &list);
         defer aw.deinit();
 
-        handler.execute(args, &aw.writer) catch return;
+        handler.execute(args, &aw.writer) catch return true;
+        self.recordHandlerMutation(db.*, args, aw.written());
+        // Preserve mutation ordering while still holding the command lock.
+        if (broadcast and aw.written().len > 0 and aw.written()[0] != '-') self.maybeBroadcast(args);
 
-        conn.selected_db = selected_db.load(.monotonic);
-        conn.protocol_version = handler.protocol_version;
-        conn.write_buf.appendSlice(aw.written()) catch return;
+        db.* = selected_db.load(.monotonic);
+        protocol.* = handler.protocol_version;
+        output.appendSlice(aw.written()) catch return true;
+        return true;
     }
 
     fn handleSelect(self: *Worker, conn: *Connection, args: []const []const u8) void {
@@ -3701,4 +3398,72 @@ fn constantTimeEql(a: []const u8, b: []const u8) bool {
 
 fn log(comptime fmt: []const u8, args: anytype) void {
     vex_log.info(fmt, args);
+}
+
+// Kept here to exercise private command entry points without adding a public
+// test API. The real five-second lock deadline must produce one RESP reply.
+test "command lock timeouts preserve replies and consume failed EXEC" {
+    const alloc = std.testing.allocator;
+    var mutex: std.atomic.Mutex = .unlocked;
+    var store = try SortedSetStore.init(alloc);
+    defer store.deinit();
+    var kv = KVStore.init(alloc, std.testing.io);
+    defer kv.deinit();
+    var graph = GraphEngine.init(alloc);
+    defer graph.deinit();
+    const conn = try Connection.init(alloc, -1, false);
+    defer conn.deinit(alloc);
+    var worker: Worker = undefined;
+    worker.id = 0;
+    worker.allocator = alloc;
+    worker.io = std.testing.io;
+    worker.kv_mutex = &mutex;
+    worker.kv = &kv;
+    worker.graph = &graph;
+    worker.ckv = null;
+    worker.aof = null;
+    worker.keys_mode = .strict;
+    worker.data_dir = null;
+    worker.list_store = null;
+    worker.hash_store = null;
+    worker.set_store = null;
+    worker.sorted_set_store = &store;
+    worker.watch_map = null;
+
+    const timeout_reply = "-ERR command lock timeout; command was not executed\r\n";
+    try std.testing.expect(mutex.tryLock());
+    try std.testing.expect(!worker.executeCommand(conn, &.{ "GET", "z" }, false));
+    mutex.unlock();
+    try std.testing.expect(worker.executeCommand(conn, &.{ "ZCARD", "z" }, false));
+    try std.testing.expectEqualStrings(timeout_reply ++ ":0\r\n", conn.write_buf.items);
+    conn.write_buf.clearRetainingCapacity();
+
+    conn.tx_queue = std.array_list.Managed(Connection.TxCommand).init(alloc);
+    const args = try alloc.alloc([]u8, 4);
+    for ([_][]const u8{ "ZADD", "z", "1", "member" }, 0..) |arg, i| args[i] = try alloc.dupe(u8, arg);
+    try conn.tx_queue.?.append(.{ .args = args });
+    conn.watched_keys = std.array_list.Managed(WatchEntry).init(alloc);
+    try conn.watched_keys.?.append(.{ .key = try alloc.dupe(u8, "z"), .version = 0 });
+    conn.watch_dirty = true;
+    try std.testing.expect(mutex.tryLock());
+    worker.handleExec(conn);
+    mutex.unlock();
+    try std.testing.expect(conn.tx_queue == null);
+    try std.testing.expect(!conn.watch_dirty);
+    try std.testing.expect(conn.watched_keys == null);
+    try std.testing.expect(worker.executeCommand(conn, &.{ "ZCARD", "z" }, false));
+    worker.handleExec(conn);
+    try std.testing.expectEqualStrings(timeout_reply ++ ":0\r\n-ERR EXEC without MULTI\r\n", conn.write_buf.items);
+
+    // A fresh transaction must execute normally after the aborted one.
+    conn.write_buf.clearRetainingCapacity();
+    conn.tx_queue = std.array_list.Managed(Connection.TxCommand).init(alloc);
+    const fresh_args = try alloc.alloc([]u8, 4);
+    for ([_][]const u8{ "ZADD", "z", "1", "member" }, 0..) |arg, i| fresh_args[i] = try alloc.dupe(u8, arg);
+    try conn.tx_queue.?.append(.{ .args = fresh_args });
+    worker.handleExec(conn);
+    try std.testing.expect(worker.executeCommand(conn, &.{ "ZRANK", "z", "member" }, false));
+    try std.testing.expect(worker.executeCommand(conn, &.{ "ZADD", "z", "nan", "member" }, false));
+    try std.testing.expect(worker.executeCommand(conn, &.{ "ZCARD", "z" }, false));
+    try std.testing.expectEqualStrings("*1\r\n:1\r\n:0\r\n-ERR value is not a valid float\r\n:1\r\n", conn.write_buf.items);
 }

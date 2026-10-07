@@ -4,7 +4,7 @@ const std = @import("std");
 const ListStore = @import("../../../src/engine/types/list.zig").ListStore;
 
 test "LPUSH and RPUSH" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.rpush("mylist", &[_][]const u8{ "a", "b" });
@@ -17,7 +17,7 @@ test "LPUSH and RPUSH" {
 }
 
 test "LPOP and RPOP" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.rpush("q", &[_][]const u8{ "1", "2", "3" });
@@ -34,7 +34,7 @@ test "LPOP and RPOP" {
 }
 
 test "LRANGE" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.rpush("r", &[_][]const u8{ "a", "b", "c", "d", "e" });
@@ -54,7 +54,7 @@ test "LRANGE" {
 }
 
 test "LSET and LREM" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.rpush("s", &[_][]const u8{ "a", "b", "a", "c", "a" });
@@ -68,7 +68,7 @@ test "LSET and LREM" {
 }
 
 test "LINDEX negative" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.rpush("n", &[_][]const u8{ "x", "y", "z" });
@@ -79,7 +79,7 @@ test "LINDEX negative" {
 }
 
 test "empty after pop keeps key (deferred cleanup)" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     _ = try store.rpush("tmp", &[_][]const u8{"x"});
@@ -97,7 +97,7 @@ test "empty after pop keeps key (deferred cleanup)" {
 // Without the fix, the new block inherits the drift via prev_cum and
 // binary search routes near-boundary reads to the wrong block.
 test "RPOP then RPUSH across block boundary keeps reads correct" {
-    var store = ListStore.init(std.testing.allocator);
+    var store = try ListStore.init(std.testing.allocator);
     defer store.deinit();
 
     // ~155 bytes per entry → ~52 entries per 8KB block (size-limited).

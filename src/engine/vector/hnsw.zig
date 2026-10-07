@@ -14,6 +14,65 @@ const VHI_VERSION: u8 = 1;
 const VHI_HEADER_SIZE: usize = 40;
 const VHI_NULL_NEIGHBORS: u16 = 0xFFFF;
 
+/// Reusable query scratch for one serialized caller. Search results returned
+/// by HnswIndex.searchWithWorkspace are copied out and do not alias this state.
+pub const SearchWorkspace = struct {
+    allocator: Allocator,
+    visited: ?std.DynamicBitSet = null,
+    visited_capacity: u32 = 0,
+    candidates: SortedCandidates,
+    working: MinHeap,
+
+    pub fn init(allocator: Allocator) SearchWorkspace {
+        return .{
+            .allocator = allocator,
+            .candidates = SortedCandidates.init(),
+            .working = MinHeap.init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *SearchWorkspace) void {
+        if (self.visited) |*visited| visited.deinit();
+        self.visited = null;
+        self.visited_capacity = 0;
+        self.candidates.deinit(self.allocator);
+        self.working.deinit();
+    }
+
+    /// Clear logical and visited state while retaining all allocated buffers.
+    pub fn reset(self: *SearchWorkspace) void {
+        if (self.visited) |*visited| visited.setRangeValue(.{ .start = 0, .end = @as(usize, self.visited_capacity) }, false);
+        self.clearLogical();
+    }
+
+    fn clearLogical(self: *SearchWorkspace) void {
+        self.candidates.reset();
+        self.working.reset();
+    }
+
+    pub fn visitedCapacity(self: *const SearchWorkspace) u32 {
+        return self.visited_capacity;
+    }
+
+    pub fn candidateCapacity(self: *const SearchWorkspace) usize {
+        return if (self.candidates.inited) self.candidates.buf.capacity else 0;
+    }
+
+    pub fn heapCapacity(self: *const SearchWorkspace) usize {
+        return self.working.buf.capacity;
+    }
+
+    fn ensureCapacity(self: *SearchWorkspace, capacity: u32) !void {
+        if (capacity <= self.visited_capacity) return;
+        // Build before replacing so OOM leaves the old workspace usable.
+        var replacement = try std.DynamicBitSet.initEmpty(self.allocator, capacity);
+        errdefer replacement.deinit();
+        if (self.visited) |*visited| visited.deinit();
+        self.visited = replacement;
+        self.visited_capacity = capacity;
+    }
+};
+
 /// Hierarchical Navigable Small World graph for approximate nearest neighbor search.
 /// One instance per vector field. References VectorStore for distance computation.
 ///
@@ -176,6 +235,7 @@ pub const HnswIndex = struct {
         defer candidates.deinit(self.allocator);
 
         var results = std.array_list.Managed(SearchResult).init(self.allocator);
+        defer results.deinit();
         for (candidates.items[0..candidates.len]) |c| {
             if (alive_bits) |bits| {
                 if (c.node_id >= bits.capacity()) continue;
@@ -185,6 +245,45 @@ pub const HnswIndex = struct {
             if (results.items.len >= k) break;
         }
 
+        return try results.toOwnedSlice();
+    }
+
+    /// Query using caller-owned scratch storage. The workspace is serialized
+    /// query state: do not use one workspace concurrently or shallow-copy it.
+    pub fn searchWithWorkspace(self: *const HnswIndex, workspace: *SearchWorkspace, query: []const f32, k: u32, alive_bits: ?*const std.DynamicBitSet) ![]SearchResult {
+        if (self.entry_point == null or self.node_count == 0) {
+            workspace.reset();
+            return try self.allocator.alloc(SearchResult, 0);
+        }
+
+        workspace.clearLogical();
+        errdefer workspace.reset();
+        try workspace.ensureCapacity(self.capacity);
+        defer workspace.clearLogical();
+        workspace.visited.?.setRangeValue(.{ .start = 0, .end = @as(usize, self.capacity) }, false);
+
+        var ep = self.entry_point.?;
+        if (self.max_level > 0) {
+            var cl: u8 = self.max_level;
+            while (cl > 0) : (cl -= 1) {
+                ep = self.greedyClosest(query, ep, cl - 1);
+                if (cl == 1) break;
+            }
+        }
+
+        const ef = @max(self.ef_search, @as(u16, @intCast(@min(k, std.math.maxInt(u16)))));
+        try self.searchLayerInto(query, ep, ef, 0, workspace.allocator, &workspace.visited.?, &workspace.candidates, &workspace.working);
+
+        var results = std.array_list.Managed(SearchResult).init(self.allocator);
+        defer results.deinit();
+        for (workspace.candidates.items[0..workspace.candidates.len]) |c| {
+            if (alive_bits) |bits| {
+                if (c.node_id >= bits.capacity()) continue;
+                if (!bits.isSet(c.node_id)) continue;
+            }
+            try results.append(c);
+            if (results.items.len >= k) break;
+        }
         return try results.toOwnedSlice();
     }
 
@@ -482,17 +581,29 @@ pub const HnswIndex = struct {
     /// Search a layer with ef-width beam search.
     /// Uses min-heap for working set (O(log n) pop) and sorted array for candidates.
     fn searchLayer(self: *const HnswIndex, query: []const f32, entry: u32, ef: u16, layer: u8) !SortedCandidates {
-        // Visited set: DynamicBitSet (1 bit/node vs HashMap ~40 bytes/node)
         var visited = try std.DynamicBitSet.initEmpty(self.allocator, self.capacity);
         defer visited.deinit();
 
         var candidates = SortedCandidates.init();
+        errdefer candidates.deinit(self.allocator);
         var working = MinHeap.init(self.allocator);
         defer working.deinit();
 
+        try self.searchLayerInto(query, entry, ef, layer, self.allocator, &visited, &candidates, &working);
+        return candidates;
+    }
+
+    fn searchLayerInto(self: *const HnswIndex, query: []const f32, entry: u32, ef: u16, layer: u8, scratch_allocator: Allocator, visited: *std.DynamicBitSet, candidates: *SortedCandidates, working: *MinHeap) !void {
+        candidates.reset();
+        working.reset();
+        errdefer {
+            candidates.reset();
+            working.reset();
+        }
+
         const entry_dist = self.dist(entry, query);
         visited.set(entry);
-        try candidates.add(self.allocator, .{ .node_id = entry, .distance = entry_dist });
+        try candidates.add(scratch_allocator, .{ .node_id = entry, .distance = entry_dist });
         try working.push(.{ .node_id = entry, .distance = entry_dist });
 
         while (working.len > 0) {
@@ -511,14 +622,13 @@ pub const HnswIndex = struct {
 
                 const d = self.dist(n, query);
                 if (candidates.len < ef or d < candidates.items[candidates.len - 1].distance) {
-                    try candidates.add(self.allocator, .{ .node_id = n, .distance = d });
+                    try candidates.add(scratch_allocator, .{ .node_id = n, .distance = d });
                     try working.push(.{ .node_id = n, .distance = d });
                     // Trim candidates to ef
                     if (candidates.len > ef) candidates.len = ef;
                 }
             }
         }
-        return candidates;
     }
 
     fn selectNeighbors(self: *HnswIndex, candidates: *SortedCandidates, M: u16) ![]u32 {
@@ -618,6 +728,8 @@ pub const MinHeap = struct {
 
     pub fn deinit(self: *MinHeap) void { self.buf.deinit(); }
 
+    pub fn reset(self: *MinHeap) void { self.len = 0; }
+
     pub fn push(self: *MinHeap, val: HnswIndex.SearchResult) !void {
         if (self.len >= self.buf.items.len) {
             try self.buf.append(val);
@@ -678,6 +790,11 @@ pub const SortedCandidates = struct {
         if (self.inited) self.buf.deinit();
     }
 
+    pub fn reset(self: *SortedCandidates) void {
+        self.len = 0;
+        if (self.inited) self.items = self.buf.items;
+    }
+
     pub fn add(self: *SortedCandidates, allocator: Allocator, result: HnswIndex.SearchResult) !void {
         if (!self.inited) {
             self.buf = std.array_list.Managed(HnswIndex.SearchResult).init(allocator);
@@ -716,4 +833,3 @@ pub const SortedCandidates = struct {
 };
 
 // ── Tests ───────────────────────────────────────────────────────────
-

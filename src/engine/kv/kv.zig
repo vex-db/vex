@@ -277,7 +277,7 @@ pub const KVStore = struct {
         if (entry.flags.deleted) return null;
         // Skip expiry check entirely when no keys have TTL
         if (self.ttl_count > 0 and entry.flags.has_ttl) {
-            if (self.nowMillis() > entry.expires_at) {
+            if (self.nowMillis() >= entry.expires_at) {
                 self.tombstoneEntry(key, entry);
                 _ = obs_stats.expired_keys.fetchAdd(1, .monotonic);
                 return null;
@@ -294,7 +294,7 @@ pub const KVStore = struct {
         if (entry.flags.deleted) return false;
         // Check expiry first
         if (self.ttl_count > 0 and entry.flags.has_ttl) {
-            if (self.nowMillis() > entry.expires_at) {
+            if (self.nowMillis() >= entry.expires_at) {
                 self.tombstoneEntry(key, entry);
                 return false; // was already expired
             }
@@ -307,7 +307,7 @@ pub const KVStore = struct {
         const entry = self.map.getPtr(key) orelse return false;
         if (entry.flags.deleted) return false;
         if (self.ttl_count > 0 and entry.flags.has_ttl) {
-            if (self.nowMillis() > entry.expires_at) {
+            if (self.nowMillis() >= entry.expires_at) {
                 self.tombstoneEntry(key, entry);
                 return false;
             }
@@ -320,7 +320,7 @@ pub const KVStore = struct {
         const entry = self.map.getPtr(key) orelse return null;
         if (entry.flags.deleted) return null;
         if (!entry.flags.has_ttl) return -1; // no expiry
-        if (self.nowMillis() > entry.expires_at) {
+        if (self.nowMillis() >= entry.expires_at) {
             self.tombstoneEntry(key, entry);
             return null;
         }

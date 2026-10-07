@@ -516,3 +516,39 @@ test "concurrent_kv repeated 4KiB overwrites succeed without allocation" {
     try std.testing.expectEqualSlices(u8, &payload, value.data);
     try std.testing.expectEqual(@as(u64, 4101), store.total_bytes.load(.monotonic));
 }
+
+test "concurrent_kv checked increments preserve value and expiry" {
+    var store = ConcurrentKV.init(std.testing.allocator, std.testing.io);
+    store.initStripes();
+    defer store.deinit();
+
+    try store.set("max", "9223372036854775807");
+    try std.testing.expectError(error.Overflow, store.incrBy("max", 1));
+    const unchanged = store.get("max") orelse return error.TestUnexpectedResult;
+    defer unchanged.deinit();
+    try std.testing.expectEqualStrings("9223372036854775807", unchanged.data);
+    try std.testing.expectEqual(std.math.maxInt(i64), try store.incrBy("native", std.math.maxInt(i64)));
+    try std.testing.expectError(error.Overflow, store.incrBy("native", 1));
+    try std.testing.expectEqual(std.math.minInt(i64), try store.incrBy("min", std.math.minInt(i64)));
+    try std.testing.expectError(error.Overflow, store.incrBy("min", -1));
+
+    store.cached_now_ms.store(1000, .release);
+    try store.setPx("ttl", "41", 100);
+    try std.testing.expectEqual(@as(i64, 42), try store.incrBy("ttl", 1));
+    try std.testing.expectEqual(@as(?i64, 100), store.pttl("ttl"));
+    // Packed heap storage and metadata must survive conversion to an integer.
+    try store.setPx("packed-ttl", "0000000000000000000000041", 100);
+    try std.testing.expect(store.getStripePublic("packed-ttl").map.getPtr("packed-ttl").?.isCombined());
+    try std.testing.expectEqual(@as(i64, 42), try store.incrBy("packed-ttl", 1));
+    try std.testing.expectEqual(@as(?i64, 100), store.pttl("packed-ttl"));
+    try std.testing.expectError(error.Overflow, store.incrBy("packed-ttl", std.math.maxInt(i64)));
+    try std.testing.expectEqual(@as(i64, 42), try store.incrBy("packed-ttl", 0));
+    try std.testing.expectEqual(@as(?i64, 100), store.pttl("packed-ttl"));
+    store.cached_now_ms.store(1100, .release);
+    try std.testing.expect(!store.exists("packed-ttl"));
+    try std.testing.expectEqual(@as(i64, 1), try store.incrBy("packed-ttl", 1));
+    try std.testing.expectEqual(@as(?i64, -1), store.pttl("packed-ttl"));
+    try std.testing.expect(!store.exists("ttl"));
+    try std.testing.expect(store.get("ttl") == null);
+    try std.testing.expectEqual(@as(i64, 1), try store.incrBy("ttl", 1));
+}

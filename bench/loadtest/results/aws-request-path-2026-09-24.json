@@ -1,0 +1,368 @@
+{
+  "status": "baseline_and_profiles_completed_no_engine_patch_selected",
+  "protocol": {
+    "server_cpus": 6,
+    "client_cpus": 24,
+    "server_machine": "c7g.2xlarge",
+    "client_machine": "c7g.8xlarge",
+    "pipeline": 1,
+    "connections": 128,
+    "key_count": 1000000,
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "get_set_ratio": "80:20",
+    "warmup_seconds": 10,
+    "sample_seconds": 60
+  },
+  "server_binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+  "client_binary_sha256": "f894894dcfd4cf3f38636b7ec679762d2c6ac5ea0363f98e68703844cf9a3207",
+  "controls": [
+    {
+      "label": "control-1",
+      "workers": 6,
+      "ops_per_sec": 734143.63,
+      "p50_ms": 0.175,
+      "p95_ms": 0.231,
+      "p99_ms": 0.255,
+      "rss_peak_bytes": 482660352,
+      "rss_median_bytes": 482660352,
+      "operation_count": 44048753,
+      "runtime_ms": 60000,
+      "server_cpu": {
+        "cpu_seconds": 349.812559,
+        "cpu_us_per_op": 7.941486084747961,
+        "bracket_seconds": 61.70923517899996,
+        "cpu_cores_during_load": 5.830209316666667,
+        "headroom_fraction": 0.02829844722222219,
+        "throttled_fraction": 7.55e-06,
+        "delta": {
+          "usage_usec": 349812559,
+          "user_usec": 41170028,
+          "system_usec": 308642531,
+          "nr_periods": 604,
+          "nr_throttled": 2,
+          "throttled_usec": 453
+        }
+      },
+      "client_cpu": {
+        "cpu_seconds": 571.541782,
+        "cpu_us_per_op": 12.97520912794058,
+        "bracket_seconds": 60.084568633,
+        "cpu_cores_during_load": 9.525696366666667,
+        "headroom_fraction": 0.6030959847222221,
+        "throttled_fraction": 0.0,
+        "delta": {
+          "usage_usec": 571541782,
+          "user_usec": 135288138,
+          "system_usec": 436253644,
+          "nr_periods": 601,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      "client_max_thread_cpu_fraction": 0.3371875664639503,
+      "measurement_valid": true
+    },
+    {
+      "label": "control-2",
+      "workers": 6,
+      "ops_per_sec": 713396.27,
+      "p50_ms": 0.159,
+      "p95_ms": 0.343,
+      "p99_ms": 0.431,
+      "rss_peak_bytes": 482422784,
+      "rss_median_bytes": 482422784,
+      "operation_count": 42803899,
+      "runtime_ms": 60000,
+      "server_cpu": {
+        "cpu_seconds": 343.621773,
+        "cpu_us_per_op": 8.027814779209717,
+        "bracket_seconds": 61.8699953150001,
+        "cpu_cores_during_load": 5.72702955,
+        "headroom_fraction": 0.04549507499999994,
+        "throttled_fraction": 0.0,
+        "delta": {
+          "usage_usec": 343621773,
+          "user_usec": 40498868,
+          "system_usec": 303122905,
+          "nr_periods": 605,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      "client_cpu": {
+        "cpu_seconds": 558.809855,
+        "cpu_us_per_op": 13.055115726723868,
+        "bracket_seconds": 60.11599390499998,
+        "cpu_cores_during_load": 9.313497583333334,
+        "headroom_fraction": 0.6119376006944444,
+        "throttled_fraction": 0.0,
+        "delta": {
+          "usage_usec": 558809855,
+          "user_usec": 132050566,
+          "system_usec": 426759288,
+          "nr_periods": 601,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      "client_max_thread_cpu_fraction": 0.34522993697112464,
+      "measurement_valid": true
+    },
+    {
+      "label": "two-worker-1",
+      "workers": 2,
+      "ops_per_sec": 326762.52,
+      "p50_ms": 0.399,
+      "p95_ms": 0.463,
+      "p99_ms": 0.495,
+      "rss_peak_bytes": 480751616,
+      "rss_median_bytes": 480751616,
+      "operation_count": 19605814,
+      "runtime_ms": 60000,
+      "server_cpu": {
+        "cpu_seconds": 118.310071,
+        "cpu_us_per_op": 6.034438100861306,
+        "bracket_seconds": 61.45937561400001,
+        "cpu_cores_during_load": 1.9718345166666666,
+        "headroom_fraction": 0.014082741666666676,
+        "throttled_fraction": 0.0006717,
+        "delta": {
+          "usage_usec": 118310071,
+          "user_usec": 17402382,
+          "system_usec": 100907690,
+          "nr_periods": 604,
+          "nr_throttled": 38,
+          "throttled_usec": 40302
+        }
+      },
+      "client_cpu": {
+        "cpu_seconds": 242.548872,
+        "cpu_us_per_op": 12.371272725529273,
+        "bracket_seconds": 60.0668642820001,
+        "cpu_cores_during_load": 4.0424812,
+        "headroom_fraction": 0.8315632833333333,
+        "throttled_fraction": 0.0,
+        "delta": {
+          "usage_usec": 242548872,
+          "user_usec": 60507873,
+          "system_usec": 182040999,
+          "nr_periods": 600,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      "client_max_thread_cpu_fraction": 0.15496092251153057,
+      "measurement_valid": true
+    },
+    {
+      "label": "two-worker-2",
+      "workers": 2,
+      "ops_per_sec": 336804.43,
+      "p50_ms": 0.391,
+      "p95_ms": 0.455,
+      "p99_ms": 0.487,
+      "rss_peak_bytes": 481021952,
+      "rss_median_bytes": 481021952.0,
+      "operation_count": 20208336,
+      "runtime_ms": 60000,
+      "server_cpu": {
+        "cpu_seconds": 118.506151,
+        "cpu_us_per_op": 5.864221131319273,
+        "bracket_seconds": 61.62979126800019,
+        "cpu_cores_during_load": 1.9751025166666667,
+        "headroom_fraction": 0.012448741666666652,
+        "throttled_fraction": 2.7816666666666664e-05,
+        "delta": {
+          "usage_usec": 118506151,
+          "user_usec": 18414211,
+          "system_usec": 100091940,
+          "nr_periods": 604,
+          "nr_throttled": 8,
+          "throttled_usec": 1669
+        }
+      },
+      "client_cpu": {
+        "cpu_seconds": 249.738712,
+        "cpu_us_per_op": 12.358202674381502,
+        "bracket_seconds": 60.105777601,
+        "cpu_cores_during_load": 4.162311866666666,
+        "headroom_fraction": 0.8265703388888889,
+        "throttled_fraction": 0.0,
+        "delta": {
+          "usage_usec": 249738712,
+          "user_usec": 62975832,
+          "system_usec": 186762879,
+          "nr_periods": 601,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      "client_max_thread_cpu_fraction": 0.15519495932151744,
+      "measurement_valid": true
+    }
+  ],
+  "scaling": {
+    "two_worker_median_ops": 331783.475,
+    "six_worker_median_ops": 723769.95,
+    "throughput_multiple": 2.1814526778345424,
+    "scaling_efficiency": 0.7271508926115142,
+    "observed_cross_combination_efficiency_range": [
+      0.7060440287755914,
+      0.7489064025253978
+    ],
+    "goal": 0.8,
+    "classification": "below_goal",
+    "range_is_not_confidence_interval": true,
+    "six_server_cpu_microseconds_per_op": {
+      "usage_usec": 7.984650431978839,
+      "user_usec": 0.9403979429176852,
+      "system_usec": 7.044252489061153
+    },
+    "two_server_cpu_microseconds_per_op": {
+      "usage_usec": 5.9493296160902895,
+      "user_usec": 0.8994159529851844,
+      "system_usec": 5.049913688607744
+    }
+  },
+  "profiles": {
+    "six_workers": {
+      "samples": 11325,
+      "recorded_lost_samples": 0,
+      "modes": {
+        "K": {
+          "samples": 9985,
+          "pct_of_all": 88.16777041942605
+        },
+        "U": {
+          "samples": 1340,
+          "pct_of_all": 11.832229580573951
+        }
+      },
+      "sampled_worker_threads": 6,
+      "unresolved_kernel_callchain_entries": 0,
+      "inputs_sha256": {
+        "perf.data": "d6629746b3ca39ed0617e262e125cf6d621d7214c7f7b7dec7ed9cde346b12fb",
+        "kallsyms.txt": "d464d7d7b79a6fa9dcce8fc0836a2b03b7661321b4124b31ff3df712799d672c",
+        "perf-script-leaf.txt": "cda268fd80a72a97344d38af862a8867525b8e4c12b70ae01645225a4c69191b",
+        "perf-header.txt": "6a7d7402eba0d92feccf0d371ceec533375a60c6852fef3df4e4ae32c3420246"
+      },
+      "kernel_unknown_leaf_samples": 85,
+      "callgraph": "frame pointers; optimized user callchains may be incomplete",
+      "raw_path": "bench/loadtest/runs/2026-09-24-aws-request-path/profile"
+    },
+    "two_workers": {
+      "samples": 3954,
+      "recorded_lost_samples": 0,
+      "modes": {
+        "K": {
+          "samples": 3386,
+          "pct_of_all": 85.63480020232676
+        },
+        "U": {
+          "samples": 568,
+          "pct_of_all": 14.365199797673242
+        }
+      },
+      "sampled_worker_threads": 2,
+      "unresolved_kernel_callchain_entries": 0,
+      "inputs_sha256": {
+        "perf.data": "7fa222f87bb5ca9d78b8c857a1b8e5b90fcc62f357b93c824a9176985783ea37",
+        "kallsyms.txt": "e2db086778cfa8a63eb5d8092b2916fb0a7ac0e48899c8a385e157f4a46a591f",
+        "perf-script-leaf.txt": "26006254330457cfe4e2cbcb3d10e4533e363b1bbb374d613add638633df0530",
+        "perf-header.txt": "1aa6f636df25624df3e4c61bc4be1364805bb75a23292c040cf364daca902e5b"
+      },
+      "kernel_unknown_leaf_samples": 24,
+      "callgraph": "frame pointers; optimized user callchains may be incomplete",
+      "raw_path": "bench/loadtest/runs/2026-09-24-aws-request-path/profile-two-worker"
+    }
+  },
+  "host_cpu_context": [
+    {
+      "cell": "control-1",
+      "host_busy_seconds_at_USER_HZ_100": 436.34,
+      "host_busy_microseconds_per_op": 9.905842283435357,
+      "user_us_per_op": 0.9623427932227729,
+      "nice_us_per_op": 0.9934446952448347,
+      "system_us_per_op": 2.2422882209628043,
+      "softirq_us_per_op": 5.707766574004944,
+      "steal_ticks": 0,
+      "scope": "whole host, wider orchestration bracket includes DaemonSets/system work; not attributable solely to Vex"
+    },
+    {
+      "cell": "control-2",
+      "host_busy_seconds_at_USER_HZ_100": 427.86,
+      "host_busy_microseconds_per_op": 9.995818371592737,
+      "user_us_per_op": 0.9826207654587729,
+      "nice_us_per_op": 0.9714068337559623,
+      "system_us_per_op": 2.271989287704842,
+      "softirq_us_per_op": 5.7698014846731605,
+      "steal_ticks": 0,
+      "scope": "whole host, wider orchestration bracket includes DaemonSets/system work; not attributable solely to Vex"
+    },
+    {
+      "cell": "two-worker-1",
+      "host_busy_seconds_at_USER_HZ_100": 224.56,
+      "host_busy_microseconds_per_op": 11.453745302286352,
+      "user_us_per_op": 0.9736907633623373,
+      "nice_us_per_op": 2.5625051834114103,
+      "system_us_per_op": 2.200367707252553,
+      "softirq_us_per_op": 5.717181648260052,
+      "steal_ticks": 0,
+      "scope": "whole host, wider orchestration bracket includes DaemonSets/system work; not attributable solely to Vex"
+    },
+    {
+      "cell": "two-worker-2",
+      "host_busy_seconds_at_USER_HZ_100": 229.33,
+      "host_busy_microseconds_per_op": 11.34828716228788,
+      "user_us_per_op": 1.0139380105318914,
+      "nice_us_per_op": 2.515793482451994,
+      "system_us_per_op": 2.2713399064623627,
+      "softirq_us_per_op": 5.547215762841631,
+      "steal_ticks": 0,
+      "scope": "whole host, wider orchestration bracket includes DaemonSets/system work; not attributable solely to Vex"
+    }
+  ],
+  "limitations": [
+    "No engine speedup is claimed; same binary throughout.",
+    "Worker/quota ratio is not physical-core efficiency: networking executes outside workload cgroups.",
+    "Host system plus softirq CPU per operation was similar at both endpoints; increased Vex cgroup CPU is not established increased total host network cost.",
+    "Host counters include system/DaemonSet/nice work and wider launch/drain brackets.",
+    "P99 varies substantially between six-worker controls.",
+    "No comparisons to Redis, Dragonfly, local Docker or different CPU architectures are supported."
+  ],
+  "setup_rejections": [
+    "Initial 12-CPU client warmup had only15.86%headroom; no60ssample ran. Replaced with24CPUclient before accepted controls.",
+    "DWARF event creation rejected before workload; frame-pointermode verified. Perf acknowledgement includes trailingNUL; validated and fixed before workload."
+  ],
+  "raw_root": "bench/loadtest/runs/2026-09-24-aws-request-path",
+  "cleanup": {
+    "status": "verified_complete",
+    "namespace": "vex-request-path-20260924",
+    "nodepools": [
+      "vex-request-path-20260924-server",
+      "vex-request-path-20260924-client"
+    ],
+    "instances": [
+      "i-0529a42f975a46a05",
+      "i-048228d06bfe4c8fe",
+      "i-052576e4b8ee5a093"
+    ],
+    "benchmark_ecr_image_tags_retained_for_reproduction": true,
+    "instances_verified": [
+      {
+        "id": "i-052576e4b8ee5a093",
+        "state": "terminated"
+      },
+      {
+        "id": "i-0529a42f975a46a05",
+        "state": "terminated"
+      },
+      {
+        "id": "i-048228d06bfe4c8fe",
+        "state": "terminated"
+      }
+    ],
+    "namespace_nodeclaims_nodepools_absent": true
+  }
+}

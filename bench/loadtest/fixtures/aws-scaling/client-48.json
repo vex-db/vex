@@ -1,0 +1,90 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "client",
+    "namespace": "vex-scaling-20260927-hypotheses-r3",
+    "labels": {
+      "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3",
+      "role": "client"
+    },
+    "annotations": {
+      "karpenter.sh/do-not-disrupt": "true"
+    }
+  },
+  "spec": {
+    "restartPolicy": "Never",
+    "activeDeadlineSeconds": 14400,
+    "terminationGracePeriodSeconds": 5,
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": true,
+    "nodeSelector": {
+      "karpenter.sh/nodepool": "vex-scaling-20260927-hypotheses-r3-client"
+    },
+    "tolerations": [
+      {
+        "key": "vex-benchmark",
+        "value": "vex-scaling-20260927-hypotheses-r3",
+        "operator": "Equal",
+        "effect": "NoSchedule"
+      }
+    ],
+    "containers": [
+      {
+        "name": "memtier",
+        "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7",
+        "imagePullPolicy": "IfNotPresent",
+        "command": [
+          "sleep",
+          "14400"
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "48",
+            "memory": "4Gi"
+          },
+          "limits": {
+            "cpu": "48",
+            "memory": "4Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "results",
+            "mountPath": "/results"
+          }
+        ]
+      },
+      {
+        "name": "sampler",
+        "image": "208168340597.dkr.ecr.ap-south-1.amazonaws.com/jarvis/vex@sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+        "command": [
+          "sleep",
+          "14400"
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "50m",
+            "memory": "32Mi"
+          },
+          "limits": {
+            "cpu": "200m",
+            "memory": "128Mi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "results",
+            "mountPath": "/results"
+          }
+        ]
+      }
+    ],
+    "volumes": [
+      {
+        "name": "results",
+        "emptyDir": {}
+      }
+    ]
+  }
+}

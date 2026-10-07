@@ -1,0 +1,1 @@
+{"commands": ["date -u +%s; cat /proc/sys/kernel/random/boot_id; for ena_iface in /sys/class/net/*; do ena_name=${ena_iface##*/}; if [ -e \"$ena_iface/device\" ]; then echo \"$ena_name\"; ethtool -S \"$ena_name\" | awk '/allowance/{print}'; fi; done"]}

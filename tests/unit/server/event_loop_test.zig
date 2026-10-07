@@ -63,3 +63,33 @@ test "notify wakes poll" {
 
     el.drainNotify();
 }
+
+test "high descriptor delivers events and survives removal and reuse" {
+    if (@import("builtin").os.tag != .linux) return;
+    var el = try EventLoop.init();
+    defer el.deinit();
+    var pipes: [2]std.c.fd_t = undefined;
+    if (std.c.pipe(&pipes) != 0) return error.PipeFailed;
+    defer _ = std.c.close(pipes[0]);
+    defer _ = std.c.close(pipes[1]);
+    const high = std.c.fcntl(pipes[0], std.c.F.DUPFD, @as(c_int, 8192));
+    if (high < 0) return error.HighDescriptorUnavailable;
+    defer _ = std.c.close(high);
+    try el.addFd(high, 42);
+    try el.enableWrite(high, 42);
+    try el.disableWrite(high, 42);
+    el.removeFd(high);
+    try el.addFd(high, 99);
+    const byte = [1]u8{'x'};
+    try std.testing.expect(std.c.write(pipes[1], &byte, 1) == 1);
+    var events: [16]EventLoop.Event = undefined;
+    var found = false;
+    for (try el.poll(&events, 100)) |event| {
+        if (event.fd == high and event.readable) {
+            try std.testing.expectEqual(@as(usize, 99), event.data);
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
+    el.removeFd(high);
+}

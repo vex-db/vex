@@ -1,0 +1,832 @@
+{
+  "date": "2026-09-25",
+  "scope": "Local native ARM64 Docker memory-only baseline; single persistent client, 1000-command batches; same pinned binaries as AWS20260925. No throughput claims.",
+  "engines": {
+    "vex": {
+      "grow": [
+        {
+          "phase": "grow-200000",
+          "keys": 200000,
+          "rss_mib": 87.6171875,
+          "hwm_mib": 87.6171875
+        },
+        {
+          "phase": "grow-400000",
+          "keys": 400000,
+          "rss_mib": 164.06640625,
+          "hwm_mib": 164.06640625
+        },
+        {
+          "phase": "grow-600000",
+          "keys": 600000,
+          "rss_mib": 262.21875,
+          "hwm_mib": 262.21875
+        },
+        {
+          "phase": "grow-750000",
+          "keys": 750000,
+          "rss_mib": 306.07421875,
+          "hwm_mib": 306.07421875
+        },
+        {
+          "phase": "grow-800000",
+          "keys": 800000,
+          "rss_mib": 321.015625,
+          "hwm_mib": 321.015625
+        },
+        {
+          "phase": "grow-825000",
+          "keys": 825000,
+          "rss_mib": 341.5078125,
+          "hwm_mib": 341.5078125
+        },
+        {
+          "phase": "grow-850000",
+          "keys": 850000,
+          "rss_mib": 396.60546875,
+          "hwm_mib": 396.60546875
+        },
+        {
+          "phase": "grow-900000",
+          "keys": 900000,
+          "rss_mib": 430.38671875,
+          "hwm_mib": 430.38671875
+        },
+        {
+          "phase": "grow-1000000",
+          "keys": 1000000,
+          "rss_mib": 459.58203125,
+          "hwm_mib": 459.58203125
+        },
+        {
+          "phase": "grow-1200000",
+          "keys": 1200000,
+          "rss_mib": 517.90625,
+          "hwm_mib": 517.90625
+        },
+        {
+          "phase": "grow-1500000",
+          "keys": 1500000,
+          "rss_mib": 605.421875,
+          "hwm_mib": 605.421875
+        },
+        {
+          "phase": "grow-1600000",
+          "keys": 1600000,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "delete-800000-immediate",
+          "keys": 800000,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "delete-800000-5s",
+          "keys": 800000,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "delete-200000-immediate",
+          "keys": 200000,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "delete-200000-5s",
+          "keys": 200000,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "delete-0-immediate",
+          "keys": 0,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "delete-0-5s",
+          "keys": 0,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "refill-200000",
+          "keys": 200000,
+          "rss_mib": 634.60546875,
+          "hwm_mib": 634.60546875
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 471.87109375,
+          "hwm_mib": 634.10546875
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 471.87109375,
+          "hwm_mib": 634.10546875
+        }
+      ],
+      "overwrite": [
+        {
+          "phase": "overwrite-4096",
+          "keys": 100000,
+          "rss_mib": 413.86328125,
+          "hwm_mib": 413.86328125
+        },
+        {
+          "phase": "overwrite-2048",
+          "keys": 100000,
+          "rss_mib": 415.41796875,
+          "hwm_mib": 415.41796875
+        },
+        {
+          "phase": "overwrite-128",
+          "keys": 100000,
+          "rss_mib": 415.41796875,
+          "hwm_mib": 415.41796875
+        },
+        {
+          "phase": "overwrite-32",
+          "keys": 100000,
+          "rss_mib": 415.41796875,
+          "hwm_mib": 415.41796875
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 415.42578125,
+          "hwm_mib": 415.42578125
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 415.42578125,
+          "hwm_mib": 415.42578125
+        }
+      ],
+      "ttl": [
+        {
+          "phase": "ttl-set",
+          "keys": 100000,
+          "rss_mib": 47.33203125,
+          "hwm_mib": 47.33203125
+        },
+        {
+          "phase": "ttl-5s",
+          "keys": 100000,
+          "rss_mib": 47.33203125,
+          "hwm_mib": 47.33203125
+        },
+        {
+          "phase": "ttl-30s",
+          "keys": 100000,
+          "rss_mib": 47.33203125,
+          "hwm_mib": 47.33203125
+        }
+      ]
+    },
+    "redis": {
+      "grow": [
+        {
+          "phase": "grow-200000",
+          "keys": 200000,
+          "rss_mib": 86.98046875,
+          "hwm_mib": 86.98046875
+        },
+        {
+          "phase": "grow-400000",
+          "keys": 400000,
+          "rss_mib": 160.0234375,
+          "hwm_mib": 160.0234375
+        },
+        {
+          "phase": "grow-600000",
+          "keys": 600000,
+          "rss_mib": 236.640625,
+          "hwm_mib": 236.640625
+        },
+        {
+          "phase": "grow-750000",
+          "keys": 750000,
+          "rss_mib": 283.52734375,
+          "hwm_mib": 287.0703125
+        },
+        {
+          "phase": "grow-800000",
+          "keys": 800000,
+          "rss_mib": 301.0546875,
+          "hwm_mib": 301.0546875
+        },
+        {
+          "phase": "grow-825000",
+          "keys": 825000,
+          "rss_mib": 309.91015625,
+          "hwm_mib": 309.91015625
+        },
+        {
+          "phase": "grow-850000",
+          "keys": 850000,
+          "rss_mib": 318.70703125,
+          "hwm_mib": 318.70703125
+        },
+        {
+          "phase": "grow-900000",
+          "keys": 900000,
+          "rss_mib": 336.375,
+          "hwm_mib": 336.375
+        },
+        {
+          "phase": "grow-1000000",
+          "keys": 1000000,
+          "rss_mib": 371.6640625,
+          "hwm_mib": 371.6640625
+        },
+        {
+          "phase": "grow-1200000",
+          "keys": 1200000,
+          "rss_mib": 457.33984375,
+          "hwm_mib": 457.33984375
+        },
+        {
+          "phase": "grow-1500000",
+          "keys": 1500000,
+          "rss_mib": 561.41015625,
+          "hwm_mib": 561.41015625
+        },
+        {
+          "phase": "grow-1600000",
+          "keys": 1600000,
+          "rss_mib": 588.36328125,
+          "hwm_mib": 588.36328125
+        },
+        {
+          "phase": "delete-800000-immediate",
+          "keys": 800000,
+          "rss_mib": 456.83984375,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "delete-800000-5s",
+          "keys": 800000,
+          "rss_mib": 456.859375,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "delete-200000-immediate",
+          "keys": 200000,
+          "rss_mib": 366.546875,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "delete-200000-5s",
+          "keys": 200000,
+          "rss_mib": 175.8671875,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "delete-0-immediate",
+          "keys": 0,
+          "rss_mib": 175.87109375,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "delete-0-5s",
+          "keys": 0,
+          "rss_mib": 175.890625,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "refill-200000",
+          "keys": 200000,
+          "rss_mib": 136.30859375,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 18.1171875,
+          "hwm_mib": 587.140625
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 18.1171875,
+          "hwm_mib": 587.140625
+        }
+      ],
+      "overwrite": [
+        {
+          "phase": "overwrite-4096",
+          "keys": 100000,
+          "rss_mib": 509.46875,
+          "hwm_mib": 509.46875
+        },
+        {
+          "phase": "overwrite-2048",
+          "keys": 100000,
+          "rss_mib": 270.7734375,
+          "hwm_mib": 509.7421875
+        },
+        {
+          "phase": "overwrite-128",
+          "keys": 100000,
+          "rss_mib": 200.59375,
+          "hwm_mib": 509.7421875
+        },
+        {
+          "phase": "overwrite-32",
+          "keys": 100000,
+          "rss_mib": 145.21484375,
+          "hwm_mib": 509.7421875
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 18.2421875,
+          "hwm_mib": 509.7421875
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 18.26171875,
+          "hwm_mib": 509.7421875
+        }
+      ],
+      "ttl": [
+        {
+          "phase": "ttl-set",
+          "keys": 34910,
+          "rss_mib": 52.55859375,
+          "hwm_mib": 52.55859375
+        },
+        {
+          "phase": "ttl-5s",
+          "keys": 0,
+          "rss_mib": 52.5703125,
+          "hwm_mib": 52.5703125
+        },
+        {
+          "phase": "ttl-30s",
+          "keys": 0,
+          "rss_mib": 29.30859375,
+          "hwm_mib": 51.375
+        }
+      ]
+    },
+    "dragonfly": {
+      "grow": [
+        {
+          "phase": "grow-200000",
+          "keys": 200000,
+          "rss_mib": 85.3828125,
+          "hwm_mib": 85.3828125
+        },
+        {
+          "phase": "grow-400000",
+          "keys": 400000,
+          "rss_mib": 140.41015625,
+          "hwm_mib": 140.41015625
+        },
+        {
+          "phase": "grow-600000",
+          "keys": 600000,
+          "rss_mib": 184.0625,
+          "hwm_mib": 184.0625
+        },
+        {
+          "phase": "grow-750000",
+          "keys": 750000,
+          "rss_mib": 238.8671875,
+          "hwm_mib": 238.8671875
+        },
+        {
+          "phase": "grow-800000",
+          "keys": 800000,
+          "rss_mib": 249.61328125,
+          "hwm_mib": 249.61328125
+        },
+        {
+          "phase": "grow-825000",
+          "keys": 825000,
+          "rss_mib": 254.98046875,
+          "hwm_mib": 254.98046875
+        },
+        {
+          "phase": "grow-850000",
+          "keys": 850000,
+          "rss_mib": 260.41796875,
+          "hwm_mib": 260.41796875
+        },
+        {
+          "phase": "grow-900000",
+          "keys": 900000,
+          "rss_mib": 271.14453125,
+          "hwm_mib": 271.14453125
+        },
+        {
+          "phase": "grow-1000000",
+          "keys": 1000000,
+          "rss_mib": 292.640625,
+          "hwm_mib": 292.640625
+        },
+        {
+          "phase": "grow-1200000",
+          "keys": 1200000,
+          "rss_mib": 339.37890625,
+          "hwm_mib": 339.37890625
+        },
+        {
+          "phase": "grow-1500000",
+          "keys": 1500000,
+          "rss_mib": 448.49609375,
+          "hwm_mib": 448.49609375
+        },
+        {
+          "phase": "grow-1600000",
+          "keys": 1600000,
+          "rss_mib": 470.0625,
+          "hwm_mib": 470.0625
+        },
+        {
+          "phase": "delete-800000-immediate",
+          "keys": 800000,
+          "rss_mib": 298.9375,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "delete-800000-5s",
+          "keys": 800000,
+          "rss_mib": 298.9375,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "delete-200000-immediate",
+          "keys": 200000,
+          "rss_mib": 169.40234375,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "delete-200000-5s",
+          "keys": 200000,
+          "rss_mib": 169.41015625,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "delete-0-immediate",
+          "keys": 0,
+          "rss_mib": 126.66015625,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "delete-0-5s",
+          "keys": 0,
+          "rss_mib": 126.6640625,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "refill-200000",
+          "keys": 200000,
+          "rss_mib": 169.1328125,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 31.6796875,
+          "hwm_mib": 469.0625
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 31.6875,
+          "hwm_mib": 469.0625
+        }
+      ],
+      "overwrite": [
+        {
+          "phase": "overwrite-4096",
+          "keys": 100000,
+          "rss_mib": 403.1796875,
+          "hwm_mib": 403.1796875
+        },
+        {
+          "phase": "overwrite-2048",
+          "keys": 100000,
+          "rss_mib": 217.95703125,
+          "hwm_mib": 402.78125
+        },
+        {
+          "phase": "overwrite-128",
+          "keys": 100000,
+          "rss_mib": 52.90234375,
+          "hwm_mib": 402.78125
+        },
+        {
+          "phase": "overwrite-32",
+          "keys": 100000,
+          "rss_mib": 45.4140625,
+          "hwm_mib": 402.78125
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 36.8515625,
+          "hwm_mib": 402.78125
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 36.859375,
+          "hwm_mib": 402.78125
+        }
+      ],
+      "ttl": [
+        {
+          "phase": "ttl-set",
+          "keys": 92795,
+          "rss_mib": 57.3359375,
+          "hwm_mib": 57.3359375
+        },
+        {
+          "phase": "ttl-5s",
+          "keys": 0,
+          "rss_mib": 33.2421875,
+          "hwm_mib": 56.83203125
+        },
+        {
+          "phase": "ttl-30s",
+          "keys": 0,
+          "rss_mib": 33.2890625,
+          "hwm_mib": 56.83203125
+        }
+      ]
+    }
+  },
+  "raw_artifacts": "bench/loadtest/runs/2026-09-25-memory-lifecycle",
+  "candidate": {
+    "identity": {
+      "image": "sha256:696a52d486b4e32bf62b44e79d8074c0e92a1f833e6bc15b1d0c47dc689ed4ea",
+      "process_name": "vex",
+      "binary_path": "/usr/local/bin/vex",
+      "binary_sha256": "4766521395da4fc139ddadcf84d19fe7763d1399535d5d11e79ddf18284d00eb",
+      "command": [
+        "/usr/local/bin/vex",
+        "--reactor",
+        "--workers",
+        "6",
+        "--no-persistence",
+        "--port",
+        "6379"
+      ],
+      "version": "0.8.0 development benchmark binary",
+      "container": "engine"
+    },
+    "cases": {
+      "grow": [
+        {
+          "phase": "grow-200000",
+          "keys": 200000,
+          "rss_mib": 87.78515625,
+          "hwm_mib": 87.78515625,
+          "reported_rss_mib": 87.78125
+        },
+        {
+          "phase": "grow-400000",
+          "keys": 400000,
+          "rss_mib": 164.1796875,
+          "hwm_mib": 164.1796875,
+          "reported_rss_mib": 164.17578125
+        },
+        {
+          "phase": "grow-600000",
+          "keys": 600000,
+          "rss_mib": 262.11328125,
+          "hwm_mib": 262.11328125,
+          "reported_rss_mib": 262.109375
+        },
+        {
+          "phase": "grow-750000",
+          "keys": 750000,
+          "rss_mib": 305.85546875,
+          "hwm_mib": 305.85546875,
+          "reported_rss_mib": 305.84765625
+        },
+        {
+          "phase": "grow-800000",
+          "keys": 800000,
+          "rss_mib": 320.74609375,
+          "hwm_mib": 320.74609375,
+          "reported_rss_mib": 320.7421875
+        },
+        {
+          "phase": "grow-825000",
+          "keys": 825000,
+          "rss_mib": 341.24609375,
+          "hwm_mib": 341.24609375,
+          "reported_rss_mib": 341.23828125
+        },
+        {
+          "phase": "grow-850000",
+          "keys": 850000,
+          "rss_mib": 396.36328125,
+          "hwm_mib": 396.3984375,
+          "reported_rss_mib": 396.359375
+        },
+        {
+          "phase": "grow-900000",
+          "keys": 900000,
+          "rss_mib": 430.109375,
+          "hwm_mib": 430.109375,
+          "reported_rss_mib": 430.1015625
+        },
+        {
+          "phase": "grow-1000000",
+          "keys": 1000000,
+          "rss_mib": 459.21875,
+          "hwm_mib": 459.21875,
+          "reported_rss_mib": 459.21484375
+        },
+        {
+          "phase": "grow-1200000",
+          "keys": 1200000,
+          "rss_mib": 517.36328125,
+          "hwm_mib": 517.36328125,
+          "reported_rss_mib": 517.359375
+        },
+        {
+          "phase": "grow-1500000",
+          "keys": 1500000,
+          "rss_mib": 604.578125,
+          "hwm_mib": 604.578125,
+          "reported_rss_mib": 604.57421875
+        },
+        {
+          "phase": "grow-1600000",
+          "keys": 1600000,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.6796875
+        },
+        {
+          "phase": "delete-800000-immediate",
+          "keys": 800000,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "delete-800000-5s",
+          "keys": 800000,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "delete-200000-immediate",
+          "keys": 200000,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "delete-200000-5s",
+          "keys": 200000,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "delete-0-immediate",
+          "keys": 0,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "delete-0-5s",
+          "keys": 0,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "refill-200000",
+          "keys": 200000,
+          "rss_mib": 633.68359375,
+          "hwm_mib": 633.68359375,
+          "reported_rss_mib": 633.68359375
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 55.16796875,
+          "hwm_mib": 633.43359375,
+          "reported_rss_mib": 55.16796875
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 55.16796875,
+          "hwm_mib": 633.43359375,
+          "reported_rss_mib": 55.16796875
+        }
+      ],
+      "overwrite": [
+        {
+          "phase": "overwrite-4096",
+          "keys": 100000,
+          "rss_mib": 414.390625,
+          "hwm_mib": 414.390625,
+          "reported_rss_mib": 414.3828125
+        },
+        {
+          "phase": "overwrite-2048",
+          "keys": 100000,
+          "rss_mib": 415.66796875,
+          "hwm_mib": 415.66796875,
+          "reported_rss_mib": 415.6640625
+        },
+        {
+          "phase": "overwrite-128",
+          "keys": 100000,
+          "rss_mib": 415.66796875,
+          "hwm_mib": 415.66796875,
+          "reported_rss_mib": 415.66796875
+        },
+        {
+          "phase": "overwrite-32",
+          "keys": 100000,
+          "rss_mib": 415.66796875,
+          "hwm_mib": 415.66796875,
+          "reported_rss_mib": 415.66796875
+        },
+        {
+          "phase": "flush-immediate",
+          "keys": 0,
+          "rss_mib": 45.1796875,
+          "hwm_mib": 415.3671875,
+          "reported_rss_mib": 45.1796875
+        },
+        {
+          "phase": "flush-5s",
+          "keys": 0,
+          "rss_mib": 45.1796875,
+          "hwm_mib": 415.3671875,
+          "reported_rss_mib": 45.1796875
+        }
+      ],
+      "ttl": [
+        {
+          "phase": "ttl-set",
+          "keys": 89476,
+          "rss_mib": 47.51171875,
+          "hwm_mib": 47.51171875,
+          "reported_rss_mib": 47.51171875
+        },
+        {
+          "phase": "ttl-5s",
+          "keys": 0,
+          "rss_mib": 44.30078125,
+          "hwm_mib": 47.25,
+          "reported_rss_mib": 44.30078125
+        },
+        {
+          "phase": "ttl-30s",
+          "keys": 0,
+          "rss_mib": 44.30078125,
+          "hwm_mib": 47.25,
+          "reported_rss_mib": 44.30078125
+        }
+      ]
+    },
+    "flush_duration_ms": {
+      "grow": 70.733208,
+      "overwrite": 26.345792
+    },
+    "raw_artifacts": "bench/loadtest/runs/2026-09-25-memory-lifecycle/candidate-v2",
+    "throughput_validation": "pending explicit private registry upload approval",
+    "limitations": [
+      "Loaded footprint unchanged; Redis\u2013Dragonfly target not achieved",
+      "Ordinary DEL retains table capacity and allocator residency",
+      "Shrinking values frees storage to allocator but RSS stays high",
+      "FLUSHDB page release is synchronous, Linux glibc only, and residual RSS varies with allocator history"
+    ]
+  },
+  "flush_timing_control": {
+    "grow": {
+      "duration_ms": 31.861584,
+      "rss_after_mib": 471.05078125,
+      "raw_artifacts": "bench/loadtest/runs/2026-09-25-memory-lifecycle/control-flush-timing/vex/grow"
+    },
+    "overwrite": {
+      "duration_ms": 6.920916,
+      "rss_after_mib": 415.75,
+      "raw_artifacts": "bench/loadtest/runs/2026-09-25-memory-lifecycle/control-flush-timing/vex/overwrite"
+    }
+  }
+}

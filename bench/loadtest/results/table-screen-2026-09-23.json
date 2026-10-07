@@ -1,0 +1,4531 @@
+{
+  "status": "memory_complete_speed_inconclusive",
+  "speed_stop_reason": "inconclusive: 800000/32/randomhit/dense variation 14.57% exceeds 5%",
+  "protocol": {
+    "image_id": "sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+    "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+    "cases": [
+      [
+        800000,
+        32
+      ],
+      [
+        1000000,
+        32
+      ],
+      [
+        800000,
+        256
+      ],
+      [
+        1000000,
+        256
+      ]
+    ],
+    "order": [
+      "direct",
+      "dense",
+      "dense",
+      "direct"
+    ],
+    "timed_operations": 10000000,
+    "accounting_operations": "2 * count",
+    "cpu_set": "0",
+    "quota": 1,
+    "memory_bytes": 1610612736,
+    "repeat_variation_max": 0.05,
+    "timed_and_accounting_separate_processes": true,
+    "started_unix": 1790169223.927876,
+    "interpretation": "single-thread table diagnostic; not server throughput"
+  },
+  "memory_summary": [
+    {
+      "count": 800000,
+      "value_bytes": 32,
+      "variants": {
+        "direct": {
+          "table_requested_bytes": 98072576,
+          "fixture_requested_bytes": 55200064,
+          "harness_requested_bytes": 153272640,
+          "loaded_harness_rss_bytes_median": 194158592.0,
+          "post_flush_harness_rss_bytes_median": 111568896.0,
+          "completion_harness_rss_bytes_median": 81958912.0,
+          "peak_harness_requested_bytes": 154072640,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        "dense": {
+          "table_requested_bytes": 110581760,
+          "fixture_requested_bytes": 55200064,
+          "harness_requested_bytes": 165781824,
+          "loaded_harness_rss_bytes_median": 194363392.0,
+          "post_flush_harness_rss_bytes_median": 124817408.0,
+          "completion_harness_rss_bytes_median": 95207424.0,
+          "peak_harness_requested_bytes": 166581824,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        }
+      },
+      "dense_table_bytes_change": 12509184,
+      "dense_table_bytes_change_ratio": 0.12755027460479873
+    },
+    {
+      "count": 1000000,
+      "value_bytes": 32,
+      "variants": {
+        "direct": {
+          "table_requested_bytes": 185875456,
+          "fixture_requested_bytes": 68000064,
+          "harness_requested_bytes": 253875520,
+          "loaded_harness_rss_bytes_median": 303964160.0,
+          "post_flush_harness_rss_bytes_median": 134711296.0,
+          "completion_harness_rss_bytes_median": 98703360.0,
+          "peak_harness_requested_bytes": 254875520,
+          "capacity": 2097152,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        "dense": {
+          "table_requested_bytes": 113781760,
+          "fixture_requested_bytes": 68000064,
+          "harness_requested_bytes": 181781824,
+          "loaded_harness_rss_bytes_median": 229799936.0,
+          "post_flush_harness_rss_bytes_median": 137459712.0,
+          "completion_harness_rss_bytes_median": 101451776.0,
+          "peak_harness_requested_bytes": 182781824,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        }
+      },
+      "dense_table_bytes_change": -72093696,
+      "dense_table_bytes_change_ratio": -0.38786022399858966
+    },
+    {
+      "count": 800000,
+      "value_bytes": 256,
+      "variants": {
+        "direct": {
+          "table_requested_bytes": 302872576,
+          "fixture_requested_bytes": 55200512,
+          "harness_requested_bytes": 358073088,
+          "loaded_harness_rss_bytes_median": 411699200.0,
+          "post_flush_harness_rss_bytes_median": 323690496.0,
+          "completion_harness_rss_bytes_median": 294080512.0,
+          "peak_harness_requested_bytes": 358873088,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        "dense": {
+          "table_requested_bytes": 315381760,
+          "fixture_requested_bytes": 55200512,
+          "harness_requested_bytes": 370582272,
+          "loaded_harness_rss_bytes_median": 403662848.0,
+          "post_flush_harness_rss_bytes_median": 334927872.0,
+          "completion_harness_rss_bytes_median": 305317888.0,
+          "peak_harness_requested_bytes": 371382272,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        }
+      },
+      "dense_table_bytes_change": 12509184,
+      "dense_table_bytes_change_ratio": 0.04130180475633427
+    },
+    {
+      "count": 1000000,
+      "value_bytes": 256,
+      "variants": {
+        "direct": {
+          "table_requested_bytes": 441875456,
+          "fixture_requested_bytes": 68000512,
+          "harness_requested_bytes": 509875968,
+          "loaded_harness_rss_bytes_median": 575961088.0,
+          "post_flush_harness_rss_bytes_median": 406700032.0,
+          "completion_harness_rss_bytes_median": 370692096.0,
+          "peak_harness_requested_bytes": 510875968,
+          "capacity": 2097152,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        "dense": {
+          "table_requested_bytes": 369781760,
+          "fixture_requested_bytes": 68000512,
+          "harness_requested_bytes": 437782272,
+          "loaded_harness_rss_bytes_median": 500221952.0,
+          "post_flush_harness_rss_bytes_median": 308860928.0,
+          "completion_harness_rss_bytes_median": 272852992.0,
+          "peak_harness_requested_bytes": 438782272,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        }
+      },
+      "dense_table_bytes_change": -72093696,
+      "dense_table_bytes_change_ratio": -0.163153881984339
+    }
+  ],
+  "accounting_cells": [
+    {
+      "cell": "800000-32-accounting-1-direct",
+      "variant": "direct",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 1,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "rss_bytes": 194154496
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194224128,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194949120,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194949120,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194949120,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194949120,
+          "checksum": 14034584481979303468,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 160000,
+          "rss_bytes": 194949120,
+          "checksum": 2359700856559469568,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 55200064,
+          "rss_bytes": 111566848
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls": 7362675,
+          "rss_bytes": 81956864
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54018106241866,
+          "cpu": {
+            "usage_usec": 101426,
+            "user_usec": 80945,
+            "system_usec": 20480,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20832256,
+          "vm_available": 3623350272
+        },
+        "after": {
+          "monotonic_ns": 54021072322867,
+          "cpu": {
+            "usage_usec": 3056475,
+            "user_usec": 2998579,
+            "system_usec": 57895,
+            "nice_usec": 0,
+            "nr_periods": 31,
+            "nr_throttled": 4,
+            "throttled_usec": 8271,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 207708160,
+          "vm_available": 3550326784
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0027885280264468406
+    },
+    {
+      "cell": "800000-32-accounting-2-dense",
+      "variant": "dense",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 2,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "rss_bytes": 194355200
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194420736,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195104768,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195104768,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195104768,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195104768,
+          "checksum": 14034584481979303468,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 160000,
+          "rss_bytes": 195104768,
+          "checksum": 2359700856559469568,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 55200064,
+          "rss_bytes": 124809216
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls": 7366514,
+          "rss_bytes": 95199232
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54021336327534,
+          "cpu": {
+            "usage_usec": 89900,
+            "user_usec": 77913,
+            "system_usec": 11986,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20774912,
+          "vm_available": 3568082944
+        },
+        "after": {
+          "monotonic_ns": 54023750607994,
+          "cpu": {
+            "usage_usec": 2499625,
+            "user_usec": 2421699,
+            "system_usec": 77925,
+            "nice_usec": 0,
+            "nr_periods": 25,
+            "nr_throttled": 2,
+            "throttled_usec": 273,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 207831040,
+          "vm_available": 3503505408
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.00011307716917031255
+    },
+    {
+      "cell": "800000-32-accounting-3-dense",
+      "variant": "dense",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 3,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "rss_bytes": 194371584
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194437120,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195121152,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195121152,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195121152,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 195121152,
+          "checksum": 14034584481979303468,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 165781824,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls_delta": 160000,
+          "rss_bytes": 195121152,
+          "checksum": 2359700856559469568,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 55200064,
+          "rss_bytes": 124825600
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 166581824,
+          "alloc_calls": 7366514,
+          "rss_bytes": 95215616
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54024037202577,
+          "cpu": {
+            "usage_usec": 95414,
+            "user_usec": 77523,
+            "system_usec": 17890,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20918272,
+          "vm_available": 3600777216
+        },
+        "after": {
+          "monotonic_ns": 54026511143828,
+          "cpu": {
+            "usage_usec": 2561303,
+            "user_usec": 2475461,
+            "system_usec": 85842,
+            "nice_usec": 0,
+            "nr_periods": 26,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 207953920,
+          "vm_available": 3540701184
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0
+    },
+    {
+      "cell": "800000-32-accounting-4-direct",
+      "variant": "direct",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 4,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "rss_bytes": 194162688
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194228224,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194953216,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194953216,
+          "checksum": 13500806930714448384,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194953216,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 194953216,
+          "checksum": 14034584481979303468,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 153272640,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls_delta": 160000,
+          "rss_bytes": 194953216,
+          "checksum": 2359700856559469568,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 55200064,
+          "rss_bytes": 111570944
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 154072640,
+          "alloc_calls": 7362675,
+          "rss_bytes": 81960960
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54026790128870,
+          "cpu": {
+            "usage_usec": 93175,
+            "user_usec": 82154,
+            "system_usec": 11020,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20905984,
+          "vm_available": 3573891072
+        },
+        "after": {
+          "monotonic_ns": 54029921936205,
+          "cpu": {
+            "usage_usec": 3213840,
+            "user_usec": 3158860,
+            "system_usec": 54980,
+            "nice_usec": 0,
+            "nr_periods": 32,
+            "nr_throttled": 6,
+            "throttled_usec": 6365,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 207785984,
+          "vm_available": 3541598208
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0020323727864313213
+    },
+    {
+      "cell": "1000000-32-accounting-1-direct",
+      "variant": "direct",
+      "count": 1000000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 1,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 1000000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "rss_bytes": 303968256
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 304041984,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305057792,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305057792,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305057792,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305057792,
+          "checksum": 15151645932782200576,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 200000,
+          "rss_bytes": 305057792,
+          "checksum": 4895130908502516992,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 68000064,
+          "rss_bytes": 134717440
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls": 9202930,
+          "rss_bytes": 98709504
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54115239655286,
+          "cpu": {
+            "usage_usec": 107688,
+            "user_usec": 92304,
+            "system_usec": 15384,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20836352,
+          "vm_available": 3605647360
+        },
+        "after": {
+          "monotonic_ns": 54119851818746,
+          "cpu": {
+            "usage_usec": 4640129,
+            "user_usec": 4442719,
+            "system_usec": 197409,
+            "nice_usec": 0,
+            "nr_periods": 47,
+            "nr_throttled": 1,
+            "throttled_usec": 125,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 318054400,
+          "vm_available": 3175444480
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 2.7102248453267094e-05
+    },
+    {
+      "cell": "1000000-32-accounting-2-dense",
+      "variant": "dense",
+      "count": 1000000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 2,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 1000000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "rss_bytes": 229797888
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 229863424,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230744064,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230744064,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230744064,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230744064,
+          "checksum": 15151645932782200576,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 200000,
+          "rss_bytes": 230744064,
+          "checksum": 4895130908502516992,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 68000064,
+          "rss_bytes": 137457664
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls": 9206514,
+          "rss_bytes": 101449728
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54120211192913,
+          "cpu": {
+            "usage_usec": 105402,
+            "user_usec": 91611,
+            "system_usec": 13791,
+            "nice_usec": 0,
+            "nr_periods": 2,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20733952,
+          "vm_available": 3175370752
+        },
+        "after": {
+          "monotonic_ns": 54124343142915,
+          "cpu": {
+            "usage_usec": 4212123,
+            "user_usec": 4111336,
+            "system_usec": 100787,
+            "nice_usec": 0,
+            "nr_periods": 43,
+            "nr_throttled": 2,
+            "throttled_usec": 1665,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 243617792,
+          "vm_available": 3567529984
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0004029574412067148
+    },
+    {
+      "cell": "1000000-32-accounting-3-dense",
+      "variant": "dense",
+      "count": 1000000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 3,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 1000000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "rss_bytes": 229801984
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 229867520,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230748160,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230748160,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230748160,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 230748160,
+          "checksum": 15151645932782200576,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 181781824,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls_delta": 200000,
+          "rss_bytes": 230748160,
+          "checksum": 4895130908502516992,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 68000064,
+          "rss_bytes": 137461760
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 182781824,
+          "alloc_calls": 9206514,
+          "rss_bytes": 101453824
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54124631579873,
+          "cpu": {
+            "usage_usec": 94183,
+            "user_usec": 79154,
+            "system_usec": 15029,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20770816,
+          "vm_available": 3553988608
+        },
+        "after": {
+          "monotonic_ns": 54128919294208,
+          "cpu": {
+            "usage_usec": 4371292,
+            "user_usec": 4277394,
+            "system_usec": 93898,
+            "nice_usec": 0,
+            "nr_periods": 44,
+            "nr_throttled": 4,
+            "throttled_usec": 2355,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 243630080,
+          "vm_available": 3533377536
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.00054924367996638
+    },
+    {
+      "cell": "1000000-32-accounting-4-direct",
+      "variant": "direct",
+      "count": 1000000,
+      "value_bytes": 32,
+      "mode": "accounting",
+      "repeat": 4,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 1000000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "rss_bytes": 303960064
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 304033792,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305045504,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305045504,
+          "checksum": 14722241061494670976,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305045504,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 305045504,
+          "checksum": 15151645932782200576,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 253875520,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls_delta": 200000,
+          "rss_bytes": 305045504,
+          "checksum": 4895130908502516992,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 68000064,
+          "rss_bytes": 134705152
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 254875520,
+          "alloc_calls": 9202930,
+          "rss_bytes": 98697216
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54129230083459,
+          "cpu": {
+            "usage_usec": 103339,
+            "user_usec": 86608,
+            "system_usec": 16731,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20869120,
+          "vm_available": 3554381824
+        },
+        "after": {
+          "monotonic_ns": 54133549198002,
+          "cpu": {
+            "usage_usec": 4409712,
+            "user_usec": 4322836,
+            "system_usec": 86876,
+            "nice_usec": 0,
+            "nr_periods": 44,
+            "nr_throttled": 3,
+            "throttled_usec": 2674,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 318050304,
+          "vm_available": 3580092416
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0006191083782053798
+    },
+    {
+      "cell": "800000-256-accounting-1-direct",
+      "variant": "direct",
+      "count": 800000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 1,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 800000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "rss_bytes": 411701248
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 411766784,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412581888,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412581888,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412581888,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412581888,
+          "checksum": 4414491636261107244,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 320000,
+          "rss_bytes": 412581888,
+          "checksum": 4854049651976322048,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 55200512,
+          "rss_bytes": 323694592
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls": 13122778,
+          "rss_bytes": 294084608
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54133847527378,
+          "cpu": {
+            "usage_usec": 98353,
+            "user_usec": 82617,
+            "system_usec": 15736,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 21008384,
+          "vm_available": 3605463040
+        },
+        "after": {
+          "monotonic_ns": 54139467167214,
+          "cpu": {
+            "usage_usec": 5698689,
+            "user_usec": 5582878,
+            "system_usec": 115810,
+            "nice_usec": 0,
+            "nr_periods": 57,
+            "nr_throttled": 9,
+            "throttled_usec": 9425,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 425771008,
+          "vm_available": 3552477184
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0016771537456230674
+    },
+    {
+      "cell": "800000-256-accounting-2-dense",
+      "variant": "dense",
+      "count": 800000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 2,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 800000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "rss_bytes": 403660800
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 403726336,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404537344,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404537344,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404537344,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404537344,
+          "checksum": 4414491636261107244,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 320000,
+          "rss_bytes": 404537344,
+          "checksum": 4854049651976322048,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 55200512,
+          "rss_bytes": 334925824
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls": 13126617,
+          "rss_bytes": 305315840
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54139755387922,
+          "cpu": {
+            "usage_usec": 95047,
+            "user_usec": 80891,
+            "system_usec": 14156,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20762624,
+          "vm_available": 3578425344
+        },
+        "after": {
+          "monotonic_ns": 54144400738049,
+          "cpu": {
+            "usage_usec": 4735128,
+            "user_usec": 4638125,
+            "system_usec": 97002,
+            "nice_usec": 0,
+            "nr_periods": 48,
+            "nr_throttled": 1,
+            "throttled_usec": 195,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 417669120,
+          "vm_available": 3525492736
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 4.197746018467124e-05
+    },
+    {
+      "cell": "800000-256-accounting-3-dense",
+      "variant": "dense",
+      "count": 800000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 3,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 800000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "rss_bytes": 403664896
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 403730432,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404541440,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404541440,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404541440,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 404541440,
+          "checksum": 4414491636261107244,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 370582272,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls_delta": 320000,
+          "rss_bytes": 404541440,
+          "checksum": 4854049651976322048,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 55200512,
+          "rss_bytes": 334929920
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 371382272,
+          "alloc_calls": 13126617,
+          "rss_bytes": 305319936
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54144674607091,
+          "cpu": {
+            "usage_usec": 91255,
+            "user_usec": 79480,
+            "system_usec": 11774,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20779008,
+          "vm_available": 3531370496
+        },
+        "after": {
+          "monotonic_ns": 54149397267302,
+          "cpu": {
+            "usage_usec": 4796367,
+            "user_usec": 4687472,
+            "system_usec": 108894,
+            "nice_usec": 0,
+            "nr_periods": 49,
+            "nr_throttled": 5,
+            "throttled_usec": 7716,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 417669120,
+          "vm_available": 3497926656
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0016338249324031244
+    },
+    {
+      "cell": "800000-256-accounting-4-direct",
+      "variant": "direct",
+      "count": 800000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 4,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 800000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 1600000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "rss_bytes": 411697152
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 411762688,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412573696,
+          "checksum": 104417600000,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412573696,
+          "checksum": 18222854641902434304,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412573696,
+          "checksum": 738547208826882048,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 412573696,
+          "checksum": 4414491636261107244,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 358073088,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls_delta": 320000,
+          "rss_bytes": 412573696,
+          "checksum": 4854049651976322048,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 55200512,
+          "rss_bytes": 323686400
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 358873088,
+          "alloc_calls": 13122778,
+          "rss_bytes": 294076416
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54149703877760,
+          "cpu": {
+            "usage_usec": 103504,
+            "user_usec": 84595,
+            "system_usec": 18909,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20910080,
+          "vm_available": 3531067392
+        },
+        "after": {
+          "monotonic_ns": 54154771256429,
+          "cpu": {
+            "usage_usec": 5158932,
+            "user_usec": 5033080,
+            "system_usec": 125851,
+            "nice_usec": 0,
+            "nr_periods": 52,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 425746432,
+          "vm_available": 3481321472
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0
+    },
+    {
+      "cell": "1000000-256-accounting-1-direct",
+      "variant": "direct",
+      "count": 1000000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 1,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 1000000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "rss_bytes": 575959040
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 576024576,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 1078253921383908096,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 400000,
+          "rss_bytes": 577040384,
+          "checksum": 9617178619690502912,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 68000512,
+          "rss_bytes": 406700032
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls": 16403033,
+          "rss_bytes": 370692096
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54155056399221,
+          "cpu": {
+            "usage_usec": 95229,
+            "user_usec": 83448,
+            "system_usec": 11780,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20844544,
+          "vm_available": 3508531200
+        },
+        "after": {
+          "monotonic_ns": 54160835770765,
+          "cpu": {
+            "usage_usec": 5842240,
+            "user_usec": 5702497,
+            "system_usec": 139742,
+            "nice_usec": 0,
+            "nr_periods": 59,
+            "nr_throttled": 4,
+            "throttled_usec": 8634,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 590598144,
+          "vm_available": 3483308032
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0014939340608692315
+    },
+    {
+      "cell": "1000000-256-accounting-2-dense",
+      "variant": "dense",
+      "count": 1000000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 2,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 1000000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "rss_bytes": 500219904
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 500285440,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501297152,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501297152,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501297152,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501297152,
+          "checksum": 1078253921383908096,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 400000,
+          "rss_bytes": 501297152,
+          "checksum": 9617178619690502912,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 68000512,
+          "rss_bytes": 308858880
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls": 16406617,
+          "rss_bytes": 272850944
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54161118132265,
+          "cpu": {
+            "usage_usec": 92411,
+            "user_usec": 78792,
+            "system_usec": 13618,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20758528,
+          "vm_available": 3546664960
+        },
+        "after": {
+          "monotonic_ns": 54166844074726,
+          "cpu": {
+            "usage_usec": 5796590,
+            "user_usec": 5676785,
+            "system_usec": 119805,
+            "nice_usec": 0,
+            "nr_periods": 58,
+            "nr_throttled": 7,
+            "throttled_usec": 13254,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 514576384,
+          "vm_available": 3527434240
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0023147281151136945
+    },
+    {
+      "cell": "1000000-256-accounting-3-dense",
+      "variant": "dense",
+      "count": 1000000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 3,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 1000000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "rss_bytes": 500224000
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 500289536,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501301248,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501301248,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501301248,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 501301248,
+          "checksum": 1078253921383908096,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "entries": 1000000,
+          "capacity": 1064192,
+          "dense_index_slots_estimate": 2097152,
+          "dense_index_width": 4,
+          "dense_index_bytes_estimate": 8389632,
+          "dense_data_bytes_nominal": 89392128,
+          "live_requested_bytes": 437782272,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls_delta": 400000,
+          "rss_bytes": 501301248,
+          "checksum": 9617178619690502912,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 68000512,
+          "rss_bytes": 308862976
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 438782272,
+          "alloc_calls": 16406617,
+          "rss_bytes": 272855040
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54167139512018,
+          "cpu": {
+            "usage_usec": 95549,
+            "user_usec": 83002,
+            "system_usec": 12546,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20828160,
+          "vm_available": 3553460224
+        },
+        "after": {
+          "monotonic_ns": 54172720018562,
+          "cpu": {
+            "usage_usec": 5669143,
+            "user_usec": 5536350,
+            "system_usec": 132792,
+            "nice_usec": 0,
+            "nr_periods": 57,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 514592768,
+          "vm_available": 3539152896
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0
+    },
+    {
+      "cell": "1000000-256-accounting-4-direct",
+      "variant": "direct",
+      "count": 1000000,
+      "value_bytes": 256,
+      "mode": "accounting",
+      "repeat": 4,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 1000000,
+          "value_bytes": 256,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 2000000,
+          "run": "accounting",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "rss_bytes": 575963136
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 576032768,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 130522000000,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 1984846889871164928,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 16913924916295002624,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 0,
+          "rss_bytes": 577040384,
+          "checksum": 1078253921383908096,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "entries": 1000000,
+          "capacity": 2097152,
+          "dense_index_slots_estimate": 0,
+          "dense_index_width": 0,
+          "dense_index_bytes_estimate": 0,
+          "dense_data_bytes_nominal": 0,
+          "live_requested_bytes": 509875968,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls_delta": 400000,
+          "rss_bytes": 577040384,
+          "checksum": 9617178619690502912,
+          "capacity_histogram": [
+            {
+              "capacity": 8192,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 68000512,
+          "rss_bytes": 406700032
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 510875968,
+          "alloc_calls": 16403033,
+          "rss_bytes": 370692096
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54172989585396,
+          "cpu": {
+            "usage_usec": 90847,
+            "user_usec": 79744,
+            "system_usec": 11103,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20926464,
+          "vm_available": 3548655616
+        },
+        "after": {
+          "monotonic_ns": 54179153789523,
+          "cpu": {
+            "usage_usec": 6215079,
+            "user_usec": 6035424,
+            "system_usec": 179655,
+            "nice_usec": 0,
+            "nr_periods": 62,
+            "nr_throttled": 6,
+            "throttled_usec": 9292,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 590585856,
+          "vm_available": 3552157696
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0015074127670918383
+    }
+  ],
+  "partial_speed_cells": [
+    {
+      "cell": "800000-32-timed-1-direct",
+      "variant": "direct",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "timed",
+      "repeat": 1,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "direct",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 10000000,
+          "run": "timed",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "direct",
+          "entries": 800000,
+          "capacity": 1052672,
+          "rss_bytes": 194166784
+        },
+        {
+          "phase": "randomhit",
+          "mode": "direct",
+          "elapsed_ns": 1637251209,
+          "cpu_elapsed_ns": 1632495119,
+          "operations": 10000000,
+          "checksum": 7069893617559822464,
+          "entries": 800000,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "direct",
+          "elapsed_ns": 1990583210,
+          "cpu_elapsed_ns": 1986853453,
+          "operations": 10000000,
+          "checksum": 652610000000,
+          "entries": 800000,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "direct",
+          "elapsed_ns": 169550583,
+          "cpu_elapsed_ns": 166513207,
+          "operations": 10000000,
+          "checksum": 7069893617559822464,
+          "entries": 800000,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "direct",
+          "elapsed_ns": 1986739543,
+          "cpu_elapsed_ns": 1967958236,
+          "operations": 10000000,
+          "checksum": 17124042872608133632,
+          "entries": 800000,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "direct",
+          "elapsed_ns": 1849807167,
+          "cpu_elapsed_ns": 1845145982,
+          "operations": 10000000,
+          "checksum": 15332349901158285984,
+          "entries": 800000,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "direct",
+          "elapsed_ns": 273101959,
+          "cpu_elapsed_ns": 273073499,
+          "operations": 10000000,
+          "checksum": 11230405661779261696,
+          "entries": 800000,
+          "capacity": 1052672,
+          "capacity_histogram": [
+            {
+              "capacity": 4096,
+              "stripes": 255
+            },
+            {
+              "capacity": 8192,
+              "stripes": 1
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "rss_bytes": 111583232
+        },
+        {
+          "phase": "completion",
+          "mode": "direct",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 0,
+          "alloc_calls": 0,
+          "rss_bytes": 81973248
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54030193447872,
+          "cpu": {
+            "usage_usec": 88464,
+            "user_usec": 77530,
+            "system_usec": 10933,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 21028864,
+          "vm_available": 3591458816
+        },
+        "after": {
+          "monotonic_ns": 54039859901293,
+          "cpu": {
+            "usage_usec": 9701319,
+            "user_usec": 9611492,
+            "system_usec": 89827,
+            "nice_usec": 0,
+            "nr_periods": 98,
+            "nr_throttled": 17,
+            "throttled_usec": 15408,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 207769600,
+          "vm_available": 3534184448
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.001593966197212176
+    },
+    {
+      "cell": "800000-32-timed-2-dense",
+      "variant": "dense",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "timed",
+      "repeat": 2,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 10000000,
+          "run": "timed",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "rss_bytes": 194367488
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "elapsed_ns": 2401044918,
+          "cpu_elapsed_ns": 2391975280,
+          "operations": 10000000,
+          "checksum": 7069893617559822464,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "elapsed_ns": 1045080376,
+          "cpu_elapsed_ns": 1043940204,
+          "operations": 10000000,
+          "checksum": 652610000000,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "elapsed_ns": 241855417,
+          "cpu_elapsed_ns": 241834457,
+          "operations": 10000000,
+          "checksum": 7069893617559822464,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "elapsed_ns": 2580979959,
+          "cpu_elapsed_ns": 2571963616,
+          "operations": 10000000,
+          "checksum": 17124042872608133632,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "elapsed_ns": 2916513002,
+          "cpu_elapsed_ns": 2909379004,
+          "operations": 10000000,
+          "checksum": 15332349901158285984,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "elapsed_ns": 306892125,
+          "cpu_elapsed_ns": 306154540,
+          "operations": 10000000,
+          "checksum": 11230405661779261696,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "rss_bytes": 124821504
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 0,
+          "alloc_calls": 0,
+          "rss_bytes": 95211520
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54040146214251,
+          "cpu": {
+            "usage_usec": 97476,
+            "user_usec": 84412,
+            "system_usec": 13063,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 21020672,
+          "vm_available": 3571499008
+        },
+        "after": {
+          "monotonic_ns": 54050818284506,
+          "cpu": {
+            "usage_usec": 10737277,
+            "user_usec": 10654252,
+            "system_usec": 83025,
+            "nice_usec": 0,
+            "nr_periods": 108,
+            "nr_throttled": 20,
+            "throttled_usec": 13858,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 208072704,
+          "vm_available": 3571273728
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.0012985296825147258
+    },
+    {
+      "cell": "800000-32-timed-3-dense",
+      "variant": "dense",
+      "count": 800000,
+      "value_bytes": 32,
+      "mode": "timed",
+      "repeat": 3,
+      "data": [
+        {
+          "phase": "configuration",
+          "mode": "dense",
+          "count": 800000,
+          "value_bytes": 32,
+          "key_bytes": 16,
+          "stripes": 256,
+          "entry_bytes": 64,
+          "ops": 10000000,
+          "run": "timed",
+          "hash": "Wyhash seed1 stripe, seed0 map",
+          "cache_line_bytes": 128
+        },
+        {
+          "phase": "loaded",
+          "mode": "dense",
+          "entries": 800000,
+          "capacity": 1064192,
+          "rss_bytes": 194371584
+        },
+        {
+          "phase": "randomhit",
+          "mode": "dense",
+          "elapsed_ns": 2778362335,
+          "cpu_elapsed_ns": 2775047080,
+          "operations": 10000000,
+          "checksum": 7069893617559822464,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "miss",
+          "mode": "dense",
+          "elapsed_ns": 1489531375,
+          "cpu_elapsed_ns": 1476883638,
+          "operations": 10000000,
+          "checksum": 652610000000,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "hotset",
+          "mode": "dense",
+          "elapsed_ns": 261684167,
+          "cpu_elapsed_ns": 261126331,
+          "operations": 10000000,
+          "checksum": 7069893617559822464,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "equaloverwrite",
+          "mode": "dense",
+          "elapsed_ns": 2853366710,
+          "cpu_elapsed_ns": 2845803973,
+          "operations": 10000000,
+          "checksum": 17124042872608133632,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "mixed_80_20",
+          "mode": "dense",
+          "elapsed_ns": 2913363251,
+          "cpu_elapsed_ns": 2908092486,
+          "operations": 10000000,
+          "checksum": 15332349901158285984,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "delete_reinsert",
+          "mode": "dense",
+          "elapsed_ns": 324934251,
+          "cpu_elapsed_ns": 324828333,
+          "operations": 10000000,
+          "checksum": 11230405661779261696,
+          "entries": 800000,
+          "capacity": 1064192,
+          "capacity_histogram": [
+            {
+              "capacity": 4157,
+              "stripes": 256
+            }
+          ]
+        },
+        {
+          "phase": "post_flush",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "rss_bytes": 124825600
+        },
+        {
+          "phase": "completion",
+          "mode": "dense",
+          "live_requested_bytes": 0,
+          "peak_requested_bytes": 0,
+          "alloc_calls": 0,
+          "rss_bytes": 95215616
+        }
+      ],
+      "resource": {
+        "before": {
+          "monotonic_ns": 54051131153881,
+          "cpu": {
+            "usage_usec": 102434,
+            "user_usec": 81549,
+            "system_usec": 20884,
+            "nice_usec": 0,
+            "nr_periods": 1,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 20877312,
+          "vm_available": 3590344704
+        },
+        "after": {
+          "monotonic_ns": 54063157310762,
+          "cpu": {
+            "usage_usec": 12097085,
+            "user_usec": 11983188,
+            "system_usec": 113897,
+            "nice_usec": 0,
+            "nr_periods": 121,
+            "nr_throttled": 12,
+            "throttled_usec": 5732,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "swap": 0,
+          "memory_peak": 208072704,
+          "vm_available": 3553730560
+        },
+        "binary_sha256": "4f44ea8edc0ed3cba0b91692c90594c5413ca0194fed12e54420c3c08a2a8159",
+        "exit_code": 0
+      },
+      "throttle_ratio": 0.00047662774207244275
+    }
+  ],
+  "source_sha256": {
+    "bench/loadtest/diagnostics/table_screen.zig": "eeccf32ebaad9cc57e6f1c7ed44c753c365944d59f4fbfe0d09eeb8a7c88677c",
+    "bench/loadtest/scripts/run_table_screen.py": "94b7d0645132ea158d7651682c5bd2e5cf35899840f23e8baed99dd8877a9818"
+  },
+  "validation": "All16 accounting processes pass component reconciliation, checksums, no-allocation equal overwrites, zero-live teardown and resource guards. Four randomized selftests and eight heap smoke processes pass. Partial speed cells also revalidated with final output guards.",
+  "limits": [
+    "Single-thread table diagnostic; no server throughput measured",
+    "RSS includes fixture allocations and allocator retention",
+    "Speed stopped without retry at14.57% repeated dense random-hit variation",
+    "Raw timing is incomplete and must not support speedup claims"
+  ]
+}

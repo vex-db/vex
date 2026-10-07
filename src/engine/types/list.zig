@@ -1,13 +1,25 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const SortedSetStore = @import("sorted_set.zig").SortedSetStore;
 
 /// List storage: maps key -> doubly-ended list of string values.
 /// Uses two-stack deque: head (reversed) + tail. O(1) amortized LPUSH/LPOP/RPUSH/RPOP.
 pub const ListStore = struct {
-    lists: std.StringHashMap(List),
+    // Maps use the same hash/count as the command partitions. The caller owns
+    // the corresponding command lock through response serialization; global
+    // and multi-key operations own all command partitions.
+    const Partition = struct { map: std.StringHashMap(List) align(64) };
+    partitions: []Partition,
     allocator: Allocator,
-    /// Mutex for top-level HashMap mutations (new key creation).
-    map_mutex: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+
+    pub fn partitionIndex(self: *const ListStore, key: []const u8) usize {
+        return std.hash.Wyhash.hash(0, key) & (self.partitions.len - 1);
+    }
+
+    fn mapFor(self: *ListStore, key: []const u8) *std.StringHashMap(List) {
+        return &self.partitions[self.partitionIndex(key)].map;
+    }
+
 
     /// Quicklist: doubly-linked list of 8KB data blocks.
     /// Each block stores values as packed [len:u16][data...][len:u16] entries.
@@ -365,31 +377,35 @@ pub const ListStore = struct {
         }
     };
 
-    pub fn init(allocator: Allocator) ListStore {
-        var store = ListStore{
-            .lists = std.StringHashMap(List).init(allocator),
-            .allocator = allocator,
-        };
-        store.lists.ensureTotalCapacity(4096) catch {};
-        return store;
+    pub fn init(allocator: Allocator) !ListStore {
+        return initWithPartitionCount(allocator, SortedSetStore.default_partition_count);
     }
 
-    /// Clear all data but retain HashMap capacity for reuse.
+    /// Startup-only; must match the command lock coordinator's partition count.
+    pub fn initWithPartitionCount(allocator: Allocator, count: usize) !ListStore {
+        try SortedSetStore.validatePartitionCount(count);
+        const partitions = try allocator.alloc(Partition, count);
+        for (partitions) |*part| part.* = .{ .map = std.StringHashMap(List).init(allocator) };
+        return .{ .partitions = partitions, .allocator = allocator };
+    }
+
+    /// Caller owns all command partitions, or exclusive access to the store.
     pub fn flush(self: *ListStore) void {
-        var it = self.lists.iterator();
-        while (it.next()) |entry| {
-            var list = entry.value_ptr.*;
-            list.deinit(self.allocator);
-            self.allocator.free(entry.key_ptr.*);
+        for (self.partitions) |*part| {
+            var it = part.map.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+                self.allocator.free(entry.key_ptr.*);
+            }
+            part.map.clearRetainingCapacity();
         }
-        self.lists.clearRetainingCapacity();
     }
 
     pub fn deinit(self: *ListStore) void {
         self.flush();
-        self.lists.deinit();
+        for (self.partitions) |*part| part.map.deinit();
+        self.allocator.free(self.partitions);
     }
-
 
     /// LPUSH key value [value ...] — prepend values, returns new length.
     pub fn lpush(self: *ListStore, key: []const u8, values: []const []const u8) !usize {
@@ -410,26 +426,26 @@ pub const ListStore = struct {
     /// Note: empty lists are NOT auto-deleted — the returned slice points into block memory
     /// that would be freed by removeKey. Cleanup happens on next push/pop or DEL/FLUSHALL.
     pub fn lpop(self: *ListStore, key: []const u8) ?[]const u8 {
-        const list = self.lists.getPtr(key) orelse return null;
+        const list = self.mapFor(key).getPtr(key) orelse return null;
         return list.popHead();
     }
 
     /// RPOP key — remove and return the last element.
     /// Note: see lpop comment about deferred cleanup.
     pub fn rpop(self: *ListStore, key: []const u8) ?[]const u8 {
-        const list = self.lists.getPtr(key) orelse return null;
+        const list = self.mapFor(key).getPtr(key) orelse return null;
         return list.popTail();
     }
 
     /// LLEN key — return list length.
     pub fn llen(self: *ListStore, key: []const u8) usize {
-        const list = self.lists.getPtr(key) orelse return 0;
+        const list = self.mapFor(key).getPtr(key) orelse return 0;
         return list.len();
     }
 
     /// LINDEX key index — return element at index (negative indexes from tail).
     pub fn lindex(self: *ListStore, key: []const u8, index: i64) ?[]const u8 {
-        const list = self.lists.getPtr(key) orelse return null;
+        const list = self.mapFor(key).getPtr(key) orelse return null;
         const total: i64 = @intCast(list.len());
         var idx = index;
         if (idx < 0) idx += total;
@@ -439,7 +455,7 @@ pub const ListStore = struct {
 
     /// LRANGE key start stop — return elements in range (inclusive, negative indexes supported).
     pub fn lrange(self: *ListStore, key: []const u8, start_in: i64, stop_in: i64) ?[]const []const u8 {
-        const list = self.lists.getPtr(key) orelse return null;
+        const list = self.mapFor(key).getPtr(key) orelse return null;
         const total: i64 = @intCast(list.len());
         if (total == 0) return &[_][]const u8{};
 
@@ -461,9 +477,26 @@ pub const ListStore = struct {
         return result;
     }
 
+    /// Keep an inclusive range. Build first so allocation failure preserves data.
+    pub fn ltrim(self: *ListStore, key: []const u8, first: i64, last: i64) !void {
+        const list = self.mapFor(key).getPtr(key) orelse return;
+        const n: i64 = @intCast(list.len());
+        const start = @max(0, if (first < 0) n + first else first);
+        const stop = @min(n - 1, if (last < 0) n + last else last);
+        if (start > stop) { self.removeKey(key); return; }
+        var replacement = List.init(self.allocator);
+        errdefer replacement.deinit(self.allocator);
+        var index: usize = @intCast(start);
+        while (index <= @as(usize, @intCast(stop))) : (index += 1) {
+            try replacement.pushTail(list.get(index).?);
+        }
+        list.deinit(self.allocator);
+        list.* = replacement;
+    }
+
     /// LSET key index value — rebuild list with updated element.
     pub fn lset(self: *ListStore, key: []const u8, index: i64, value: []const u8) !void {
-        const list = self.lists.getPtr(key) orelse return error.NoSuchKey;
+        const list = self.mapFor(key).getPtr(key) orelse return error.NoSuchKey;
         const total: i64 = @intCast(list.len());
         var idx = index;
         if (idx < 0) idx += total;
@@ -486,7 +519,7 @@ pub const ListStore = struct {
 
     /// LREM key count value — rebuild list without matching elements.
     pub fn lrem(self: *ListStore, key: []const u8, count_in: i64, value: []const u8) usize {
-        const list = self.lists.getPtr(key) orelse return 0;
+        const list = self.mapFor(key).getPtr(key) orelse return 0;
         const total = list.len();
         if (total == 0) return 0;
 
@@ -533,12 +566,12 @@ pub const ListStore = struct {
 
     /// Check if a key exists as a list.
     pub fn exists(self: *ListStore, key: []const u8) bool {
-        return self.lists.contains(key);
+        return self.mapFor(key).contains(key);
     }
 
     /// Delete a list key entirely.
     pub fn delete(self: *ListStore, key: []const u8) bool {
-        var entry = self.lists.fetchRemove(key) orelse return false;
+        var entry = self.mapFor(key).fetchRemove(key) orelse return false;
         entry.value.deinit(self.allocator);
         self.allocator.free(entry.key);
         return true;
@@ -548,23 +581,18 @@ pub const ListStore = struct {
     pub fn freeVal(_: Allocator, _: []const u8) void {}
 
     fn getOrCreate(self: *ListStore, key: []const u8) !*List {
-        // Fast path: key exists — no mutex needed
-        if (self.lists.getPtr(key)) |existing| return existing;
-        // Slow path: new key — mutex protects HashMap mutation
-        _ = std.c.pthread_mutex_lock(&self.map_mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.map_mutex);
-        // Double-check after acquiring mutex (another thread may have created it)
-        if (self.lists.getPtr(key)) |existing| return existing;
-        const gop = try self.lists.getOrPut(key);
-        gop.key_ptr.* = try self.allocator.dupe(u8, key);
+        const map = self.mapFor(key);
+        if (map.getPtr(key)) |existing| return existing;
+        const owned = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned);
+        const gop = try map.getOrPut(owned);
+        gop.key_ptr.* = owned;
         gop.value_ptr.* = List.init(self.allocator);
         return gop.value_ptr;
     }
 
     fn removeKey(self: *ListStore, key: []const u8) void {
-        _ = std.c.pthread_mutex_lock(&self.map_mutex);
-        defer _ = std.c.pthread_mutex_unlock(&self.map_mutex);
-        var entry = self.lists.fetchRemove(key) orelse return;
+        var entry = self.mapFor(key).fetchRemove(key) orelse return;
         entry.value.deinit(self.allocator);
         self.allocator.free(entry.key);
     }

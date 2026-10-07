@@ -1,0 +1,278 @@
+{
+  "settings": {
+    "network": "vex-local-profile-20260922",
+    "server": "vex-local-profile-20260922-server",
+    "client": "vex-local-profile-20260922-client",
+    "profiler": "vex-local-profile-20260922-profiler",
+    "server_image": "vex-perf-local:arm64",
+    "client_image": "redislabs/memtier_benchmark@sha256:f5e23c14a55aafe5ab0455084c529195fefa42752503589c8fdbacc8d2407f77",
+    "server_cpus": "0-1",
+    "client_cpus": "2-5",
+    "profiler_cpu": "6",
+    "server_quota": 2,
+    "client_quota": 4,
+    "keys": 1000000,
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "ratio": "1:4",
+    "threads": 32,
+    "connections": 128,
+    "warmup_seconds": 10,
+    "sample_seconds": 30,
+    "binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f",
+    "preflight": {
+      "container_uname": "Linux 640d734d2b8e 6.12.67-linuxkit #1 SMP Sun Jan 25 02:26:28 UTC 2026 aarch64 GNU/Linux",
+      "container_boot_id": "a9119bcd-3043-41e5-8532-065f323a7f51",
+      "container_capabilities": "CapEff:\t00000044a80c25fb",
+      "container_uid_map": "0          0 4294967295",
+      "container_kptr_restrict": "0",
+      "container_perf_event_paranoid": "2",
+      "container_kallsyms_nonzero": true
+    },
+    "live_binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f"
+  },
+  "host": {
+    "ServerVersion": "29.2.0",
+    "Architecture": "aarch64",
+    "NCPU": 14,
+    "MemTotal": 16747794432,
+    "KernelVersion": "6.12.67-linuxkit",
+    "OperatingSystem": "Docker Desktop",
+    "CgroupVersion": "2",
+    "CgroupDriver": "cgroupfs"
+  },
+  "build": {
+    "binary_sha256": "59ff67f50b15852d69a25cec41cd8ab9bc692dd94287ec93ac2126543c0c9b9f",
+    "elf_machine": 183,
+    "architecture": "aarch64",
+    "zig_version": "0.17.0-dev.314+eae06cf5c",
+    "compiler_sha256": "0c1b2b14d8fe7b2f778a393476362543b4924ff271fd0ec77674cf2c6dd8f422",
+    "signature": "verified with official Zig minisign key before extraction",
+    "unit_tests": "257 passed ReleaseSafe",
+    "compile_memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+  },
+  "baseline": {
+    "rows": [
+      {
+        "cell": "baseline-1",
+        "server_identity": "PID=1 START=630945 EXE=/usr/local/bin/vex",
+        "ops_per_sec": 439081.69,
+        "p99_ms": 0.527,
+        "runtime_ms": 30000,
+        "operations": 13172542,
+        "server_cpu_seconds_per_op": 4.473804372762676e-06,
+        "client_cpu_seconds_per_op": 7.152735591960914e-06,
+        "server_headroom_fraction": 0.017810400000000004,
+        "client_headroom_fraction": 0.21483575,
+        "client_max_thread_avg_pct": 10.0,
+        "server_throttle_fraction": 0.0008033333333333333,
+        "client_throttle_fraction": 0.0,
+        "constrained": false,
+        "stats_samples": 8,
+        "server_rss_bytes": 480604160,
+        "server_container_memory_bytes": 482764390.4,
+        "client_container_memory_bytes": 46032486.4
+      },
+      {
+        "cell": "baseline-2",
+        "server_identity": "PID=1 START=630945 EXE=/usr/local/bin/vex",
+        "ops_per_sec": 443024.79,
+        "p99_ms": 0.455,
+        "runtime_ms": 30000,
+        "operations": 13290869,
+        "server_cpu_seconds_per_op": 4.452037410044445e-06,
+        "client_cpu_seconds_per_op": 7.181475266967119e-06,
+        "server_headroom_fraction": 0.013809233333333282,
+        "client_headroom_fraction": 0.20459960833333335,
+        "client_max_thread_avg_pct": 10.100000000000001,
+        "server_throttle_fraction": 0.0009680666666666667,
+        "client_throttle_fraction": 0.0,
+        "constrained": false,
+        "stats_samples": 7,
+        "server_rss_bytes": 480710656,
+        "server_container_memory_bytes": 482764390.4,
+        "client_container_memory_bytes": 45707427.84
+      }
+    ],
+    "ops_median": 441053.24,
+    "median_run_p99_ms": 0.491,
+    "peak_rss_mib": 458.44140625,
+    "server_cpu_us_per_op": 4.462920891403561
+  },
+  "profile": {
+    "samples": 3950,
+    "reported_lost_samples": 0,
+    "modes": {
+      "K": 3343,
+      "U": 607
+    },
+    "mode_percentages": {
+      "K": 84.63291139240506,
+      "U": 15.367088607594937
+    },
+    "worker_samples": {
+      "7": 1971,
+      "8": 1979
+    },
+    "cpu_samples": {
+      "000": 1971,
+      "001": 1979
+    },
+    "top_leaf_symbols": [
+      {
+        "mode": "K",
+        "symbol": "__wake_up_sync_key",
+        "dso": "[kernel.kallsyms]",
+        "samples": 675,
+        "percent": 17.088607594936708
+      },
+      {
+        "mode": "K",
+        "symbol": "__local_bh_enable_ip",
+        "dso": "[kernel.kallsyms]",
+        "samples": 189,
+        "percent": 4.784810126582278
+      },
+      {
+        "mode": "K",
+        "symbol": "arch_counter_get_cntvct",
+        "dso": "[kernel.kallsyms]",
+        "samples": 169,
+        "percent": 4.2784810126582276
+      },
+      {
+        "mode": "U",
+        "symbol": "server.worker.Worker.submitUringWrite",
+        "dso": "/usr/local/bin/vex",
+        "samples": 160,
+        "percent": 4.050632911392405
+      },
+      {
+        "mode": "K",
+        "symbol": "nf_conntrack_tcp_packet",
+        "dso": "[kernel.kallsyms]",
+        "samples": 142,
+        "percent": 3.5949367088607596
+      },
+      {
+        "mode": "U",
+        "symbol": "compiler_rt.memcpy.memcpyFast",
+        "dso": "/usr/local/bin/vex",
+        "samples": 95,
+        "percent": 2.4050632911392404
+      },
+      {
+        "mode": "K",
+        "symbol": "io_submit_sqes",
+        "dso": "[kernel.kallsyms]",
+        "samples": 94,
+        "percent": 2.3797468354430378
+      },
+      {
+        "mode": "K",
+        "symbol": "__arch_copy_to_user",
+        "dso": "[kernel.kallsyms]",
+        "samples": 94,
+        "percent": 2.3797468354430378
+      },
+      {
+        "mode": "K",
+        "symbol": "nft_do_chain",
+        "dso": "[kernel.kallsyms]",
+        "samples": 94,
+        "percent": 2.3797468354430378
+      },
+      {
+        "mode": "K",
+        "symbol": "handle_softirqs",
+        "dso": "[kernel.kallsyms]",
+        "samples": 75,
+        "percent": 1.89873417721519
+      },
+      {
+        "mode": "U",
+        "symbol": "server.worker.Worker.run",
+        "dso": "/usr/local/bin/vex",
+        "samples": 71,
+        "percent": 1.7974683544303798
+      },
+      {
+        "mode": "U",
+        "symbol": "engine.kv.concurrent_kv.ConcurrentKV.Entry.replaceValue",
+        "dso": "/usr/local/bin/vex",
+        "samples": 61,
+        "percent": 1.5443037974683544
+      },
+      {
+        "mode": "K",
+        "symbol": "process_backlog",
+        "dso": "[kernel.kallsyms]",
+        "samples": 59,
+        "percent": 1.4936708860759493
+      },
+      {
+        "mode": "U",
+        "symbol": "hash_map.HashMapUnmanaged([]const u8,*engine.vector.hnsw.HnswIndex,hash_map.StringContext,80).getIndex__anon_63300",
+        "dso": "/usr/local/bin/vex",
+        "samples": 58,
+        "percent": 1.4683544303797469
+      },
+      {
+        "mode": "K",
+        "symbol": "fget",
+        "dso": "[kernel.kallsyms]",
+        "samples": 52,
+        "percent": 1.3164556962025316
+      },
+      {
+        "mode": "K",
+        "symbol": "__nf_conntrack_find_get",
+        "dso": "[kernel.kallsyms]",
+        "samples": 49,
+        "percent": 1.240506329113924
+      },
+      {
+        "mode": "K",
+        "symbol": "nft_meta_get_eval",
+        "dso": "[kernel.kallsyms]",
+        "samples": 46,
+        "percent": 1.1645569620253164
+      },
+      {
+        "mode": "K",
+        "symbol": "nf_hook_slow",
+        "dso": "[kernel.kallsyms]",
+        "samples": 44,
+        "percent": 1.1139240506329113
+      },
+      {
+        "mode": "K",
+        "symbol": "io_recv",
+        "dso": "[kernel.kallsyms]",
+        "samples": 43,
+        "percent": 1.0886075949367089
+      },
+      {
+        "mode": "K",
+        "symbol": "tcp_ack",
+        "dso": "[kernel.kallsyms]",
+        "samples": 42,
+        "percent": 1.0632911392405064
+      }
+    ],
+    "full_dwarf_rendering": "failed; resolved leaf reporting succeeded; raw data retained"
+  },
+  "notes": [
+    "Local ARM64 Docker VM; not a hardware-matched AWS comparison.",
+    "Existing development workloads share VM resources; benchmark CPU sets do not exclude them.",
+    "Profile workload excluded from baseline.",
+    "Profiler report failure occurred after capture; memory.events had no limit or OOM events.",
+    "Wire correctness checks validate lengths, not value payload content."
+  ],
+  "retrospective_latency_audit": {
+    "baseline_timed_samples": "both pass",
+    "warmup": "invalid maximum latency exceeds run duration",
+    "profile_workload": "invalid maximum latency exceeds run duration; excluded from baseline as originally planned",
+    "cpu_profile": "process-scoped sample record and symbol attribution preserved; corrupted memtier latency is not a CPU profile metric"
+  }
+}

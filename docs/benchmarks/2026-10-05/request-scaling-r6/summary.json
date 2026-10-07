@@ -1,0 +1,154 @@
+{
+  "completed": 9,
+  "expected": 9,
+  "protocol": {
+    "binary_sha256": "943ae2d799b346b5ee8a9d5832b1e8c238aac9c389b15da2b196ec35cc6b9124",
+    "candidate": "current request-path optimized Vex; no older engine measured",
+    "cpus": [
+      4,
+      8,
+      2
+    ],
+    "workloads": [
+      "get",
+      "hash",
+      "zset"
+    ],
+    "connections": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
+    "server": "c6gn.8xlarge",
+    "client": "c7g.16xlarge",
+    "client_cpu_quota": 48,
+    "zone": "ap-south-1b",
+    "server_memory": "8Gi",
+    "workers": "equal CPU quota; unpinned; adaptive disabled; 256 partitions",
+    "arrival_model": "uncapped closed loop; pipeline 1; service latency",
+    "search_seconds": 15,
+    "confirmation": "3 x 60 seconds at fastest passing setting; fall back if needed",
+    "p99_budget_ms": 5,
+    "get": "1 million 256-byte values, uniform reads",
+    "hash": "4096 hashes x 16 fields x 256B; 80% HSET / 20% HGET",
+    "zset": "64 sets x 4096 members; 80% ZINCRBY / 20% ZRANK",
+    "client_gate": "max thread <0.9 CPU; aggregate <38.4 CPU; throttling <1% duration",
+    "network_gate": "zero ENA allowance-exceeded deltas",
+    "ttl": false,
+    "persistence": false,
+    "max_runtime_seconds": 18000
+  },
+  "rows": [
+    {
+      "cpu": 2,
+      "workload": "get",
+      "valid": true,
+      "ops_per_sec": 258949.49,
+      "p99_ms": 0.151,
+      "cpu_us_per_op": 7.719957603143619,
+      "connections": 32,
+      "ops_min": 258262.93,
+      "ops_max": 262036.27,
+      "server_cpu_cores": 1.9990790841556625
+    },
+    {
+      "cpu": 2,
+      "workload": "hash",
+      "valid": true,
+      "ops_per_sec": 230272.63,
+      "p99_ms": 0.199,
+      "cpu_us_per_op": 8.670388212839967,
+      "connections": 32,
+      "ops_min": 229871.88,
+      "ops_max": 232545.62,
+      "server_cpu_cores": 1.9965530968916592
+    },
+    {
+      "cpu": 2,
+      "workload": "zset",
+      "valid": true,
+      "ops_per_sec": 217530.21,
+      "p99_ms": 0.199,
+      "cpu_us_per_op": 9.114777303430014,
+      "connections": 32,
+      "ops_min": 215979.24,
+      "ops_max": 218664.71,
+      "server_cpu_cores": 1.9827394209183646
+    },
+    {
+      "cpu": 4,
+      "workload": "get",
+      "valid": true,
+      "ops_per_sec": 494517.43,
+      "p99_ms": 0.351,
+      "cpu_us_per_op": 8.056063627416151,
+      "connections": 128,
+      "ops_min": 493817.45,
+      "ops_max": 495242.94,
+      "server_cpu_cores": 3.9838638809463127
+    },
+    {
+      "cpu": 4,
+      "workload": "hash",
+      "valid": true,
+      "ops_per_sec": 432030.79,
+      "p99_ms": 0.207,
+      "cpu_us_per_op": 9.206003718631592,
+      "connections": 64,
+      "ops_min": 426537.77,
+      "ops_max": 439318.49,
+      "server_cpu_cores": 3.9772770593033444
+    },
+    {
+      "cpu": 4,
+      "workload": "zset",
+      "valid": true,
+      "ops_per_sec": 406620.09,
+      "p99_ms": 0.447,
+      "cpu_us_per_op": 9.698258296902772,
+      "connections": 128,
+      "ops_min": 406617.26,
+      "ops_max": 413448.94,
+      "server_cpu_cores": 3.943506661529852
+    },
+    {
+      "cpu": 8,
+      "workload": "get",
+      "valid": true,
+      "ops_per_sec": 856464.9,
+      "p99_ms": 0.415,
+      "cpu_us_per_op": 9.243579129286488,
+      "connections": 256,
+      "ops_min": 854037.51,
+      "ops_max": 856636.64,
+      "server_cpu_cores": 7.917695358841633
+    },
+    {
+      "cpu": 8,
+      "workload": "hash",
+      "valid": true,
+      "ops_per_sec": 740772.89,
+      "p99_ms": 0.471,
+      "cpu_us_per_op": 10.613534924952452,
+      "connections": 256,
+      "ops_min": 738724.67,
+      "ops_max": 741829.27,
+      "server_cpu_cores": 7.862218939472961
+    },
+    {
+      "cpu": 8,
+      "workload": "zset",
+      "valid": true,
+      "ops_per_sec": 706987.04,
+      "p99_ms": 0.511,
+      "cpu_us_per_op": 10.991686851151117,
+      "connections": 256,
+      "ops_min": 705545.72,
+      "ops_max": 713559.53,
+      "server_cpu_cores": 7.77098015150225
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "vex-scaling-20260927-hypotheses-r3",
+        "labels": {
+          "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3"
+        }
+      }
+    },
+    {
+      "apiVersion": "karpenter.sh/v1",
+      "kind": "NodePool",
+      "metadata": {
+        "name": "vex-scaling-20260927-hypotheses-r3-server",
+        "labels": {
+          "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3"
+        }
+      },
+      "spec": {
+        "limits": {
+          "cpu": "32",
+          "memory": "64Gi"
+        },
+        "disruption": {
+          "consolidationPolicy": "WhenEmpty",
+          "consolidateAfter": "1m",
+          "budgets": [
+            {
+              "nodes": "0"
+            }
+          ]
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3",
+              "bench.vex.dev/role": "server"
+            }
+          },
+          "spec": {
+            "nodeClassRef": {
+              "group": "karpenter.k8s.aws",
+              "kind": "EC2NodeClass",
+              "name": "fi-api-nodeclass"
+            },
+            "expireAfter": "4h",
+            "terminationGracePeriod": "5m",
+            "taints": [
+              {
+                "key": "vex-benchmark",
+                "value": "vex-scaling-20260927-hypotheses-r3",
+                "effect": "NoSchedule"
+              }
+            ],
+            "requirements": [
+              {
+                "key": "kubernetes.io/arch",
+                "operator": "In",
+                "values": [
+                  "arm64"
+                ]
+              },
+              {
+                "key": "kubernetes.io/os",
+                "operator": "In",
+                "values": [
+                  "linux"
+                ]
+              },
+              {
+                "key": "karpenter.sh/capacity-type",
+                "operator": "In",
+                "values": [
+                  "on-demand"
+                ]
+              },
+              {
+                "key": "node.kubernetes.io/instance-type",
+                "operator": "In",
+                "values": [
+                  "c7g.8xlarge"
+                ]
+              },
+              {
+                "key": "topology.kubernetes.io/zone",
+                "operator": "In",
+                "values": [
+                  "ap-south-1a"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "karpenter.sh/v1",
+      "kind": "NodePool",
+      "metadata": {
+        "name": "vex-scaling-20260927-hypotheses-r3-client",
+        "labels": {
+          "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3"
+        }
+      },
+      "spec": {
+        "limits": {
+          "cpu": "64",
+          "memory": "128Gi"
+        },
+        "disruption": {
+          "consolidationPolicy": "WhenEmpty",
+          "consolidateAfter": "1m",
+          "budgets": [
+            {
+              "nodes": "0"
+            }
+          ]
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "bench.vex.dev/run": "vex-scaling-20260927-hypotheses-r3",
+              "bench.vex.dev/role": "client"
+            }
+          },
+          "spec": {
+            "nodeClassRef": {
+              "group": "karpenter.k8s.aws",
+              "kind": "EC2NodeClass",
+              "name": "fi-api-nodeclass"
+            },
+            "expireAfter": "4h",
+            "terminationGracePeriod": "5m",
+            "taints": [
+              {
+                "key": "vex-benchmark",
+                "value": "vex-scaling-20260927-hypotheses-r3",
+                "effect": "NoSchedule"
+              }
+            ],
+            "requirements": [
+              {
+                "key": "kubernetes.io/arch",
+                "operator": "In",
+                "values": [
+                  "arm64"
+                ]
+              },
+              {
+                "key": "kubernetes.io/os",
+                "operator": "In",
+                "values": [
+                  "linux"
+                ]
+              },
+              {
+                "key": "karpenter.sh/capacity-type",
+                "operator": "In",
+                "values": [
+                  "on-demand"
+                ]
+              },
+              {
+                "key": "node.kubernetes.io/instance-type",
+                "operator": "In",
+                "values": [
+                  "c7g.16xlarge"
+                ]
+              },
+              {
+                "key": "topology.kubernetes.io/zone",
+                "operator": "In",
+                "values": [
+                  "ap-south-1a"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

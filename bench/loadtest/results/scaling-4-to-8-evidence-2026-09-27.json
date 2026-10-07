@@ -1,0 +1,845 @@
+{
+  "scope": "Observational evidence, not causal attribution. CPU counters bracket launch/export overhead. Softirq counters are node-wide per-CPU ticks, not engine-exclusive time.",
+  "phases": [
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "4cpu-candidate",
+      "phase": "boundary-check",
+      "rate": 800000,
+      "seconds": 30,
+      "p99_ms": 91.6,
+      "service_p99_ms": 1.61,
+      "server_throttled_seconds": 0.010673,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 30.019999999999996,
+          "node_user_ticks": 393,
+          "node_system_ticks": 1407,
+          "node_softirq_ticks": 1208
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 30.040000000000006,
+          "node_user_ticks": 408,
+          "node_system_ticks": 1309,
+          "node_softirq_ticks": 1289
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 30.040000000000006,
+          "node_user_ticks": 414,
+          "node_system_ticks": 1358,
+          "node_softirq_ticks": 1232
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 30.039999999999992,
+          "node_user_ticks": 461,
+          "node_system_ticks": 1357,
+          "node_softirq_ticks": 1187
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "4cpu-candidate",
+      "phase": "confirm-0-2",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.36,
+      "service_p99_ms": 0.31,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 27.549999999999997,
+          "node_user_ticks": 403,
+          "node_system_ticks": 1186,
+          "node_softirq_ticks": 1075
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 27.450000000000003,
+          "node_user_ticks": 369,
+          "node_system_ticks": 1240,
+          "node_softirq_ticks": 1095
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 27.239999999999995,
+          "node_user_ticks": 380,
+          "node_system_ticks": 1212,
+          "node_softirq_ticks": 1088
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 27.310000000000002,
+          "node_user_ticks": 408,
+          "node_system_ticks": 1229,
+          "node_softirq_ticks": 1064
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "4cpu-candidate",
+      "phase": "confirm-0-1",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.36,
+      "service_p99_ms": 0.32,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 27.459999999999994,
+          "node_user_ticks": 435,
+          "node_system_ticks": 1216,
+          "node_softirq_ticks": 1057
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 27.5,
+          "node_user_ticks": 451,
+          "node_system_ticks": 1172,
+          "node_softirq_ticks": 1067
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 27.319999999999993,
+          "node_user_ticks": 426,
+          "node_system_ticks": 1236,
+          "node_softirq_ticks": 1073
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 27.189999999999998,
+          "node_user_ticks": 434,
+          "node_system_ticks": 1146,
+          "node_softirq_ticks": 1093
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "4cpu-candidate",
+      "phase": "confirm-0-0",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.37,
+      "service_p99_ms": 0.32,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 27.540000000000006,
+          "node_user_ticks": 449,
+          "node_system_ticks": 1214,
+          "node_softirq_ticks": 1033
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 27.489999999999995,
+          "node_user_ticks": 408,
+          "node_system_ticks": 1236,
+          "node_softirq_ticks": 1093
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 27.440000000000005,
+          "node_user_ticks": 393,
+          "node_system_ticks": 1272,
+          "node_softirq_ticks": 1062
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 27.29,
+          "node_user_ticks": 418,
+          "node_system_ticks": 1214,
+          "node_softirq_ticks": 1092
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "8cpu-candidate",
+      "phase": "boundary-check",
+      "rate": 800000,
+      "seconds": 30,
+      "p99_ms": 1.33,
+      "service_p99_ms": 1.08,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 19.010000000000005,
+          "node_user_ticks": 276,
+          "node_system_ticks": 871,
+          "node_softirq_ticks": 695
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 18.929999999999993,
+          "node_user_ticks": 311,
+          "node_system_ticks": 849,
+          "node_softirq_ticks": 671
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 18.69999999999999,
+          "node_user_ticks": 284,
+          "node_system_ticks": 853,
+          "node_softirq_ticks": 695
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 18.810000000000002,
+          "node_user_ticks": 314,
+          "node_system_ticks": 872,
+          "node_softirq_ticks": 683
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 18.840000000000003,
+          "node_user_ticks": 312,
+          "node_system_ticks": 853,
+          "node_softirq_ticks": 703
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 28.610000000000014,
+          "node_user_ticks": 244,
+          "node_system_ticks": 742,
+          "node_softirq_ticks": 1933
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 18.849999999999994,
+          "node_user_ticks": 283,
+          "node_system_ticks": 893,
+          "node_softirq_ticks": 706
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 28.39,
+          "node_user_ticks": 243,
+          "node_system_ticks": 727,
+          "node_softirq_ticks": 1921
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-0-2",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.33,
+      "service_p99_ms": 0.28,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 16.159999999999997,
+          "node_user_ticks": 263,
+          "node_system_ticks": 711,
+          "node_softirq_ticks": 564
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 15.969999999999999,
+          "node_user_ticks": 250,
+          "node_system_ticks": 734,
+          "node_softirq_ticks": 576
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 15.920000000000009,
+          "node_user_ticks": 213,
+          "node_system_ticks": 777,
+          "node_softirq_ticks": 558
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 15.840000000000003,
+          "node_user_ticks": 246,
+          "node_system_ticks": 750,
+          "node_softirq_ticks": 567
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 15.829999999999998,
+          "node_user_ticks": 195,
+          "node_system_ticks": 711,
+          "node_softirq_ticks": 569
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 23.769999999999996,
+          "node_user_ticks": 225,
+          "node_system_ticks": 657,
+          "node_softirq_ticks": 1656
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 15.799999999999997,
+          "node_user_ticks": 223,
+          "node_system_ticks": 754,
+          "node_softirq_ticks": 591
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 23.33999999999999,
+          "node_user_ticks": 289,
+          "node_system_ticks": 749,
+          "node_softirq_ticks": 1588
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-0-1",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.33,
+      "service_p99_ms": 0.28,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 16.0,
+          "node_user_ticks": 259,
+          "node_system_ticks": 714,
+          "node_softirq_ticks": 524
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 15.940000000000005,
+          "node_user_ticks": 213,
+          "node_system_ticks": 789,
+          "node_softirq_ticks": 550
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 15.959999999999994,
+          "node_user_ticks": 217,
+          "node_system_ticks": 747,
+          "node_softirq_ticks": 598
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 15.910000000000004,
+          "node_user_ticks": 234,
+          "node_system_ticks": 707,
+          "node_softirq_ticks": 607
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 15.880000000000003,
+          "node_user_ticks": 229,
+          "node_system_ticks": 714,
+          "node_softirq_ticks": 582
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 23.509999999999998,
+          "node_user_ticks": 227,
+          "node_system_ticks": 597,
+          "node_softirq_ticks": 1539
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 15.969999999999999,
+          "node_user_ticks": 237,
+          "node_system_ticks": 675,
+          "node_softirq_ticks": 570
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 22.750000000000007,
+          "node_user_ticks": 218,
+          "node_system_ticks": 617,
+          "node_softirq_ticks": 1721
+        }
+      ]
+    },
+    {
+      "run": "2026-09-26-scaling-openloop-v6",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-0-0",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.33,
+      "service_p99_ms": 0.28,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 16.019999999999996,
+          "node_user_ticks": 242,
+          "node_system_ticks": 720,
+          "node_softirq_ticks": 588
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 16.08,
+          "node_user_ticks": 220,
+          "node_system_ticks": 754,
+          "node_softirq_ticks": 577
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 15.890000000000004,
+          "node_user_ticks": 250,
+          "node_system_ticks": 755,
+          "node_softirq_ticks": 573
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 15.949999999999996,
+          "node_user_ticks": 241,
+          "node_system_ticks": 741,
+          "node_softirq_ticks": 536
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 15.780000000000001,
+          "node_user_ticks": 249,
+          "node_system_ticks": 766,
+          "node_softirq_ticks": 541
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 22.509999999999998,
+          "node_user_ticks": 238,
+          "node_system_ticks": 670,
+          "node_softirq_ticks": 1571
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 15.750000000000004,
+          "node_user_ticks": 233,
+          "node_system_ticks": 720,
+          "node_softirq_ticks": 564
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 24.490000000000002,
+          "node_user_ticks": 192,
+          "node_system_ticks": 574,
+          "node_softirq_ticks": 1900
+        }
+      ]
+    },
+    {
+      "run": "2026-09-27-scaling-high-cpu",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-1-1",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.34,
+      "service_p99_ms": 0.3,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 16.299999999999997,
+          "node_user_ticks": 248,
+          "node_system_ticks": 754,
+          "node_softirq_ticks": 553
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 16.22999999999999,
+          "node_user_ticks": 248,
+          "node_system_ticks": 732,
+          "node_softirq_ticks": 598
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 16.080000000000013,
+          "node_user_ticks": 222,
+          "node_system_ticks": 768,
+          "node_softirq_ticks": 609
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 16.00999999999999,
+          "node_user_ticks": 217,
+          "node_system_ticks": 706,
+          "node_softirq_ticks": 550
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 16.08,
+          "node_user_ticks": 273,
+          "node_system_ticks": 760,
+          "node_softirq_ticks": 605
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 23.870000000000005,
+          "node_user_ticks": 243,
+          "node_system_ticks": 581,
+          "node_softirq_ticks": 1688
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 16.090000000000003,
+          "node_user_ticks": 257,
+          "node_system_ticks": 744,
+          "node_softirq_ticks": 567
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 22.22,
+          "node_user_ticks": 206,
+          "node_system_ticks": 666,
+          "node_softirq_ticks": 1573
+        }
+      ]
+    },
+    {
+      "run": "2026-09-27-scaling-high-cpu",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-1-0",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.34,
+      "service_p99_ms": 0.3,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 16.33999999999999,
+          "node_user_ticks": 266,
+          "node_system_ticks": 750,
+          "node_softirq_ticks": 616
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 16.090000000000003,
+          "node_user_ticks": 244,
+          "node_system_ticks": 780,
+          "node_softirq_ticks": 581
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 15.989999999999995,
+          "node_user_ticks": 253,
+          "node_system_ticks": 768,
+          "node_softirq_ticks": 584
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 16.13000000000001,
+          "node_user_ticks": 258,
+          "node_system_ticks": 769,
+          "node_softirq_ticks": 565
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 15.990000000000009,
+          "node_user_ticks": 262,
+          "node_system_ticks": 726,
+          "node_softirq_ticks": 564
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 24.01000000000002,
+          "node_user_ticks": 206,
+          "node_system_ticks": 571,
+          "node_softirq_ticks": 1769
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 15.89,
+          "node_user_ticks": 252,
+          "node_system_ticks": 751,
+          "node_softirq_ticks": 581
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 23.28,
+          "node_user_ticks": 252,
+          "node_system_ticks": 686,
+          "node_softirq_ticks": 1579
+        }
+      ]
+    },
+    {
+      "run": "2026-09-27-scaling-high-cpu",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-0-2",
+      "rate": 800000,
+      "seconds": 30,
+      "p99_ms": 1.29,
+      "service_p99_ms": 1.08,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 19.230000000000004,
+          "node_user_ticks": 304,
+          "node_system_ticks": 851,
+          "node_softirq_ticks": 663
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 19.200000000000003,
+          "node_user_ticks": 282,
+          "node_system_ticks": 841,
+          "node_softirq_ticks": 676
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 19.08,
+          "node_user_ticks": 290,
+          "node_system_ticks": 861,
+          "node_softirq_ticks": 630
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 19.059999999999988,
+          "node_user_ticks": 276,
+          "node_system_ticks": 839,
+          "node_softirq_ticks": 672
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 19.03,
+          "node_user_ticks": 262,
+          "node_system_ticks": 852,
+          "node_softirq_ticks": 690
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 28.669999999999987,
+          "node_user_ticks": 231,
+          "node_system_ticks": 799,
+          "node_softirq_ticks": 1883
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 19.060000000000002,
+          "node_user_ticks": 279,
+          "node_system_ticks": 803,
+          "node_softirq_ticks": 697
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 28.929999999999993,
+          "node_user_ticks": 260,
+          "node_system_ticks": 749,
+          "node_softirq_ticks": 1944
+        }
+      ]
+    },
+    {
+      "run": "2026-09-27-scaling-high-cpu",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-1-2",
+      "rate": 640000,
+      "seconds": 30,
+      "p99_ms": 0.35,
+      "service_p99_ms": 0.3,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 16.330000000000013,
+          "node_user_ticks": 245,
+          "node_system_ticks": 742,
+          "node_softirq_ticks": 572
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 16.180000000000007,
+          "node_user_ticks": 220,
+          "node_system_ticks": 768,
+          "node_softirq_ticks": 551
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 16.14,
+          "node_user_ticks": 262,
+          "node_system_ticks": 774,
+          "node_softirq_ticks": 547
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 16.080000000000013,
+          "node_user_ticks": 238,
+          "node_system_ticks": 662,
+          "node_softirq_ticks": 616
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 16.179999999999993,
+          "node_user_ticks": 232,
+          "node_system_ticks": 750,
+          "node_softirq_ticks": 547
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 25.169999999999987,
+          "node_user_ticks": 202,
+          "node_system_ticks": 597,
+          "node_softirq_ticks": 1871
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 15.980000000000004,
+          "node_user_ticks": 229,
+          "node_system_ticks": 737,
+          "node_softirq_ticks": 579
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 22.630000000000024,
+          "node_user_ticks": 219,
+          "node_system_ticks": 610,
+          "node_softirq_ticks": 1636
+        }
+      ]
+    },
+    {
+      "run": "2026-09-27-scaling-high-cpu",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-0-1",
+      "rate": 800000,
+      "seconds": 30,
+      "p99_ms": 1.01,
+      "service_p99_ms": 0.73,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 19.300000000000004,
+          "node_user_ticks": 292,
+          "node_system_ticks": 912,
+          "node_softirq_ticks": 695
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 19.28,
+          "node_user_ticks": 276,
+          "node_system_ticks": 878,
+          "node_softirq_ticks": 705
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 19.090000000000003,
+          "node_user_ticks": 281,
+          "node_system_ticks": 885,
+          "node_softirq_ticks": 693
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 19.060000000000002,
+          "node_user_ticks": 299,
+          "node_system_ticks": 902,
+          "node_softirq_ticks": 670
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 19.07999999999999,
+          "node_user_ticks": 293,
+          "node_system_ticks": 849,
+          "node_softirq_ticks": 734
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 27.539999999999992,
+          "node_user_ticks": 264,
+          "node_system_ticks": 797,
+          "node_softirq_ticks": 1775
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 19.119999999999997,
+          "node_user_ticks": 290,
+          "node_system_ticks": 882,
+          "node_softirq_ticks": 700
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 28.83999999999999,
+          "node_user_ticks": 279,
+          "node_system_ticks": 754,
+          "node_softirq_ticks": 1906
+        }
+      ]
+    },
+    {
+      "run": "2026-09-27-scaling-high-cpu",
+      "cell": "8cpu-candidate",
+      "phase": "confirm-0-0",
+      "rate": 800000,
+      "seconds": 30,
+      "p99_ms": 1.47,
+      "service_p99_ms": 1.15,
+      "server_throttled_seconds": 0.0,
+      "workers": [
+        {
+          "cpu": 0,
+          "thread_cpu_seconds": 19.299999999999997,
+          "node_user_ticks": 277,
+          "node_system_ticks": 835,
+          "node_softirq_ticks": 686
+        },
+        {
+          "cpu": 1,
+          "thread_cpu_seconds": 19.189999999999998,
+          "node_user_ticks": 289,
+          "node_system_ticks": 865,
+          "node_softirq_ticks": 672
+        },
+        {
+          "cpu": 2,
+          "thread_cpu_seconds": 19.04,
+          "node_user_ticks": 270,
+          "node_system_ticks": 870,
+          "node_softirq_ticks": 700
+        },
+        {
+          "cpu": 3,
+          "thread_cpu_seconds": 19.020000000000003,
+          "node_user_ticks": 282,
+          "node_system_ticks": 867,
+          "node_softirq_ticks": 676
+        },
+        {
+          "cpu": 4,
+          "thread_cpu_seconds": 19.200000000000003,
+          "node_user_ticks": 285,
+          "node_system_ticks": 862,
+          "node_softirq_ticks": 690
+        },
+        {
+          "cpu": 5,
+          "thread_cpu_seconds": 29.080000000000005,
+          "node_user_ticks": 230,
+          "node_system_ticks": 782,
+          "node_softirq_ticks": 1940
+        },
+        {
+          "cpu": 6,
+          "thread_cpu_seconds": 19.090000000000003,
+          "node_user_ticks": 298,
+          "node_system_ticks": 800,
+          "node_softirq_ticks": 728
+        },
+        {
+          "cpu": 7,
+          "thread_cpu_seconds": 27.640000000000008,
+          "node_user_ticks": 251,
+          "node_system_ticks": 754,
+          "node_softirq_ticks": 1822
+        }
+      ]
+    }
+  ]
+}

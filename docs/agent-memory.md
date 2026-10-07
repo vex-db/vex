@@ -89,11 +89,10 @@ MEMORY.RECALL <agent> <f32_bytes>
     [LIMIT n]            # default 10
     [THRESHOLD 0.0-1.0]  # min similarity, default 0.5
     [TYPE …] [TAG …] [AFTER <ts>] [BEFORE <ts>]
-    [BOOST recency|importance|frequency]   # double one factor's weight
+    [BOOST recency|importance|frequency]   # square the selected factor
 ```
 
-**Composite score** (this is the whole point — ranking by similarity *alone* is
-strictly worse):
+**Composite score** combines semantic similarity with memory metadata:
 
 ```
 score = similarity · recency · importance · frequency
@@ -106,6 +105,12 @@ score = similarity · recency · importance · frequency
 The `frequency` factor has a **0.5 floor** so a never-accessed-yet memory doesn't
 score zero (the bare `log2` form would zero every fresh memory). Reply per hit:
 `[id, score, text, type, similarity, recency, importance, created_at]`.
+
+`BOOST` squares the selected factor; it does not multiply it by two. For
+example, `BOOST importance` uses `similarity · recency · importance² · frequency`.
+For factors between zero and one, this lowers the numerical score while giving
+that factor more influence on the ranking. Evaluate ranking quality for your
+workload; composite scoring is not universally better than similarity alone.
 
 ### MEMORY.RELATE / CONTEXT
 
@@ -178,18 +183,37 @@ decide *what* to remember and detect contradictions (the LLM-side reasoning);
 point them at vex for storage + retrieval via a thin adapter. Vex stores the
 `contradicts` edge — it doesn't decide that two memories conflict.
 
-## Honest scope
+## Capabilities and boundaries
 
-- **Reasoning is the client's job.** Vex stores the `contradicts`/`updates`
-  relationship and ranks by the composite score; *detecting* a contradiction, or
-  *consolidating* 50 episodic memories into one semantic fact, is LLM work. Vex
-  is the memory store, not the agent.
-- **Semantic recall needs an embedding.** A memory stored without `VEC` is only
-  reachable by id, type, or graph traversal.
-- **The scoring formula is fixed** (similarity·recency·importance·frequency, with
-  `BOOST` to double one factor). Need a different model? Post-process client-side.
-- **Agents are namespaced** by `agent_id`; cross-agent sharing isn't built in.
-  Relation types are free strings (a typo silently makes a new type), and storing
-  the same text twice makes two memories — dedup before storing if you care.
-- **Capacity:** ~1M memories/agent at 384-dim ≈ 700 MB; recall is sub-millisecond
-  (HNSW + scoring + traversal, all in-process, no network hops).
+- **Reasoning belongs to the application.** Vex stores explicitly supplied
+  `contradicts`/`updates` relationships and ranks memories. Detecting conflicts,
+  deciding which fact supersedes another, and consolidating episodic memories
+  into semantic facts require application logic or an LLM.
+- **Semantic recall needs an embedding.** Your application generates and supplies
+  vectors. Memories stored without `VEC` remain accessible through ID lookup,
+  listing, and graph traversal, but do not participate in vector recall.
+- **Ranking uses a fixed formula:** similarity · recency · importance · frequency.
+  `BOOST` squares one selected factor, as described above. Custom ranking models
+  require client-side reranking of the returned candidates.
+- **Multiple agents can use an application-managed shared namespace.** The
+  `<agent>` argument identifies the memory namespace; it need not represent one
+  agent process. For example, sales, security, and onboarding agents can use
+  `workspace:acme-launch` to contribute to and recall the same memory pool.
+  Separate namespaces are not automatically searched together. Namespace labels
+  are not an authorization boundary or a built-in team permission model; the
+  application must control access.
+- **Relationships and duplicates are application-managed.** Relation types are
+  free strings, so a typo creates a distinct type. Storing the same text with
+  automatically generated IDs creates separate memories; deduplicate before
+  storing when needed.
+- **Recall and graph context are separate operations.** `MEMORY.RECALL` searches
+  the vector index and ranks candidates; `MEMORY.CONTEXT` traverses stored
+  relationships. Both run inside Vex, but client requests still incur network
+  and serialization costs.
+- **Capacity and latency depend on the workload.** This page does not establish
+  a measured one-million-memory capacity or a sub-millisecond recall guarantee.
+  Memory use depends on vector dimensions and representation, text, metadata,
+  graph edges, and index overhead. Performance claims need reproducible
+  `MEMORY.*` benchmarks reporting hardware, dataset size, concurrency, and
+  latency percentiles. GET/SET benchmarks do not establish memory-recall
+  performance.

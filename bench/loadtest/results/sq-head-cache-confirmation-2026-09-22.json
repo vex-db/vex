@@ -1,0 +1,398 @@
+{
+  "status": "stopped_inconclusive_invalid_timing",
+  "default_promotion": false,
+  "protocol": {
+    "status": "planned",
+    "scenarios": [
+      {
+        "name": "set-32-p1",
+        "value_bytes": 32,
+        "ratio": "1:0",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "get-32-p1",
+        "value_bytes": 32,
+        "ratio": "0:1",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "mixed-32-p1",
+        "value_bytes": 32,
+        "ratio": "1:4",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "mixed-128-p1",
+        "value_bytes": 128,
+        "ratio": "1:4",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "mixed-256-p1",
+        "value_bytes": 256,
+        "ratio": "1:4",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "mixed-1024-p1",
+        "value_bytes": 1024,
+        "ratio": "1:4",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "mixed-4096-p1",
+        "value_bytes": 4096,
+        "ratio": "1:4",
+        "pipeline": 1,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      },
+      {
+        "name": "mixed-256-p8",
+        "value_bytes": 256,
+        "ratio": "1:4",
+        "pipeline": 8,
+        "keys": 100000,
+        "key_minimum": 1000000,
+        "key_maximum": 1099999
+      }
+    ],
+    "ab_order": [
+      [
+        "off-1",
+        false
+      ],
+      [
+        "on-1",
+        true
+      ],
+      [
+        "on-2",
+        true
+      ],
+      [
+        "off-2",
+        false
+      ]
+    ],
+    "timed_seconds": 60,
+    "warmup_seconds": 10,
+    "throughput_regression_gate": 0.02,
+    "cpu_per_op_regression_gate": 0.02,
+    "p99_regression_gate": 0.05,
+    "rss_regression_gate": 0.02,
+    "efficacy": {
+      "scenario": "mixed-256-p1",
+      "gain_gate": 0.03,
+      "lower_cpu_per_op": true
+    },
+    "provenance": {
+      "git_head": "72958ac8a04961166c74eab36b3fddc385ddc5b0",
+      "event_loop_sha256": "e4523c5b7e3c1fa13dae363da7278b50c64d73ab3549bce5cf8ef7247c7dfb03",
+      "profile_helper_sha256": "71879ac86cef4e6edfc68a6a0efe4205a052854721ec9e1fb5f9a008102fabca",
+      "comparison_helper_sha256": "5012000c7cff783412b432c03fb3e0dfd389237cd994f3aa1934f615862c5fe5",
+      "confirmation_script_sha256": "b1d9316544f79971a67814675fa3d0e35432d8c3c506f1434e8fc08214f84576",
+      "image_ref": "vex-sq-head-cache:arm64",
+      "image_id": "sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+      "image_architecture": "arm64",
+      "image_repo_digests": [
+        "vex-sq-head-cache@sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f"
+      ],
+      "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+      "locked_image_id": "sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f"
+    }
+  },
+  "measured_scenarios": [
+    "set-32-p1"
+  ],
+  "unrun_scenarios": [
+    "get-32-p1",
+    "mixed-32-p1",
+    "mixed-128-p1",
+    "mixed-256-p1",
+    "mixed-1024-p1",
+    "mixed-4096-p1",
+    "mixed-256-p8"
+  ],
+  "measurement": {
+    "scenario": "set-32-p1",
+    "workload": {
+      "value_bytes": 32,
+      "ratio": "1:0",
+      "pipeline": 1,
+      "keys": 100000,
+      "warmup_seconds": 10,
+      "sample_seconds": 60
+    },
+    "rows": [
+      {
+        "cell": "off-1",
+        "server_identity": "PID=1 START=882238 EXE=/usr/local/bin/vex",
+        "ops_per_sec": 472089.84,
+        "p99_ms": 0.447,
+        "runtime_ms": 60001,
+        "operations": 28325610,
+        "server_cpu_seconds_per_op": 4.1605426679248915e-06,
+        "client_cpu_seconds_per_op": 7.014312207221663e-06,
+        "server_headroom_fraction": 0.017917425000000042,
+        "client_headroom_fraction": 0.17214719999999994,
+        "client_max_thread_avg_pct": 10.7,
+        "server_throttle_fraction": 0.0007474,
+        "client_throttle_fraction": 0.0,
+        "constrained": false,
+        "stats_samples": 15,
+        "server_rss_bytes": 22065152,
+        "server_container_memory_bytes": 21422407.68,
+        "client_container_memory_bytes": 39929774.08,
+        "enabled": false,
+        "scenario": "set-32-p1",
+        "order": "off-1",
+        "value_bytes": 32,
+        "ratio": "1:0",
+        "pipeline": 1,
+        "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6"
+      },
+      {
+        "cell": "on-1",
+        "server_identity": "PID=1 START=890736 EXE=/usr/local/bin/vex",
+        "ops_per_sec": 392153.27,
+        "p99_ms": 0.663,
+        "runtime_ms": 60002,
+        "operations": 23529778,
+        "server_cpu_seconds_per_op": 4.988242303008554e-06,
+        "client_cpu_seconds_per_op": 8.59713262063076e-06,
+        "server_headroom_fraction": 0.021898050000000002,
+        "client_headroom_fraction": 0.15713074166666663,
+        "client_max_thread_avg_pct": 10.7,
+        "server_throttle_fraction": 0.0008801,
+        "client_throttle_fraction": 0.0,
+        "constrained": false,
+        "stats_samples": 15,
+        "server_rss_bytes": 22142976,
+        "server_container_memory_bytes": 21569208.32,
+        "client_container_memory_bytes": 40527462.4,
+        "enabled": true,
+        "scenario": "set-32-p1",
+        "order": "on-1",
+        "value_bytes": 32,
+        "ratio": "1:0",
+        "pipeline": 1,
+        "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6"
+      },
+      {
+        "cell": "on-2",
+        "server_identity": "PID=1 START=899301 EXE=/usr/local/bin/vex",
+        "ops_per_sec": 290198.26,
+        "p99_ms": 0.823,
+        "runtime_ms": 60000,
+        "operations": 17411959,
+        "server_cpu_seconds_per_op": 6.689854139904649e-06,
+        "client_cpu_seconds_per_op": 1.1580256592609711e-05,
+        "server_headroom_fraction": 0.029304449999999926,
+        "client_headroom_fraction": 0.15985436250000007,
+        "client_max_thread_avg_pct": 10.7,
+        "server_throttle_fraction": 0.0005920166666666666,
+        "client_throttle_fraction": 0.0,
+        "constrained": false,
+        "stats_samples": 15,
+        "server_rss_bytes": 22122496,
+        "server_container_memory_bytes": 21495808.0,
+        "client_container_memory_bytes": 39992688.64,
+        "enabled": true,
+        "scenario": "set-32-p1",
+        "order": "on-2",
+        "value_bytes": 32,
+        "ratio": "1:0",
+        "pipeline": 1,
+        "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6"
+      },
+      {
+        "cell": "off-2",
+        "server_identity": "PID=1 START=907529 EXE=/usr/local/bin/vex",
+        "ops_per_sec": 396674.62,
+        "p99_ms": 0.735,
+        "runtime_ms": 60001,
+        "operations": 23800890,
+        "server_cpu_seconds_per_op": 4.929260376397689e-06,
+        "client_cpu_seconds_per_op": 8.479902012067616e-06,
+        "server_headroom_fraction": 0.02232679999999998,
+        "client_headroom_fraction": 0.15904493749999993,
+        "client_max_thread_avg_pct": 10.8,
+        "server_throttle_fraction": 0.0007475166666666667,
+        "client_throttle_fraction": 0.0,
+        "constrained": false,
+        "stats_samples": 14,
+        "server_rss_bytes": 22097920,
+        "server_container_memory_bytes": 21464350.72,
+        "client_container_memory_bytes": 40663777.28,
+        "enabled": false,
+        "scenario": "set-32-p1",
+        "order": "off-2",
+        "value_bytes": 32,
+        "ratio": "1:0",
+        "pipeline": 1,
+        "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6"
+      }
+    ],
+    "regression_gates": {
+      "off_ops_median": 434382.23,
+      "on_ops_median": 341175.765,
+      "throughput_delta": -0.2145724630586292,
+      "reasons": [
+        "median throughput regression above 2%",
+        "paired throughput regression above 2% (off-1/on-1)",
+        "paired p99 regression above 5% (off-1/on-1)",
+        "paired CPU/op regression above 2% (off-1/on-1)",
+        "paired throughput regression above 2% (off-2/on-2)",
+        "paired p99 regression above 5% (off-2/on-2)",
+        "paired CPU/op regression above 2% (off-2/on-2)"
+      ],
+      "passed": false
+    },
+    "efficacy_signal": null,
+    "status": "complete"
+  },
+  "interpretation": {
+    "recorded_throughput_delta": -0.2145724630586292,
+    "code_causality": "unresolved; do not treat recorded aggregate as a proven Vex regression",
+    "within_mode_spread": {
+      "false": 0.17361488291084107,
+      "true": 0.29883426802018015
+    },
+    "timing_anomalies": [
+      {
+        "cell": "on-1",
+        "phase": "timed",
+        "duration_ms": 60002,
+        "max_latency_ms": 603979.775,
+        "bucket_14_max_latency_ms": 4294967.077,
+        "accumulated_latency_ms": 557421399
+      },
+      {
+        "cell": "on-2",
+        "phase": "warmup",
+        "duration_ms": 10001,
+        "max_latency_ms": 603979.775
+      }
+    ],
+    "source_of_timing_anomaly": "not diagnosed"
+  },
+  "independent_review": "Astra raw-artifact audit supports stopping; invalid latency and drift block promotion. Other configuration, correctness, CPU/RSS and resource checks pass.",
+  "cleanup": {
+    "containers": [],
+    "network": [],
+    "verified_at_utc": "2026-09-22T09:33:59.402053+00:00",
+    "task_resources_removed": true,
+    "unrelated_containers_untouched": true
+  },
+  "raw_artifacts": "bench/loadtest/runs/2026-09-22-sq-head-confirmation",
+  "latency_consistency_audit": {
+    "guard_sha256": "702a47d099fdd08cf080bc24d072bc9db24c58e9b389600550fcce09bd9f1325",
+    "checks": [
+      {
+        "path": "bench/loadtest/runs/2026-09-22-local-docker/baseline-1.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-local-docker/baseline-2.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-local-docker/profile-load.json",
+        "passed": false,
+        "reason": "latency validation: Totals.Max Latency 603979.775ms exceeds runtime bound 21000.0ms"
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-local-docker/warmup.json",
+        "passed": false,
+        "reason": "latency validation: Totals.Max Latency 603979.775ms exceeds runtime bound 11001.0ms"
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/1-off/1-off.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/1-off/warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/2-on/2-on.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/2-on/warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/3-on/3-on.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/3-on/warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/4-off/4-off.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-cache/4-off/warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/off-1/off-1-warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/off-1/off-1.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/off-2/off-2-warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/off-2/off-2.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/on-1/on-1-warmup.json",
+        "passed": true
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/on-1/on-1.json",
+        "passed": false,
+        "reason": "latency validation: Totals.Max Latency 603979.775ms exceeds runtime bound 61002.0ms"
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/on-2/on-2-warmup.json",
+        "passed": false,
+        "reason": "latency validation: Totals.Max Latency 603979.775ms exceeds runtime bound 11001.0ms"
+      },
+      {
+        "path": "bench/loadtest/runs/2026-09-22-sq-head-confirmation/set-32-p1/on-2/on-2.json",
+        "passed": true
+      }
+    ]
+  }
+}

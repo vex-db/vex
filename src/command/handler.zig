@@ -46,6 +46,7 @@ pub const CommandHandler = struct {
     hash_store: ?*HashStore,
     set_store: ?*SetStore,
     sorted_set_store: ?*SortedSetStore,
+    sorted_sets_locked: bool = false,
     data_dir: ?[]const u8,
     /// RESP protocol version for this connection (2 or 3)
     protocol_version: resp.ProtocolVersion = .resp2,
@@ -105,18 +106,18 @@ pub const CommandHandler = struct {
     }
 
     fn kvSet(self: *CommandHandler, key: []const u8, value: []const u8) !void {
-        if (self.ckv) |ckv| return ckv.setInternal(key, value, 0);
-        return self.kv.set(key, value);
+        if (self.ckv) |ckv| { try ckv.setInternal(key, value, 0); } else { try self.kv.set(key, value); }
+        self.deleteCollections(key);
     }
 
     fn kvSetEx(self: *CommandHandler, key: []const u8, value: []const u8, ttl_seconds: i64) !void {
-        if (self.ckv) |ckv| return ckv.setEx(key, value, ttl_seconds);
-        return self.kv.setEx(key, value, ttl_seconds);
+        if (self.ckv) |ckv| { try ckv.setEx(key, value, ttl_seconds); } else { try self.kv.setEx(key, value, ttl_seconds); }
+        self.deleteCollections(key);
     }
 
     fn kvSetPx(self: *CommandHandler, key: []const u8, value: []const u8, ttl_millis: i64) !void {
-        if (self.ckv) |ckv| return ckv.setPx(key, value, ttl_millis);
-        return self.kv.setPx(key, value, ttl_millis);
+        if (self.ckv) |ckv| { try ckv.setPx(key, value, ttl_millis); } else { try self.kv.setPx(key, value, ttl_millis); }
+        self.deleteCollections(key);
     }
 
     fn kvDelete(self: *CommandHandler, key: []const u8) bool {
@@ -129,6 +130,203 @@ pub const CommandHandler = struct {
         return self.kv.exists(key);
     }
 
+    pub const KeyType = enum { none, string, hash, list, set, zset };
+
+    /// The caller owns the command partition lock through validation, mutation
+    /// and response serialization. All collection maps follow those partitions.
+    pub fn keyType(self: *CommandHandler, key: []const u8) KeyType {
+        return self.keyTypeFor(key, .string);
+    }
+
+    fn hasType(self: *CommandHandler, key: []const u8, kind: KeyType) bool {
+        return switch (kind) {
+            .string => self.kvExists(key),
+            .hash => if (self.hash_store) |store| store.hlen(key) != 0 else false,
+            .list => if (self.list_store) |store| store.llen(key) != 0 else false,
+            .set => if (self.set_store) |store| store.scard(key) != 0 else false,
+            .zset => if (self.sorted_set_store) |store| store.zcard(key) != 0 else false,
+            .none => false,
+        };
+    }
+
+    fn keyTypeFor(self: *CommandHandler, key: []const u8, preferred: KeyType) KeyType {
+        if (self.sorted_set_store) |store| {
+            if (store.collectionExpiry(key)) |deadline| {
+                if (deadline <= std.Io.Timestamp.now(self.io, .real).toMilliseconds()) {
+                    self.deleteCollections(key);
+                    return .none;
+                }
+            }
+        }
+        // Logical keys have one type, and the command partition excludes
+        // retyping until the reply is serialized. A hit in the expected store
+        // therefore needs no probes of unrelated stores; misses check all types.
+        if (self.hasType(key, preferred)) return preferred;
+        inline for (.{ KeyType.string, KeyType.hash, KeyType.list, KeyType.set, KeyType.zset }) |kind| {
+            if (kind != preferred and self.hasType(key, kind)) return kind;
+        }
+        return .none;
+    }
+
+    fn deleteCollections(self: *CommandHandler, key: []const u8) void {
+        if (self.hash_store) |store| { _ = store.delete(key); }
+        if (self.list_store) |store| { _ = store.delete(key); }
+        if (self.set_store) |store| { _ = store.delete(key); }
+        if (self.sorted_set_store) |store| {
+            _ = store.delete(key);
+            _ = store.clearCollectionExpiry(key);
+        }
+    }
+
+    fn deleteKey(self: *CommandHandler, key: []const u8) bool {
+        const existed = self.keyType(key) != .none;
+        _ = self.kvDelete(key);
+        self.deleteCollections(key);
+        return existed;
+    }
+
+    fn pruneEmpty(self: *CommandHandler, key: []const u8, kind: KeyType) void {
+        // The type contract has already excluded every other store. Only the
+        // store this command can mutate needs empty-key reclamation.
+        const empty = switch (kind) {
+            .hash => if (self.hash_store) |store| blk: {
+                if (store.hlen(key) != 0) break :blk false;
+                _ = store.delete(key);
+                break :blk true;
+            } else true,
+            .list => if (self.list_store) |store| blk: {
+                if (store.llen(key) != 0) break :blk false;
+                _ = store.delete(key);
+                break :blk true;
+            } else true,
+            .set => if (self.set_store) |store| blk: {
+                if (store.scard(key) != 0) break :blk false;
+                _ = store.delete(key);
+                break :blk true;
+            } else true,
+            .zset => if (self.sorted_set_store) |store| blk: {
+                if (store.zcard(key) != 0) break :blk false;
+                _ = store.delete(key);
+                break :blk true;
+            } else true,
+            .none, .string => return,
+        };
+        if (empty) {
+            if (self.sorted_set_store) |store| _ = store.clearCollectionExpiry(key);
+        }
+    }
+
+    fn commandType(cmd: []const u8) ?KeyType {
+        const groups = .{
+            .{ KeyType.string, "GET", "GETSET", "GETDEL", "GETEX", "INCR", "DECR", "INCRBY", "DECRBY", "INCRTTL", "APPEND", "STRLEN", "GETRANGE", "SETRANGE" },
+            .{ KeyType.hash, "HSET", "HGET", "HDEL", "HEXISTS", "HLEN", "HGETALL", "HKEYS", "HVALS", "HMGET", "HMSET", "HINCRBY" },
+            .{ KeyType.list, "LPUSH", "RPUSH", "LPOP", "LPOPN", "RPOP", "LLEN", "LRANGE", "LINDEX", "LSET", "LTRIM", "LREM" },
+            .{ KeyType.set, "SADD", "SREM", "SCARD", "SISMEMBER", "SMEMBERS", "SUNION", "SINTER", "SDIFF" },
+        };
+        inline for (groups) |group| {
+            inline for (group, 0..) |name, index| { if (comptime index > 0) { if (std.mem.eql(u8, cmd, name)) return group[0]; } }
+        }
+        if (SortedSetStore.isCommand(cmd)) return .zset;
+        return null;
+    }
+
+    /// Only single-key collection commands may bypass global coordination.
+    /// Transactions and set algebra keep all partitions locked. List/set map
+    /// partitions must match the SortedSetStore command lock coordinator.
+    pub fn isSingleKeyCollectionCommand(cmd: []const u8) bool {
+        if (cmd.len == 0) return false;
+        // Preserve the existing short sorted-set dispatch path.
+        if (cmd[0] == 'Z' or cmd[0] == 'z') return SortedSetStore.isCommand(cmd);
+        var buffer: [64]u8 = undefined;
+        const upper = toUpper(cmd, &buffer);
+        const kind = commandType(upper) orelse return false;
+        if (kind == .string) return false;
+        return !std.mem.eql(u8, upper, "SUNION") and
+            !std.mem.eql(u8, upper, "SINTER") and
+            !std.mem.eql(u8, upper, "SDIFF");
+    }
+
+    fn keyPttl(self: *CommandHandler, key: []const u8) i64 {
+        const kind = self.keyType(key);
+        if (kind == .none) return -2;
+        if (kind == .string) {
+            if (self.ckv) |ckv| return ckv.pttl(key) orelse -2;
+            const entry = self.kv.map.getPtr(key) orelse return -2;
+            if (!entry.flags.has_ttl) return -1;
+            return @max(0, entry.expires_at - std.Io.Timestamp.now(self.io, .real).toMilliseconds());
+        }
+        if (self.sorted_set_store) |store| {
+            if (store.collectionExpiry(key)) |deadline|
+                return @max(0, deadline - std.Io.Timestamp.now(self.io, .real).toMilliseconds());
+        }
+        return -1;
+    }
+
+    fn setKeyExpiry(self: *CommandHandler, key: []const u8, millis: i64) !bool {
+        const kind = self.keyType(key);
+        if (kind == .none) return false;
+        if (millis <= 0) return self.deleteKey(key);
+        const deadline = try std.math.add(i64, std.Io.Timestamp.now(self.io, .real).toMilliseconds(), millis);
+        if (kind == .string) {
+            const value = self.kvGet(key) orelse return false;
+            const copy = try self.allocator.dupe(u8, value);
+            defer self.allocator.free(copy);
+            try self.kvSetPx(key, copy, millis);
+        } else {
+            const store = self.sorted_set_store orelse return error.NoExpiryStore;
+            try store.setCollectionExpiry(key, deadline);
+        }
+        return true;
+    }
+
+    fn appendRawKey(self: *CommandHandler, keys: *std.StringHashMap(void), key: []const u8) !void {
+        if (keys.contains(key)) return;
+        const owned = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned);
+        try keys.put(owned, {});
+    }
+
+    fn collectKeys(self: *CommandHandler, all_dbs: bool) !std.StringHashMap(void) {
+        var keys = std.StringHashMap(void).init(self.allocator);
+        errdefer self.freeKeys(&keys);
+        if (self.ckv) |ckv| {
+            const owned = try ckv.keysOwned(self.allocator);
+            defer { for (owned) |key| self.allocator.free(key); self.allocator.free(owned); }
+            for (owned) |key| try self.appendRawKey(&keys, key);
+        } else {
+            var it = self.kv.map.keyIterator();
+            while (it.next()) |key| try self.appendRawKey(&keys, key.*);
+        }
+        if (self.hash_store) |store| {
+            for (&store.stripes) |*stripe| {
+                _ = std.c.pthread_rwlock_rdlock(&stripe.rwlock);
+                defer _ = std.c.pthread_rwlock_unlock(&stripe.rwlock);
+                var it = stripe.map.keyIterator();
+                while (it.next()) |key| try self.appendRawKey(&keys, key.*);
+            }
+        }
+        if (self.list_store) |store| { for (store.partitions) |*part| { var it = part.map.keyIterator(); while (it.next()) |key| try self.appendRawKey(&keys, key.*); } }
+        if (self.set_store) |store| { for (store.partitions) |*part| { var it = part.map.keyIterator(); while (it.next()) |key| try self.appendRawKey(&keys, key.*); } }
+        if (self.sorted_set_store) |store| {
+            for (store.partitions) |*part| { var it = part.map.keyIterator(); while (it.next()) |key| try self.appendRawKey(&keys, key.*); }
+        }
+        var it = keys.keyIterator();
+        while (it.next()) |entry| {
+            const key = entry.*;
+            if ((!all_dbs and stripDbPrefix(self, key) == null) or self.keyType(key) == .none) {
+                _ = keys.remove(key);
+                self.allocator.free(key);
+            }
+        }
+        return keys;
+    }
+
+    fn freeKeys(self: *CommandHandler, keys: *std.StringHashMap(void)) void {
+        var it = keys.keyIterator();
+        while (it.next()) |key| self.allocator.free(key.*);
+        keys.deinit();
+    }
+
     /// Execute a command from a parsed RESP array and write the response.
     pub fn execute(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
         if (args.len == 0) {
@@ -138,6 +336,74 @@ pub const CommandHandler = struct {
 
         var cmd_buf: [64]u8 = undefined;
         const cmd = toUpper(args[0], &cmd_buf);
+
+        const key_command = self.ckv != null and args.len >= 2 and isSingleKeyCollectionCommand(cmd);
+        const all_sorted = !self.sorted_sets_locked and !key_command;
+        if (all_sorted) {
+            if (self.sorted_set_store) |store| store.lockAll();
+        }
+        defer if (all_sorted) {
+            if (self.sorted_set_store) |store| store.unlockAll();
+        };
+        var sorted_lock: ?usize = null;
+        if (!self.sorted_sets_locked and key_command) {
+            if (self.sorted_set_store) |store| {
+                if (self.list_store) |lists| std.debug.assert(lists.partitions.len == store.partitions.len);
+                if (self.set_store) |sets| std.debug.assert(sets.partitions.len == store.partitions.len);
+                var key_buf: [512]u8 = undefined;
+                var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
+                    try resp.serializeError(w, "internal error");
+                    return;
+                };
+                defer key_ref.deinit(self.allocator);
+                sorted_lock = store.lockKey(key_ref.key);
+            }
+        }
+        defer if (sorted_lock) |index| self.sorted_set_store.?.unlockKey(index);
+
+        var contract_buf: [512]u8 = undefined;
+        var contract_key: ?NamespacedKeyRef = null;
+        var cleanup_kind: KeyType = .none;
+        defer if (contract_key) |*key| key.deinit(self.allocator);
+        if (args.len >= 2) {
+            if (commandType(cmd)) |wanted| {
+                contract_key = namespacedKeyRef(self, args[1], &contract_buf) catch {
+                    try resp.serializeError(w, "out of memory"); return;
+                };
+                const actual = self.keyTypeFor(contract_key.?.key, wanted);
+                if (actual != .none and actual != wanted) {
+                    try resp.serializeErrorTyped(w, "WRONGTYPE", "Operation against a key holding the wrong kind of value"); return;
+                }
+                const mutates = if (wanted == .zset) SortedSetStore.isWrite(cmd) else
+                    wanted != .string and obs_cmd_table.isWriteCommand(cmd);
+                if (mutates) cleanup_kind = wanted;
+                if (std.mem.eql(u8, cmd, "SUNION") or std.mem.eql(u8, cmd, "SINTER") or std.mem.eql(u8, cmd, "SDIFF")) {
+                    for (args[2..]) |arg| {
+                        var buf: [512]u8 = undefined;
+                        var key = namespacedKeyRef(self, arg, &buf) catch { try resp.serializeError(w, "out of memory"); return; };
+                        defer key.deinit(self.allocator);
+                        const kind = self.keyType(key.key);
+                        if (kind != .none and kind != .set) {
+                            try resp.serializeErrorTyped(w, "WRONGTYPE", "Operation against a key holding the wrong kind of value"); return;
+                        }
+                    }
+                }
+            }
+        }
+        // Pop responses borrow storage, so reclaim only after serialization.
+        defer if (cleanup_kind != .none) {
+            if (contract_key) |key| self.pruneEmpty(key.key, cleanup_kind);
+        };
+        if (std.mem.eql(u8, cmd, "UNLINK")) return self.cmdDel(args, w);
+        if (std.mem.eql(u8, cmd, "LTRIM")) return self.cmdLtrim(args, w);
+        if (std.mem.eql(u8, cmd, "ZREVRANK")) return self.cmdZrevrank(args, w);
+        if (std.mem.eql(u8, cmd, "MEXISTS")) return self.cmdExists(args, w);
+        if (std.mem.eql(u8, cmd, "MSETNX") or std.mem.eql(u8, cmd, "MSETEX")) return self.cmdBatchSet(args, w, std.mem.eql(u8, cmd, "MSETNX"));
+        if (std.mem.eql(u8, cmd, "MGETDEL")) return self.cmdMgetdel(args, w);
+        if (std.mem.eql(u8, cmd, "LPOPN")) return self.cmdLpopn(args, w);
+        if (std.mem.eql(u8, cmd, "INCRTTL")) return self.cmdIncrttl(args, w);
+        if (std.mem.eql(u8, cmd, "SCANGET")) return self.cmdScanGet(args, w);
+
 
         // ── Fast dispatch: switch on (cmd.len, first_byte) ────────────
         // Most commands resolved in 1-2 comparisons instead of linear scan.
@@ -439,12 +705,12 @@ pub const CommandHandler = struct {
         }
 
         // NX: only set if key does NOT exist
-        if (nx and self.kvExists(key_ref.key)) {
+        if (nx and self.keyType(key_ref.key) != .none) {
             try resp.serializeNullValue(w, self.protocol_version);
             return;
         }
         // XX: only set if key DOES exist
-        if (xx and !self.kvExists(key_ref.key)) {
+        if (xx and self.keyType(key_ref.key) == .none) {
             try resp.serializeNullValue(w, self.protocol_version);
             return;
         }
@@ -493,7 +759,7 @@ pub const CommandHandler = struct {
         for (args[1..]) |key| {
             var key_buf: [512]u8 = undefined;
             var key_ref = namespacedKeyRef(self, key, &key_buf) catch continue;
-            if (self.kvDelete(key_ref.key)) count += 1;
+            if (self.deleteKey(key_ref.key)) count += 1;
             key_ref.deinit(self.allocator);
         }
         if (count > 0) self.logToAOF(args);
@@ -509,50 +775,23 @@ pub const CommandHandler = struct {
         for (args[1..]) |key| {
             var key_buf: [512]u8 = undefined;
             var key_ref = namespacedKeyRef(self, key, &key_buf) catch continue;
-            if (self.kvExists(key_ref.key)) count += 1;
+            if (self.keyType(key_ref.key) != .none) count += 1;
             key_ref.deinit(self.allocator);
         }
         try resp.serializeInteger(w, count);
     }
 
     fn cmdKeys(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        var keys = self.collectKeys(false) catch return resp.serializeError(w, "out of memory");
+        defer self.freeKeys(&keys);
+        if (self.keys_mode == .strict and keys.count() > KEYS_MAX_REPLY) return resp.serializeError(w, "KEYS disabled for large DB, use SCAN");
         const pattern = if (args.len > 1) args[1] else "*";
-        var db_key_count: usize = 0;
-        var counter = self.kv.map.iterator();
-        while (counter.next()) |entry| {
-            if (stripDbPrefix(self, entry.key_ptr.*) != null) db_key_count += 1;
-        }
-        if (self.keys_mode == .strict and db_key_count > KEYS_MAX_REPLY) {
-            try resp.serializeError(w, "ERR KEYS disabled for large DB, use SCAN");
-            return;
-        }
-        var matched = std.array_list.Managed([]const u8).init(self.allocator);
-        defer {
-            for (matched.items) |k| self.allocator.free(k);
-            matched.deinit();
-        }
-
-        var it = self.kv.map.iterator();
-        while (it.next()) |entry| {
-            const raw = entry.key_ptr.*;
-            const user_key = stripDbPrefix(self, raw) orelse continue;
-            if (globMatch(pattern, user_key)) {
-                const dup = self.allocator.dupe(u8, user_key) catch {
-                    try resp.serializeError(w, "internal error");
-                    return;
-                };
-                matched.append(dup) catch {
-                    self.allocator.free(dup);
-                    try resp.serializeError(w, "internal error");
-                    return;
-                };
-            }
-        }
-
-        try resp.serializeArrayHeader(w, matched.items.len);
-        for (matched.items) |key| {
-            try resp.serializeBulkString(w, key);
-        }
+        var count: usize = 0;
+        var it = keys.keyIterator();
+        while (it.next()) |key| { if (globMatch(pattern, stripDbPrefix(self, key.*).?)) count += 1; }
+        try resp.serializeArrayHeader(w, count);
+        it = keys.keyIterator();
+        while (it.next()) |key| { const user_key = stripDbPrefix(self, key.*).?; if (globMatch(pattern, user_key)) try resp.serializeBulkString(w, user_key); }
     }
 
     fn cmdScan(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -587,24 +826,19 @@ pub const CommandHandler = struct {
             for (all.items) |k| self.allocator.free(k);
             all.deinit();
         }
-        var it = self.kv.map.iterator();
-        while (it.next()) |entry| {
-            const user_key = stripDbPrefix(self, entry.key_ptr.*) orelse continue;
+        var keys = self.collectKeys(false) catch return resp.serializeError(w, "out of memory");
+        defer self.freeKeys(&keys);
+        var it = keys.keyIterator();
+        while (it.next()) |key| {
+            const user_key = stripDbPrefix(self, key.*).?;
             if (globMatch(pattern, user_key)) {
-                const dup = self.allocator.dupe(u8, user_key) catch {
-                    try resp.serializeError(w, "internal error");
-                    return;
-                };
-                all.append(dup) catch {
-                    self.allocator.free(dup);
-                    try resp.serializeError(w, "internal error");
-                    return;
-                };
+                const copy = self.allocator.dupe(u8, user_key) catch return resp.serializeError(w, "out of memory");
+                all.append(copy) catch { self.allocator.free(copy); return resp.serializeError(w, "out of memory"); };
             }
         }
 
         if (cursor > all.items.len) cursor = all.items.len;
-        const end = @min(all.items.len, cursor + count);
+        const end = cursor + @min(count, all.items.len - cursor);
         const next_cursor: usize = if (end >= all.items.len) 0 else end;
 
         try resp.serializeArrayHeader(w, 2);
@@ -619,39 +853,16 @@ pub const CommandHandler = struct {
     }
 
     fn cmdDbsize(self: *CommandHandler, w: *std.Io.Writer) !void {
-        var count: i64 = 0;
-        var it = self.kv.map.iterator();
-        while (it.next()) |entry| {
-            if (stripDbPrefix(self, entry.key_ptr.*) != null) count += 1;
-        }
-        try resp.serializeInteger(w, count);
+        var keys = self.collectKeys(false) catch return resp.serializeError(w, "out of memory");
+        defer self.freeKeys(&keys);
+        try resp.serializeInteger(w, @intCast(keys.count()));
     }
 
     fn cmdFlushdb(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        var to_delete = std.array_list.Managed([]const u8).init(self.allocator);
-        defer {
-            for (to_delete.items) |k| self.allocator.free(k);
-            to_delete.deinit();
-        }
-
-        var it = self.kv.map.iterator();
-        while (it.next()) |entry| {
-            const raw = entry.key_ptr.*;
-            if (stripDbPrefix(self, raw) != null) {
-                const dup = self.allocator.dupe(u8, raw) catch {
-                    try resp.serializeError(w, "internal error");
-                    return;
-                };
-                to_delete.append(dup) catch {
-                    self.allocator.free(dup);
-                    try resp.serializeError(w, "internal error");
-                    return;
-                };
-            }
-        }
-        for (to_delete.items) |k| {
-            _ = self.kvDelete(k);
-        }
+        var keys = self.collectKeys(false) catch return resp.serializeError(w, "out of memory");
+        defer self.freeKeys(&keys);
+        var key_it = keys.keyIterator();
+        while (key_it.next()) |key| { _ = self.deleteKey(key.*); }
         var graph_to_delete = std.array_list.Managed([]const u8).init(self.allocator);
         defer {
             for (graph_to_delete.items) |k| self.allocator.free(k);
@@ -679,9 +890,14 @@ pub const CommandHandler = struct {
     }
 
     fn cmdFlushall(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        self.kv.flushdb();
+        if (self.ckv) |ckv| ckv.flushdb() else self.kv.flushdb();
+        if (self.hash_store) |store| store.flush();
+        if (self.list_store) |store| store.flush();
+        if (self.set_store) |store| store.flush();
+        if (self.sorted_set_store) |store| store.flush();
         self.graph.deinit();
         self.graph.* = GraphEngine.init(self.allocator);
+        if (self.ckv) |ckv| ckv.trimAfterFlush();
         self.logToAOF(args);
         try resp.serializeSimpleString(w, "OK");
     }
@@ -767,22 +983,12 @@ pub const CommandHandler = struct {
     }
 
     fn cmdTtl(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 2) {
-            try resp.serializeError(w, "wrong number of arguments for 'TTL'");
-            return;
-        }
-        var key_buf: [512]u8 = undefined;
-        var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
-            try resp.serializeError(w, "internal error");
-            return;
-        };
-        defer key_ref.deinit(self.allocator);
-        const result = self.kv.ttl(key_ref.key);
-        if (result) |t| {
-            try resp.serializeInteger(w, t);
-        } else {
-            try resp.serializeInteger(w, -2); // key doesn't exist
-        }
+        if (args.len != 2) return resp.serializeError(w, "wrong number of arguments for TTL");
+        var buf: [512]u8 = undefined;
+        var key = namespacedKeyRef(self, args[1], &buf) catch return resp.serializeError(w, "out of memory");
+        defer key.deinit(self.allocator);
+        const ttl = self.keyPttl(key.key);
+        try resp.serializeInteger(w, if (ttl >= 0) @divTrunc(ttl + 500, 1000) else ttl);
     }
 
     /// MGET key [key ...] — get multiple keys
@@ -826,17 +1032,25 @@ pub const CommandHandler = struct {
 
     /// INCR key — increment integer value by 1
     fn cmdIncr(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len != 2) {
+            try resp.serializeError(w, "wrong number of arguments");
+            return;
+        }
         return self.incrByN(args, w, 1);
     }
 
     /// DECR key — decrement integer value by 1
     fn cmdDecr(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len != 2) {
+            try resp.serializeError(w, "wrong number of arguments");
+            return;
+        }
         return self.incrByN(args, w, -1);
     }
 
     /// INCRBY key increment
     fn cmdIncrBy(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 3) {
+        if (args.len != 3) {
             try resp.serializeError(w, "wrong number of arguments for 'INCRBY'");
             return;
         }
@@ -849,7 +1063,7 @@ pub const CommandHandler = struct {
 
     /// DECRBY key decrement
     fn cmdDecrBy(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 3) {
+        if (args.len != 3) {
             try resp.serializeError(w, "wrong number of arguments for 'DECRBY'");
             return;
         }
@@ -857,6 +1071,10 @@ pub const CommandHandler = struct {
             try resp.serializeError(w, "value is not an integer or out of range");
             return;
         };
+        if (delta == std.math.minInt(i64)) {
+            try resp.serializeError(w, "decrement would overflow");
+            return;
+        }
         return self.incrByN(args, w, -delta);
     }
 
@@ -872,6 +1090,20 @@ pub const CommandHandler = struct {
         };
         defer key_ref.deinit(self.allocator);
 
+        if (self.ckv) |ckv| {
+            const value = ckv.incrBy(key_ref.key, delta) catch |err| {
+                try resp.serializeError(w, switch (err) {
+                    error.NotAnInteger => "value is not an integer or out of range",
+                    error.Overflow => "increment or decrement would overflow",
+                    error.OutOfMemory => "internal error",
+                });
+                return;
+            };
+            self.logToAOF(args);
+            try resp.serializeInteger(w, value);
+            return;
+        }
+
         // Get current value (default 0)
         var current: i64 = 0;
         if (self.kvGet(key_ref.key)) |val| {
@@ -881,13 +1113,20 @@ pub const CommandHandler = struct {
             };
         }
 
-        const new_val = current + delta;
+        const new_val = std.math.add(i64, current, delta) catch {
+            try resp.serializeError(w, "increment or decrement would overflow");
+            return;
+        };
         var val_buf: [32]u8 = undefined;
         const val_str = std.fmt.bufPrint(&val_buf, "{d}", .{new_val}) catch {
             try resp.serializeError(w, "internal error");
             return;
         };
-        self.kvSet(key_ref.key, val_str) catch {
+        const expires_at: ?i64 = if (self.kv.map.getPtr(key_ref.key)) |entry|
+            (if (entry.flags.has_ttl and !entry.flags.deleted) entry.expires_at else null)
+        else
+            null;
+        self.kv.restoreEntry(key_ref.key, val_str, expires_at) catch {
             try resp.serializeError(w, "internal error");
             return;
         };
@@ -897,58 +1136,32 @@ pub const CommandHandler = struct {
 
     /// EXPIRE key seconds — set TTL on existing key
     fn cmdExpire(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 3) {
-            try resp.serializeError(w, "wrong number of arguments for 'EXPIRE'");
-            return;
-        }
-        const ttl_seconds = std.fmt.parseInt(i64, args[2], 10) catch {
-            try resp.serializeError(w, "value is not an integer or out of range");
-            return;
-        };
-        var key_buf: [512]u8 = undefined;
-        var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
-            try resp.serializeError(w, "internal error");
-            return;
-        };
-        defer key_ref.deinit(self.allocator);
-
-        // Get current value, re-set with TTL
-        if (self.kvGet(key_ref.key)) |val| {
-            self.kvSetEx(key_ref.key, val, ttl_seconds) catch {
-                try resp.serializeInteger(w, 0);
-                return;
-            };
-            self.logToAOF(args);
-            try resp.serializeInteger(w, 1);
-        } else {
-            try resp.serializeInteger(w, 0); // key doesn't exist
-        }
+        if (args.len != 3) return resp.serializeError(w, "wrong number of arguments for EXPIRE");
+        const ttl = std.fmt.parseInt(i64, args[2], 10) catch return resp.serializeError(w, "value is not an integer or out of range");
+        const millis = std.math.mul(i64, ttl, 1000) catch return resp.serializeError(w, "invalid expire time");
+        var buf: [512]u8 = undefined;
+        var key = namespacedKeyRef(self, args[1], &buf) catch return resp.serializeError(w, "out of memory");
+        defer key.deinit(self.allocator);
+        const changed = self.setKeyExpiry(key.key, millis) catch return resp.serializeError(w, "invalid expiry or out of memory");
+        if (changed) self.logToAOF(args);
+        try resp.serializeInteger(w, if (changed) 1 else 0);
     }
 
     /// PERSIST key — remove TTL from key
     fn cmdPersist(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 2) {
-            try resp.serializeError(w, "wrong number of arguments for 'PERSIST'");
-            return;
-        }
-        var key_buf: [512]u8 = undefined;
-        var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
-            try resp.serializeError(w, "internal error");
-            return;
-        };
-        defer key_ref.deinit(self.allocator);
-
-        // Get current value, re-set without TTL
-        if (self.kvGet(key_ref.key)) |val| {
-            self.kvSet(key_ref.key, val) catch {
-                try resp.serializeInteger(w, 0);
-                return;
-            };
-            self.logToAOF(args);
-            try resp.serializeInteger(w, 1);
-        } else {
-            try resp.serializeInteger(w, 0);
-        }
+        if (args.len != 2) return resp.serializeError(w, "wrong number of arguments for PERSIST");
+        var buf: [512]u8 = undefined;
+        var key = namespacedKeyRef(self, args[1], &buf) catch return resp.serializeError(w, "out of memory");
+        defer key.deinit(self.allocator);
+        if (self.keyPttl(key.key) < 0) return resp.serializeInteger(w, 0);
+        if (self.keyType(key.key) == .string) {
+            const value = self.kvGet(key.key) orelse return resp.serializeInteger(w, 0);
+            const copy = self.allocator.dupe(u8, value) catch return resp.serializeError(w, "out of memory");
+            defer self.allocator.free(copy);
+            self.kvSet(key.key, copy) catch return resp.serializeError(w, "out of memory");
+        } else if (self.sorted_set_store) |store| { _ = store.clearCollectionExpiry(key.key); }
+        self.logToAOF(args);
+        try resp.serializeInteger(w, 1);
     }
 
     /// APPEND key value — append to existing value
@@ -1007,21 +1220,11 @@ pub const CommandHandler = struct {
 
     /// TYPE key — returns "string" for all KV entries (only type we have), "none" if missing
     fn cmdType(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 2) {
-            try resp.serializeError(w, "wrong number of arguments for 'TYPE'");
-            return;
-        }
-        var key_buf: [512]u8 = undefined;
-        var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
-            try resp.serializeSimpleString(w, "none");
-            return;
-        };
-        defer key_ref.deinit(self.allocator);
-        if (self.kvExists(key_ref.key)) {
-            try resp.serializeSimpleString(w, "string");
-        } else {
-            try resp.serializeSimpleString(w, "none");
-        }
+        if (args.len != 2) return resp.serializeError(w, "wrong number of arguments for TYPE");
+        var buf: [512]u8 = undefined;
+        var key = namespacedKeyRef(self, args[1], &buf) catch return resp.serializeError(w, "out of memory");
+        defer key.deinit(self.allocator);
+        try resp.serializeSimpleString(w, @tagName(self.keyType(key.key)));
     }
 
     /// STRLEN key — length of the string value
@@ -1055,7 +1258,7 @@ pub const CommandHandler = struct {
             return;
         };
         defer key_ref.deinit(self.allocator);
-        if (self.kvExists(key_ref.key)) {
+        if (self.keyType(key_ref.key) != .none) {
             try resp.serializeInteger(w, 0);
         } else {
             self.kvSet(key_ref.key, args[2]) catch {
@@ -1204,59 +1407,25 @@ pub const CommandHandler = struct {
 
     /// PTTL key — remaining TTL in milliseconds
     fn cmdPttl(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 2) {
-            try resp.serializeError(w, "wrong number of arguments for 'PTTL'");
-            return;
-        }
-        var key_buf: [512]u8 = undefined;
-        var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
-            try resp.serializeInteger(w, -2);
-            return;
-        };
-        defer key_ref.deinit(self.allocator);
-        if (!self.kvExists(key_ref.key)) {
-            try resp.serializeInteger(w, -2);
-            return;
-        }
-        const entry = self.kv.map.getPtr(key_ref.key) orelse {
-            try resp.serializeInteger(w, -2);
-            return;
-        };
-        if (!entry.flags.has_ttl) {
-            try resp.serializeInteger(w, -1);
-            return;
-        }
-        const now = std.Io.Timestamp.now(self.io, .real).toMilliseconds();
-        const remaining = entry.expires_at - now;
-        try resp.serializeInteger(w, if (remaining > 0) remaining else 0);
+        if (args.len != 2) return resp.serializeError(w, "wrong number of arguments for TTL");
+        var buf: [512]u8 = undefined;
+        var key = namespacedKeyRef(self, args[1], &buf) catch return resp.serializeError(w, "out of memory");
+        defer key.deinit(self.allocator);
+        const ttl = self.keyPttl(key.key);
+        try resp.serializeInteger(w, ttl);
     }
 
     /// PEXPIRE key milliseconds — set TTL in milliseconds
     fn cmdPExpire(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
-        if (args.len < 3) {
-            try resp.serializeError(w, "wrong number of arguments for 'PEXPIRE'");
-            return;
-        }
-        const ttl_ms = std.fmt.parseInt(i64, args[2], 10) catch {
-            try resp.serializeError(w, "value is not an integer or out of range");
-            return;
-        };
-        var key_buf: [512]u8 = undefined;
-        var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch {
-            try resp.serializeInteger(w, 0);
-            return;
-        };
-        defer key_ref.deinit(self.allocator);
-        if (self.kvGet(key_ref.key)) |val| {
-            self.kvSetPx(key_ref.key, val, ttl_ms) catch {
-                try resp.serializeInteger(w, 0);
-                return;
-            };
-            self.logToAOF(args);
-            try resp.serializeInteger(w, 1);
-        } else {
-            try resp.serializeInteger(w, 0);
-        }
+        if (args.len != 3) return resp.serializeError(w, "wrong number of arguments for EXPIRE");
+        const ttl = std.fmt.parseInt(i64, args[2], 10) catch return resp.serializeError(w, "value is not an integer or out of range");
+        const millis = std.math.mul(i64, ttl, 1) catch return resp.serializeError(w, "invalid expire time");
+        var buf: [512]u8 = undefined;
+        var key = namespacedKeyRef(self, args[1], &buf) catch return resp.serializeError(w, "out of memory");
+        defer key.deinit(self.allocator);
+        const changed = self.setKeyExpiry(key.key, millis) catch return resp.serializeError(w, "invalid expiry or out of memory");
+        if (changed) self.logToAOF(args);
+        try resp.serializeInteger(w, if (changed) 1 else 0);
     }
 
     /// RENAME key newkey
@@ -1445,6 +1614,134 @@ pub const CommandHandler = struct {
         const removed = self.getListStore().lrem(key_ref.key, count, args[3]);
         if (removed > 0) self.logToAOF(args);
         try resp.serializeInteger(w, @intCast(removed));
+    }
+
+    fn cmdLtrim(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len != 4) return resp.serializeError(w, "wrong number of arguments for LTRIM");
+        const first = std.fmt.parseInt(i64, args[2], 10) catch return resp.serializeError(w, "value is not an integer");
+        const last = std.fmt.parseInt(i64, args[3], 10) catch return resp.serializeError(w, "value is not an integer");
+        const key = namespacedKey(self, args[1]) catch return resp.serializeError(w, "out of memory");
+        defer self.allocator.free(key);
+        self.getListStore().ltrim(key, first, last) catch return resp.serializeError(w, "out of memory");
+        self.logToAOF(args);
+        try resp.serializeSimpleString(w, "OK");
+    }
+
+    fn cmdZrevrank(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len != 3) return resp.serializeError(w, "wrong number of arguments for ZREVRANK");
+        const key = namespacedKey(self, args[1]) catch return resp.serializeError(w, "out of memory");
+        defer self.allocator.free(key);
+        const store = self.getSortedSetStore();
+        const rank = store.zrank(key, args[2]) orelse return resp.serializeNullValue(w, self.protocol_version);
+        try resp.serializeInteger(w, @intCast(store.zcard(key) - 1 - rank));
+    }
+
+    // Former reactor-only extensions use the same keyspace and lock contract.
+    fn cmdBatchSet(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer, nx: bool) !void {
+        const stride: usize = if (nx) 2 else 3;
+        if (args.len <= stride or (args.len - 1) % stride != 0) return resp.serializeError(w, "wrong number of arguments");
+        var i: usize = 1;
+        while (i < args.len) : (i += stride) {
+            const key = namespacedKey(self, args[i]) catch return resp.serializeError(w, "out of memory");
+            defer self.allocator.free(key);
+            if (nx and self.keyType(key) != .none) return resp.serializeInteger(w, 0);
+            if (!nx) {
+                const ttl = std.fmt.parseInt(i64, args[i + 2], 10) catch return resp.serializeError(w, "invalid expire time");
+                if (ttl <= 0 or ttl > @divTrunc(std.math.maxInt(i64), 1000)) return resp.serializeError(w, "invalid expire time");
+            }
+        }
+        i = 1;
+        while (i < args.len) : (i += stride) {
+            const key = namespacedKey(self, args[i]) catch return resp.serializeError(w, "out of memory");
+            defer self.allocator.free(key);
+            if (nx) self.kvSet(key, args[i + 1]) catch return resp.serializeError(w, "out of memory")
+            else self.kvSetEx(key, args[i + 1], std.fmt.parseInt(i64, args[i + 2], 10) catch unreachable) catch return resp.serializeError(w, "out of memory");
+        }
+        self.logToAOF(args);
+        if (nx) try resp.serializeInteger(w, 1) else try resp.serializeSimpleString(w, "OK");
+    }
+
+    fn cmdMgetdel(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2) return resp.serializeError(w, "wrong number of arguments");
+        try resp.serializeArrayHeader(w, args.len - 1);
+        for (args[1..]) |arg| {
+            const key = namespacedKey(self, arg) catch return error.WriteFailed;
+            defer self.allocator.free(key);
+            const value = self.kvGet(key);
+            try resp.serializeBulkStringProto(w, value, self.protocol_version);
+            if (value != null) _ = self.deleteKey(key);
+        }
+        self.logToAOF(args);
+    }
+
+    fn cmdLpopn(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len != 3) return resp.serializeError(w, "wrong number of arguments");
+        const count = std.fmt.parseInt(usize, args[2], 10) catch return resp.serializeError(w, "invalid count");
+        const key = namespacedKey(self, args[1]) catch return resp.serializeError(w, "out of memory");
+        defer self.allocator.free(key);
+        const store = self.getListStore();
+        const n = @min(count, store.llen(key));
+        try resp.serializeArrayHeader(w, n);
+        for (0..n) |_| try resp.serializeBulkString(w, store.lpop(key).?);
+        if (n != 0) self.logToAOF(args);
+    }
+
+    fn cmdIncrttl(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len < 2 or args.len > 5) return resp.serializeError(w, "wrong number of arguments");
+        var delta: i64 = 1;
+        var i: usize = 2;
+        if (args.len > 2 and !std.ascii.eqlIgnoreCase(args[2], "EX")) {
+            delta = std.fmt.parseInt(i64, args[2], 10) catch return resp.serializeError(w, "invalid integer");
+            i += 1;
+        }
+        var ttl: ?i64 = null;
+        if (i < args.len) {
+            if (args.len != i + 2 or !std.ascii.eqlIgnoreCase(args[i], "EX")) return resp.serializeError(w, "syntax error");
+            const seconds = std.fmt.parseInt(i64, args[i + 1], 10) catch return resp.serializeError(w, "invalid expiry");
+            if (seconds <= 0) return resp.serializeError(w, "invalid expiry");
+            ttl = std.math.mul(i64, seconds, 1000) catch return resp.serializeError(w, "invalid expiry");
+        }
+        // Stage the integer reply so a rejected increment never changes expiry.
+        var list: std.ArrayList(u8) = .empty;
+        var out = std.Io.Writer.Allocating.fromArrayList(self.allocator, &list);
+        defer out.deinit();
+        try self.incrByN(args, &out.writer, delta);
+        if (out.written().len > 0 and out.written()[0] == ':' and ttl != null) {
+            const key = namespacedKey(self, args[1]) catch return resp.serializeError(w, "out of memory");
+            defer self.allocator.free(key);
+            _ = self.setKeyExpiry(key, ttl.?) catch return resp.serializeError(w, "invalid expiry");
+        }
+        try w.writeAll(out.written());
+    }
+
+    fn cmdScanGet(self: *CommandHandler, args: []const []const u8, w: *std.Io.Writer) !void {
+        if (args.len != 3 and args.len != 5) return resp.serializeError(w, "wrong number of arguments");
+        const cursor = std.fmt.parseInt(usize, args[1], 10) catch return resp.serializeError(w, "invalid cursor");
+        var count: usize = 10;
+        if (args.len == 5) {
+            if (!std.ascii.eqlIgnoreCase(args[3], "COUNT")) return resp.serializeError(w, "syntax error");
+            count = std.fmt.parseInt(usize, args[4], 10) catch return resp.serializeError(w, "invalid count");
+            if (count == 0) return resp.serializeError(w, "invalid count");
+        }
+        var keys = self.collectKeys(false) catch return resp.serializeError(w, "out of memory");
+        defer self.freeKeys(&keys);
+        var matches = std.array_list.Managed([]const u8).init(self.allocator);
+        defer matches.deinit();
+        var it = keys.keyIterator();
+        while (it.next()) |key| {
+            if (self.keyType(key.*) == .string and globMatch(args[2], stripDbPrefix(self, key.*).?))
+                matches.append(key.*) catch return resp.serializeError(w, "out of memory");
+        }
+        const start = @min(cursor, matches.items.len);
+        const end = start + @min(count, matches.items.len - start);
+        var buf: [32]u8 = undefined;
+        try resp.serializeArrayHeader(w, 2);
+        try resp.serializeBulkString(w, std.fmt.bufPrint(&buf, "{d}", .{if (end == matches.items.len) @as(usize, 0) else end}) catch unreachable);
+        try resp.serializeArrayHeader(w, (end - start) * 2);
+        for (matches.items[start..end]) |key| {
+            try resp.serializeBulkString(w, stripDbPrefix(self, key).?);
+            try resp.serializeBulkStringProto(w, self.kvGet(key), self.protocol_version);
+        }
     }
 
     // ── Hash Commands ────────────────────────────────────────────────
@@ -1660,7 +1957,10 @@ pub const CommandHandler = struct {
         var key_buf: [512]u8 = undefined;
         var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch { try resp.serializeError(w, "internal error"); return; };
         defer key_ref.deinit(self.allocator);
-        const added = self.getSortedSetStore().zadd(key_ref.key, args[2..]) catch { try resp.serializeError(w, "internal error"); return; };
+        const added = self.getSortedSetStore().zadd(key_ref.key, args[2..]) catch |err| {
+            try resp.serializeError(w, if (err == error.InvalidScore) "value is not a valid float" else "internal error");
+            return;
+        };
         self.logToAOF(args);
         try resp.serializeInteger(w, @intCast(added));
     }
@@ -1746,7 +2046,10 @@ pub const CommandHandler = struct {
         var key_ref = namespacedKeyRef(self, args[1], &key_buf) catch { try resp.serializeError(w, "internal error"); return; };
         defer key_ref.deinit(self.allocator);
         const delta = std.fmt.parseFloat(f64, args[2]) catch { try resp.serializeError(w, "value is not a valid float"); return; };
-        const new_score = self.getSortedSetStore().zincrby(key_ref.key, delta, args[3]) catch { try resp.serializeError(w, "internal error"); return; };
+        const new_score = self.getSortedSetStore().zincrby(key_ref.key, delta, args[3]) catch |err| {
+            try resp.serializeError(w, if (err == error.InvalidScore) "resulting score is not a number (NaN)" else "internal error");
+            return;
+        };
         self.logToAOF(args);
         var buf: [32]u8 = undefined;
         const s = std.fmt.bufPrint(&buf, "{d:.6}", .{new_score}) catch "0";

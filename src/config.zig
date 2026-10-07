@@ -90,5 +90,9 @@ pub const ConfigFile = struct {
     }
 };
 
-// ── Tests ───────────────────────────────────────────────────────────
-
+/// Startup tuning uses powers of two so partition selection is a bit mask.
+pub fn parseSortedSetPartitions(value: []const u8) !usize {
+    const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidPartitionCount;
+    try @import("engine/types/sorted_set.zig").SortedSetStore.validatePartitionCount(count);
+    return count;
+}

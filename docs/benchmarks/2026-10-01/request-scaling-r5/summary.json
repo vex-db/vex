@@ -1,0 +1,108 @@
+{
+  "completed": 5,
+  "expected": 15,
+  "protocol": {
+    "binary_sha256": "943ae2d799b346b5ee8a9d5832b1e8c238aac9c389b15da2b196ec35cc6b9124",
+    "candidate": "current request-path optimized Vex; no older engine measured",
+    "cpus": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "workloads": [
+      "get",
+      "hash",
+      "zset"
+    ],
+    "connections": [
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
+    "server": "c6gn.8xlarge",
+    "client": "c7g.16xlarge",
+    "client_cpu_quota": 48,
+    "zone": "ap-south-1b",
+    "server_memory": "8Gi",
+    "workers": "equal CPU quota; unpinned; adaptive disabled; 256 partitions",
+    "arrival_model": "uncapped closed loop; pipeline 1; service latency",
+    "search_seconds": 15,
+    "confirmation": "3 x 60 seconds at fastest passing setting; fall back if needed",
+    "p99_budget_ms": 5,
+    "get": "1 million 256-byte values, uniform reads",
+    "hash": "4096 hashes x 16 fields x 256B; 80% HSET / 20% HGET",
+    "zset": "64 sets x 4096 members; 80% ZINCRBY / 20% ZRANK",
+    "client_gate": "max thread <0.9 CPU; aggregate <38.4 CPU; throttling <1% duration",
+    "network_gate": "zero ENA allowance-exceeded deltas",
+    "ttl": false,
+    "persistence": false,
+    "max_runtime_seconds": 18000
+  },
+  "rows": [
+    {
+      "cpu": 1,
+      "workload": "get",
+      "valid": true,
+      "ops_per_sec": 136023.45,
+      "p99_ms": 0.295,
+      "cpu_us_per_op": 7.345645497214086,
+      "connections": 32,
+      "ops_min": 134926.64,
+      "ops_max": 137379.45,
+      "server_cpu_cores": 0.9991800430080255
+    },
+    {
+      "cpu": 1,
+      "workload": "hash",
+      "valid": true,
+      "ops_per_sec": 122304.85,
+      "p99_ms": 0.623,
+      "cpu_us_per_op": 8.165369137064912,
+      "connections": 64,
+      "ops_min": 122242.72,
+      "ops_max": 123105.24,
+      "server_cpu_cores": 0.9986642475033536
+    },
+    {
+      "cpu": 1,
+      "workload": "zset",
+      "valid": true,
+      "ops_per_sec": 115649.39,
+      "p99_ms": 0.359,
+      "cpu_us_per_op": 8.642269211230765,
+      "connections": 32,
+      "ops_min": 114495.67,
+      "ops_max": 116034.94,
+      "server_cpu_cores": 0.9994731624946191
+    },
+    {
+      "cpu": 2,
+      "workload": "get",
+      "valid": true,
+      "ops_per_sec": 262873.97,
+      "p99_ms": 0.303,
+      "cpu_us_per_op": 7.595806614821023,
+      "connections": 64,
+      "ops_min": 262404.81,
+      "ops_max": 263607.83,
+      "server_cpu_cores": 1.996739840190263
+    },
+    {
+      "cpu": 2,
+      "workload": "hash",
+      "valid": true,
+      "ops_per_sec": 230466.33,
+      "p99_ms": 0.199,
+      "cpu_us_per_op": 8.708225828076731,
+      "connections": 32,
+      "ops_min": 228493.79,
+      "ops_max": 232489.92,
+      "server_cpu_cores": 1.9971320389994778
+    }
+  ]
+}

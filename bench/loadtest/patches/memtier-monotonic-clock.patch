@@ -1,0 +1,337 @@
+--- a/client.cpp
++++ b/client.cpp
+@@ -19,6 +19,8 @@
+ #ifdef HAVE_CONFIG_H
+ #include "config.h"
+ #endif
++
++#include "monotonic_clock.h"
+ 
+ #ifdef HAVE_SYS_TYPES_H
+ #include <sys/types.h>
+@@ -311,7 +313,7 @@
+         if (m_config->clients_start > 0) {
+             // Staircase mode: use global deadline so all clients stop together
+             struct timeval now;
+-            gettimeofday(&now, NULL);
++            memtier_gettimeofday(&now);
+             unsigned int elapsed = now.tv_sec - m_config->benchmark_start_time.tv_sec;
+             if (elapsed >= m_config->test_time) return true;
+         } else {
+@@ -340,7 +342,7 @@
+         m_stats.set_start_time(&m_config->benchmark_start_time);
+     } else {
+         struct timeval now;
+-        gettimeofday(&now, NULL);
++        memtier_gettimeofday(&now);
+         m_stats.set_start_time(&now);
+     }
+ }
+@@ -1260,7 +1262,7 @@
+     // returns true, extending the run far beyond test_time.
+     if (m_config->test_time > 0) {
+         struct timeval now;
+-        gettimeofday(&now, NULL);
++        memtier_gettimeofday(&now);
+         unsigned int elapsed = now.tv_sec - m_config->benchmark_start_time.tv_sec;
+         if (elapsed >= m_config->test_time) {
+             if (m_staircase_timer != NULL) {
+--- a/memtier_benchmark.cpp
++++ b/memtier_benchmark.cpp
+@@ -30,6 +30,8 @@
+ #ifdef HAVE_CONFIG_H
+ #include "config.h"
+ #endif
++
++#include "monotonic_clock.h"
+ 
+ #include "version.h"
+ 
+@@ -182,7 +184,7 @@
+     // forcing main() to exit with code 2 even after subsequent runs succeed.
+     g_connection_stage_aborted.store(false, std::memory_order_release);
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+     g_conn_stage_run_start_sec.store(now.tv_sec, std::memory_order_release);
+     pthread_mutex_lock(&g_conn_stage_err_mutex);
+     g_conn_stage_last_err.clear();
+@@ -197,7 +199,7 @@
+     if (g_conn_stage_steady_state.load(std::memory_order_acquire)) return;
+ 
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+ 
+     // First failure in a streak: stamp the wall-clock start. Subsequent
+     // failures only update the last-error string. CAS on 0 keeps this
+@@ -229,7 +231,7 @@
+     if (g_conn_stage_steady_state.load(std::memory_order_acquire)) return false;
+ 
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+ 
+     long streak_start = g_conn_stage_streak_start_sec.load(std::memory_order_acquire);
+     long run_start = g_conn_stage_run_start_sec.load(std::memory_order_acquire);
+@@ -2980,7 +2982,7 @@
+     // Capture in the same order as the start snapshot (CPU then wall) so the
+     // wall window encloses the CPU window symmetrically.
+     int rc = getrusage(RUSAGE_THREAD, &end_ru);
+-    gettimeofday(&end_tv, NULL);
++    memtier_gettimeofday(&end_tv);
+     if (rc == 0) {
+         // ts_diff(a, b) returns b - a in microseconds; rusage CPU time is
+         // monotonic per native thread, so each delta is >= 0.
+@@ -3021,14 +3023,14 @@
+         second = 0;
+         peak_pct = 0.0;
+         warn_pct = warn_threshold_fraction * 100.0;
+-        gettimeofday(&prev_tv, NULL);
++        memtier_gettimeofday(&prev_tv);
+     }
+ 
+     void tick(const std::vector<cg_thread *> &threads, std::vector<per_second_cpu_stats> &history)
+     {
+         second++;
+         struct timeval cur_tv;
+-        gettimeofday(&cur_tv, NULL);
++        memtier_gettimeofday(&cur_tv);
+         double wall_usec = (double) ts_diff(prev_tv, cur_tv);
+         if (wall_usec < 1.0) wall_usec = 1.0; // guard against division by zero
+ 
+@@ -3082,7 +3084,7 @@
+     // across restarts.
+ #if defined(RUSAGE_THREAD)
+     if (getrusage(RUSAGE_THREAD, &thread->m_cpu_start_ru) == 0) {
+-        gettimeofday(&thread->m_wall_start_tv, NULL);
++        memtier_gettimeofday(&thread->m_wall_start_tv);
+         thread->m_cpu_started = true;
+         thread->m_cpu_valid = true;
+     }
+@@ -3503,7 +3505,7 @@
+     }
+ 
+     // Record benchmark start time (used for staircase global deadline)
+-    gettimeofday(&cfg->benchmark_start_time, NULL);
++    memtier_gettimeofday(&cfg->benchmark_start_time);
+ 
+     // Arm the connection-stage supervisor. Must happen *before* threads
+     // start so the first failure timestamp is meaningful (some servers
+@@ -3718,7 +3720,7 @@
+         unsigned int display_clients = cfg->clients;
+         if (cfg->clients_start > 0) {
+             struct timeval now;
+-            gettimeofday(&now, NULL);
++            memtier_gettimeofday(&now);
+             unsigned int elapsed_secs = now.tv_sec - cfg->benchmark_start_time.tv_sec;
+             unsigned int steps_done = elapsed_secs / cfg->step_duration;
+             display_clients = cfg->clients_start + steps_done * cfg->clients_step;
+@@ -3730,7 +3732,7 @@
+             progress = 100.0 * total_ops / ((double) cfg->requests * display_clients * cfg->threads);
+         else if (cfg->clients_start > 0) {
+             struct timeval now;
+-            gettimeofday(&now, NULL);
++            memtier_gettimeofday(&now);
+             double wall_elapsed = (now.tv_sec - cfg->benchmark_start_time.tv_sec) +
+                                   (now.tv_usec - cfg->benchmark_start_time.tv_usec) / 1000000.0;
+             progress = 100.0 * wall_elapsed / cfg->test_time;
+@@ -4273,6 +4275,8 @@
+ 
+ int main(int argc, char *argv[])
+ {
++    // Initialize and report the shared epoch offset before any worker starts.
++    (void) memtier_clock_epoch_offset_us();
+     // Enable libevent's pthreads bindings so event_base_loopbreak() /
+     // event_base_loopexit() called from the main thread reliably wake a
+     // worker thread that is blocked in epoll_wait() with no live events.
+--- a/run_stats.cpp
++++ b/run_stats.cpp
+@@ -20,6 +20,8 @@
+ #include "config.h"
+ #endif
+ 
++#include "monotonic_clock.h"
++
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -107,7 +109,7 @@
+ {
+     struct timeval b;
+ 
+-    gettimeofday(&b, NULL);
++    memtier_gettimeofday(&b);
+     unsigned long long aval = a.tv_sec * 1000000 + a.tv_usec;
+     unsigned long long bval = b.tv_sec * 1000000 + b.tv_usec;
+ 
+@@ -165,7 +167,7 @@
+ {
+     struct timeval tv;
+     if (!start_time) {
+-        gettimeofday(&tv, NULL);
++        memtier_gettimeofday(&tv);
+         start_time = &tv;
+     }
+ 
+@@ -177,7 +179,7 @@
+ {
+     struct timeval tv;
+     if (!end_time) {
+-        gettimeofday(&tv, NULL);
++        memtier_gettimeofday(&tv);
+         end_time = &tv;
+     }
+     m_end_time = *end_time;
+--- a/shard_connection.cpp
++++ b/shard_connection.cpp
+@@ -19,6 +19,8 @@
+ #ifdef HAVE_CONFIG_H
+ #include "config.h"
+ #endif
++
++#include "monotonic_clock.h"
+ 
+ #ifdef HAVE_SYS_TYPES_H
+ #include <sys/types.h>
+@@ -130,7 +132,7 @@
+     if (sent_time != NULL)
+         m_sent_time = *sent_time;
+     else {
+-        gettimeofday(&m_sent_time, NULL);
++        memtier_gettimeofday(&m_sent_time);
+     }
+     m_first_sent_time = m_sent_time;
+ }
+@@ -862,7 +864,7 @@
+     if (!req || !req->m_serialized || !m_bev) return;
+     struct evbuffer *out = bufferevent_get_output(m_bev);
+     evbuffer_add(out, req->m_serialized, req->m_serialized_len);
+-    gettimeofday(&req->m_sent_time, NULL);
++    memtier_gettimeofday(&req->m_sent_time);
+     req->m_retries++;
+     // Back in the pipeline: ownership returns to the normal flow.
+     req->m_claimed_by_retry = false;
+@@ -893,7 +895,7 @@
+         // Each replay counts toward max_retries.
+         if (m_config->max_retries >= 0 && (int) req->m_retries >= m_config->max_retries) {
+             struct timeval now;
+-            gettimeofday(&now, NULL);
++            memtier_gettimeofday(&now);
+             global_failed_keys_logger().log_failure(now, "REPLAY", req->m_key, req->m_key_len, "connection-dropped",
+                                                     req->m_retries);
+             delete req;
+@@ -902,7 +904,7 @@
+         if (!req->m_serialized || req->m_serialized_len == 0) {
+             // Can't replay — capture failed earlier. Drop with a log line.
+             struct timeval now;
+-            gettimeofday(&now, NULL);
++            memtier_gettimeofday(&now);
+             global_failed_keys_logger().log_failure(now, "REPLAY", req->m_key, req->m_key_len,
+                                                     "no-captured-bytes-for-replay", req->m_retries);
+             delete req;
+@@ -1027,7 +1029,7 @@
+     m_readonly_state = setup_none;
+ 
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+ 
+     // Under --read-preference=secondary, primary connections get paused via
+     // bufferevent_disable(EV_READ | EV_WRITE) by fill_pipeline once they have
+@@ -1057,7 +1059,7 @@
+     bool responses_handled = false;
+ 
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+ 
+     while ((ret = m_protocol->parse_response()) > 0) {
+         bool error = false;
+@@ -1191,7 +1193,7 @@
+                     // READONLY errors would silently idle the replica with
+                     // no signal in the connection-error counter.
+                     struct timeval err_now;
+-                    gettimeofday(&err_now, NULL);
++                    memtier_gettimeofday(&err_now);
+                     client *c = static_cast<client *>(m_conns_manager);
+                     c->get_stats()->update_connection_error(&err_now);
+                     disconnect();
+@@ -1322,7 +1324,7 @@
+ void shard_connection::fill_pipeline(void)
+ {
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+ 
+     // Re-enable I/O in case a prior idle period disabled the bufferevent
+     // (e.g. a --transaction non-pin connection that was held by hold_pipeline).
+@@ -1522,7 +1524,7 @@
+ {
+     // Update connection error statistics
+     struct timeval now;
+-    gettimeofday(&now, NULL);
++    memtier_gettimeofday(&now);
+     client *c = static_cast<client *>(m_conns_manager);
+     c->get_stats()->update_connection_error(&now);
+ 
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -43,7 +43,7 @@
+ 	$(LIBCRYPTO_CFLAGS) \
+ 	$(LIBSSL_CFLAGS)
+ memtier_benchmark_SOURCES = \
+-	memtier_benchmark.cpp memtier_benchmark.h \
++	memtier_benchmark.cpp memtier_benchmark.h monotonic_clock.h \
+ 	client.cpp client.h \
+ 	cluster_client.cpp cluster_client.h \
+ 	shard_connection.cpp shard_connection.h connections_manager.h \
+--- /dev/null
++++ b/monotonic_clock.h
+@@ -0,0 +1,46 @@
++// Local benchmark-client clock repair; application code only.
++#ifndef MEMTIER_MONOTONIC_CLOCK_H
++#define MEMTIER_MONOTONIC_CLOCK_H
++
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/time.h>
++#include <time.h>
++
++inline int64_t memtier_clock_us(clockid_t clock)
++{
++    struct timespec ts;
++    if (clock_gettime(clock, &ts) != 0) {
++        perror("memtier clock_gettime");
++        abort();
++    }
++    return (int64_t) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
++}
++
++// External inline linkage gives all translation units one C++11 static.
++// Freeze the offset once: later wall-clock adjustments cannot alter intervals.
++inline int64_t memtier_clock_epoch_offset_us()
++{
++    static const int64_t offset = []() {
++        const int64_t epoch = memtier_clock_us(CLOCK_REALTIME);
++        const int64_t monotonic = memtier_clock_us(CLOCK_MONOTONIC);
++        const int64_t value = epoch - monotonic;
++        fprintf(stderr, "MEMTIER_CLOCK {\"clock_source\":\"CLOCK_MONOTONIC\","
++                        "\"epoch_offset_us\":%lld,\"source_tag\":\"2.5.1\","
++                        "\"source_commit\":\"5f634d171b83efca9640c5a87606c47b34d3d330\"}\n",
++                (long long) value);
++        return value;
++    }();
++    return offset;
++}
++
++inline void memtier_gettimeofday(struct timeval *tv)
++{
++    const int64_t offset = memtier_clock_epoch_offset_us();
++    const int64_t epoch_us = offset + memtier_clock_us(CLOCK_MONOTONIC);
++    tv->tv_sec = (time_t) (epoch_us / 1000000);
++    tv->tv_usec = (suseconds_t) (epoch_us % 1000000);
++}
++
++#endif

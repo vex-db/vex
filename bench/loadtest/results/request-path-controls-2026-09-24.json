@@ -1,0 +1,119 @@
+{
+  "status": "stopped",
+  "reason": "same-binary variation 14.25% exceeds5%",
+  "cells": [
+    {
+      "cell": "control-1",
+      "server_identity": "PID=1 START=6846771 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 393915.12,
+      "p99_ms": 0.607,
+      "runtime_ms": 60000,
+      "operations": 23634942,
+      "server_cpu_seconds_per_op": 4.990614912446157e-06,
+      "client_cpu_seconds_per_op": 7.994288033370253e-06,
+      "server_rss_bytes": 480530432,
+      "server_headroom_fraction": 0.017059216666666654,
+      "client_headroom_fraction": 0.2127311083333333,
+      "client_max_thread_avg_pct": 10.100000000000001,
+      "server_throttle_fraction": 0.0008472333333333333,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 15,
+      "server_container_memory_bytes": 480981811.2,
+      "client_container_memory_bytes": 46546288.64,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790179393703030,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "ten_second_mean_ops": [
+        378980,
+        398343.2,
+        390992.8,
+        395518.2,
+        395001.7,
+        404645.5
+      ],
+      "combined_task_cpu_seconds_per_op": 1.298490294581641e-05,
+      "vm_counters_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "pgmajfault": 39
+      }
+    },
+    {
+      "cell": "control-2",
+      "server_identity": "PID=1 START=6854901 EXE=/usr/local/bin/vex",
+      "ops_per_sec": 454343.52,
+      "p99_ms": 0.447,
+      "runtime_ms": 60001,
+      "operations": 27260823,
+      "server_cpu_seconds_per_op": 4.340088631953628e-06,
+      "client_cpu_seconds_per_op": 6.979584475494375e-06,
+      "server_rss_bytes": 480628736,
+      "server_headroom_fraction": 0.01404676666666671,
+      "client_headroom_fraction": 0.20721159583333337,
+      "client_max_thread_avg_pct": 10.2,
+      "server_throttle_fraction": 0.00073545,
+      "client_throttle_fraction": 0.0,
+      "constrained": false,
+      "stats_samples": 15,
+      "server_container_memory_bytes": 480981811.2,
+      "client_container_memory_bytes": 40831549.44,
+      "clock_metadata": {
+        "clock_source": "CLOCK_MONOTONIC",
+        "epoch_offset_us": 1790179393712558,
+        "source_tag": "2.5.1",
+        "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330"
+      },
+      "ten_second_mean_ops": [
+        456112.5,
+        453838.6,
+        460899,
+        448303.3,
+        447509.2,
+        459406.9
+      ],
+      "combined_task_cpu_seconds_per_op": 1.1319673107448002e-05,
+      "vm_counters_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "pgmajfault": 0
+      }
+    }
+  ],
+  "protocol": {
+    "purpose": "two fresh same-binary controls before selecting a server change",
+    "server_image_id": "sha256:8b65b2d9aa2f12e0733a43b28580d12f261fb6eb541cc202092d85c7e738be9f",
+    "client_image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7",
+    "binary_sha256": "4f3df6e8916d9c127a6a9a7940701e1faa3e11182c5809310f7bd2c42fc047d6",
+    "workers": 2,
+    "server_cpu_set": "0-1",
+    "client_cpu_set": "2-5",
+    "profiler_cpu": "6",
+    "keys": 1000000,
+    "key_bytes": 16,
+    "value_bytes": 256,
+    "pipeline": 1,
+    "connections": 128,
+    "ratio": "1:4",
+    "warmup_seconds": 10,
+    "timed_seconds": 60,
+    "throughput_variation_max": 0.05,
+    "sq_head_cache": false
+  },
+  "throughput_variation": 0.14247635603216496,
+  "topology_comparison_executed": false,
+  "production_source_changed": false,
+  "interpretation": "Same-binary control not repeatable; no speed improvement or topology result can be claimed. No causal explanation for drift established.",
+  "prepared_runner_validation": {
+    "review": "Astra independent review passed after clock/image/namespace fixes",
+    "offline_selftests": "compare_tcp_paths.py --self-test and profile_local_docker.py self-test passed",
+    "docker_smoke": "Both bridge and shared-task-namespace loopback passed32-key preload, exact-value, namespace, binary and strict-clock checks; no throughput comparison was run",
+    "source_sha256": {
+      "bench/loadtest/scripts/compare_tcp_paths.py": "2a2fecf6acb90127b0be6ba61c836a0bfa2c9b3b3bc451b8453869fa5090e3af",
+      "bench/loadtest/scripts/profile_local_docker.py": "643c64ea0c6ed020197ce3229675487ed8df13ccd422afc946818756836faa3e"
+    }
+  }
+}

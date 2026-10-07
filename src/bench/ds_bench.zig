@@ -54,7 +54,7 @@ pub fn main(_: std.process.Init) !void {
     // ─── List benchmarks ────────────────────────────────────────────
     std.debug.print("\n--- Lists ---\n", .{});
     {
-        var ls = ListStore.init(allocator);
+        var ls = try ListStore.init(allocator);
         defer ls.deinit();
 
         // RPUSH: append N items to one list
@@ -176,7 +176,7 @@ pub fn main(_: std.process.Init) !void {
     // ─── Set benchmarks ─────────────────────────────────────────────
     std.debug.print("\n--- Sets ---\n", .{});
     {
-        var ss = SetStore.init(allocator);
+        var ss = try SetStore.init(allocator);
         defer ss.deinit();
 
         // SADD
@@ -224,7 +224,7 @@ pub fn main(_: std.process.Init) !void {
     // ─── Sorted Set benchmarks ──────────────────────────────────────
     std.debug.print("\n--- Sorted Sets ---\n", .{});
     {
-        var zs = SortedSetStore.init(allocator);
+        var zs = try SortedSetStore.init(allocator);
         defer zs.deinit();
 
         // ZADD

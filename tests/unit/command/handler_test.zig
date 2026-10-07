@@ -544,7 +544,7 @@ test "LPUSH/RPUSH/LRANGE/LPOP/RPOP" {
     defer kv.deinit();
     var g = GraphEngine.init(allocator);
     defer g.deinit();
-    var ls = ListStore.init(allocator);
+    var ls = try ListStore.init(allocator);
     defer ls.deinit();
     var hs = HashStore.init(allocator); hs.initStripes();
     defer hs.deinit();
@@ -592,7 +592,7 @@ test "HSET/HGET/HGETALL/HDEL/HINCRBY" {
     defer kv.deinit();
     var g = GraphEngine.init(allocator);
     defer g.deinit();
-    var ls = ListStore.init(allocator);
+    var ls = try ListStore.init(allocator);
     defer ls.deinit();
     var hs = HashStore.init(allocator); hs.initStripes();
     defer hs.deinit();

@@ -489,6 +489,11 @@ pub const ConcurrentKV = struct {
     }
 
     pub fn ttl(self: *ConcurrentKV, key: []const u8) ?i64 {
+        const remaining = self.pttl(key) orelse return null;
+        return if (remaining < 0) remaining else @divTrunc(remaining, 1000);
+    }
+
+    pub fn pttl(self: *ConcurrentKV, key: []const u8) ?i64 {
         const s = self.getStripe(key);
         readLockStripe(s);
         defer readUnlockStripe(s);
@@ -496,7 +501,7 @@ pub const ConcurrentKV = struct {
         const entry = s.map.getPtr(key) orelse return null;
         if (self.isExpired(entry)) return null;
         if (!entry.hasTtl()) return -1;
-        return @divTrunc(entry.expiresAt() - self.nowMillis(), 1000);
+        return entry.expiresAt() - self.nowMillis();
     }
 
     pub fn restoreEntry(self: *ConcurrentKV, key: []const u8, value: []const u8, expires_at: ?i64) !void {
@@ -579,9 +584,27 @@ pub const ConcurrentKV = struct {
         return result.toOwnedSlice();
     }
 
+    /// Owned snapshot: background expiry may reclaim keys after unlocking.
+    pub fn keysOwned(self: *ConcurrentKV, allocator: Allocator) ![][]const u8 {
+        self.readLockAll();
+        defer self.readUnlockAll();
+        var result = std.array_list.Managed([]const u8).init(allocator);
+        errdefer { for (result.items) |key| allocator.free(key); result.deinit(); }
+        for (&self.stripes) |*stripe| {
+            var it = stripe.map.iterator();
+            while (it.next()) |entry| {
+                if (self.isExpired(entry.value_ptr)) continue;
+                const key = try allocator.dupe(u8, entry.key_ptr.*);
+                errdefer allocator.free(key);
+                try result.append(key);
+            }
+        }
+        return result.toOwnedSlice();
+    }
+
     /// Atomic INCR/DECR using native i64 storage. No string parse/format under lock.
     /// First call parses the string; subsequent calls use cached int_value directly.
-    pub fn incrBy(self: *ConcurrentKV, key: []const u8, delta: i64) error{ NotAnInteger, OutOfMemory }!i64 {
+    pub fn incrBy(self: *ConcurrentKV, key: []const u8, delta: i64) error{ NotAnInteger, Overflow, OutOfMemory }!i64 {
         const s = self.getStripe(key);
         writeLockStripe(s);
         defer writeUnlockStripe(s);
@@ -603,7 +626,7 @@ pub const ConcurrentKV = struct {
             // If already marked as integer, use cached int_value directly (~1ns)
             if (existing.isInteger()) {
                 const meta = existing.metadata().?;
-                meta.int_value += delta;
+                meta.int_value = std.math.add(i64, meta.int_value, delta) catch return error.Overflow;
                 meta.last_access = self.nowMillis();
                 const new_val = meta.int_value;
                 return new_val;
@@ -613,13 +636,13 @@ pub const ConcurrentKV = struct {
             const current = std.fmt.parseInt(i64, existing.bytes(), 10) catch {
                 return error.NotAnInteger;
             };
+            const new_value = std.math.add(i64, current, delta) catch return error.Overflow;
             const meta = existing.ensureMetadata(self.allocator) catch return error.OutOfMemory;
-            const is_inline = existing.isInline();
-            meta.* = .{
-                .last_access = self.nowMillis(),
-                .int_value = current + delta,
-                .aux = Entry.auxWith(.{ .is_integer = true, .is_inline = is_inline }, if (is_inline) existing.inlineLen() else 0, existing.isCombined()),
-            };
+            var flags = existing.flags();
+            flags.is_integer = true;
+            meta.int_value = new_value;
+            meta.last_access = self.nowMillis();
+            meta.aux = Entry.auxWith(flags, if (existing.isInline()) existing.inlineLen() else 0, existing.isCombined());
             const new_val = meta.int_value;
             return new_val;
         }
@@ -926,7 +949,7 @@ pub const ConcurrentKV = struct {
 
     fn isExpired(self: *const ConcurrentKV, entry: *const Entry) bool {
         if (!entry.hasTtl()) return false;
-        return self.nowMillis() > entry.expiresAt();
+        return self.nowMillis() >= entry.expiresAt();
     }
 };
 

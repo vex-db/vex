@@ -1,0 +1,376 @@
+{
+  "status": "complete",
+  "interpretation": "Single-thread allocation diagnostics, not throughput. Keep libc; SMP retains more memory under mixed-size reload. mincore is summed page coverage, not unique map RSS.",
+  "cases": [
+    {
+      "file": "bench/loadtest/runs/2026-09-22-memory-density/allocator-native-256b.jsonl",
+      "configuration": {
+        "phase": "configuration",
+        "keys": 1000000,
+        "value_bytes": 256,
+        "key_bytes": 16,
+        "allocator": "native",
+        "churn": true,
+        "native_gpa_is_c": true,
+        "native_gpa_is_smp": false,
+        "selected_is_c": true,
+        "selected_is_smp": false,
+        "page_bytes": 4096,
+        "modeled_smp_slab_bytes": 65536,
+        "map_residency_is_page_coverage_sum": true
+      },
+      "phases": [
+        {
+          "phase": "before",
+          "rss_bytes": 1695744,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 0
+        },
+        {
+          "phase": "loaded",
+          "rss_bytes": 476282880,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 441875456,
+          "alloc_calls": 2002816
+        },
+        {
+          "phase": "overwritten",
+          "rss_bytes": 476282880,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 441875456,
+          "alloc_calls": 2002816
+        },
+        {
+          "phase": "deleted",
+          "rss_bytes": 476282880,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 169875456,
+          "alloc_calls": 2002816
+        },
+        {
+          "phase": "mixed_reloaded",
+          "rss_bytes": 476282880,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 442375456,
+          "alloc_calls": 4002816
+        },
+        {
+          "phase": "flushed",
+          "rss_bytes": 305897472,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 4002816
+        },
+        {
+          "phase": "deinitialized",
+          "rss_bytes": 305897472,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 4002816
+        }
+      ],
+      "libc_usable_samples": [
+        {
+          "phase": "libc_usable_sample",
+          "requested": 16,
+          "usable": 24
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 32,
+          "usable": 40
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 64,
+          "usable": 72
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 256,
+          "usable": 264
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 257,
+          "usable": 264
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 4096,
+          "usable": 4104
+        }
+      ]
+    },
+    {
+      "file": "bench/loadtest/runs/2026-09-22-memory-density/allocator-native-4k.jsonl",
+      "configuration": {
+        "phase": "configuration",
+        "keys": 20000,
+        "value_bytes": 4096,
+        "key_bytes": 16,
+        "allocator": "native",
+        "churn": true,
+        "native_gpa_is_c": true,
+        "native_gpa_is_smp": false,
+        "selected_is_c": true,
+        "selected_is_smp": false,
+        "page_bytes": 4096,
+        "modeled_smp_slab_bytes": 65536,
+        "map_residency_is_page_coverage_sum": true
+      },
+      "phases": [
+        {
+          "phase": "before",
+          "rss_bytes": 1712128,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 0
+        },
+        {
+          "phase": "loaded",
+          "rss_bytes": 88096768,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 84895168,
+          "alloc_calls": 41279
+        },
+        {
+          "phase": "overwritten",
+          "rss_bytes": 88096768,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 84895168,
+          "alloc_calls": 41279
+        },
+        {
+          "phase": "deleted",
+          "rss_bytes": 86011904,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 2655168,
+          "alloc_calls": 41279
+        },
+        {
+          "phase": "mixed_reloaded",
+          "rss_bytes": 87441408,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 84905168,
+          "alloc_calls": 81279
+        },
+        {
+          "phase": "flushed",
+          "rss_bytes": 68341760,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 81279
+        },
+        {
+          "phase": "deinitialized",
+          "rss_bytes": 68341760,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 81279
+        }
+      ],
+      "libc_usable_samples": [
+        {
+          "phase": "libc_usable_sample",
+          "requested": 16,
+          "usable": 24
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 32,
+          "usable": 40
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 64,
+          "usable": 72
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 256,
+          "usable": 264
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 257,
+          "usable": 264
+        },
+        {
+          "phase": "libc_usable_sample",
+          "requested": 4096,
+          "usable": 4104
+        }
+      ]
+    },
+    {
+      "file": "bench/loadtest/runs/2026-09-22-memory-density/allocator-smp-256b.jsonl",
+      "configuration": {
+        "phase": "configuration",
+        "keys": 1000000,
+        "value_bytes": 256,
+        "key_bytes": 16,
+        "allocator": "smp",
+        "churn": true,
+        "native_gpa_is_c": true,
+        "native_gpa_is_smp": false,
+        "selected_is_c": false,
+        "selected_is_smp": true,
+        "page_bytes": 4096,
+        "modeled_smp_slab_bytes": 65536,
+        "map_residency_is_page_coverage_sum": true
+      },
+      "phases": [
+        {
+          "phase": "before",
+          "rss_bytes": 1712128,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 0
+        },
+        {
+          "phase": "loaded",
+          "rss_bytes": 457269248,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 441875456,
+          "alloc_calls": 2002816
+        },
+        {
+          "phase": "overwritten",
+          "rss_bytes": 457269248,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 441875456,
+          "alloc_calls": 2002816
+        },
+        {
+          "phase": "deleted",
+          "rss_bytes": 457269248,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 169875456,
+          "alloc_calls": 2002816
+        },
+        {
+          "phase": "mixed_reloaded",
+          "rss_bytes": 713322496,
+          "map_requested_bytes": 169875456,
+          "capacity": 2097152,
+          "tracked_live_requested": 442375456,
+          "alloc_calls": 4002816
+        },
+        {
+          "phase": "flushed",
+          "rss_bytes": 542937088,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 4002816
+        },
+        {
+          "phase": "deinitialized",
+          "rss_bytes": 542937088,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 4002816
+        }
+      ],
+      "libc_usable_samples": []
+    },
+    {
+      "file": "bench/loadtest/runs/2026-09-22-memory-density/allocator-smp-4k.jsonl",
+      "configuration": {
+        "phase": "configuration",
+        "keys": 20000,
+        "value_bytes": 4096,
+        "key_bytes": 16,
+        "allocator": "smp",
+        "churn": true,
+        "native_gpa_is_c": true,
+        "native_gpa_is_smp": false,
+        "selected_is_c": false,
+        "selected_is_smp": true,
+        "page_bytes": 4096,
+        "modeled_smp_slab_bytes": 65536,
+        "map_residency_is_page_coverage_sum": true
+      },
+      "phases": [
+        {
+          "phase": "before",
+          "rss_bytes": 1708032,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 0
+        },
+        {
+          "phase": "loaded",
+          "rss_bytes": 89894912,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 84895168,
+          "alloc_calls": 41279
+        },
+        {
+          "phase": "overwritten",
+          "rss_bytes": 89894912,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 84895168,
+          "alloc_calls": 41279
+        },
+        {
+          "phase": "deleted",
+          "rss_bytes": 89894912,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 2655168,
+          "alloc_calls": 41279
+        },
+        {
+          "phase": "mixed_reloaded",
+          "rss_bytes": 169803776,
+          "map_requested_bytes": 2655168,
+          "capacity": 32704,
+          "tracked_live_requested": 84905168,
+          "alloc_calls": 81279
+        },
+        {
+          "phase": "flushed",
+          "rss_bytes": 169803776,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 81279
+        },
+        {
+          "phase": "deinitialized",
+          "rss_bytes": 169803776,
+          "map_requested_bytes": 0,
+          "capacity": 0,
+          "tracked_live_requested": 0,
+          "alloc_calls": 81279
+        }
+      ],
+      "libc_usable_samples": []
+    }
+  ]
+}

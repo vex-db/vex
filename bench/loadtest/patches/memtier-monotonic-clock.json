@@ -1,0 +1,34 @@
+{
+  "source_repository": "https://github.com/redis/memtier_benchmark",
+  "source_tag": "2.5.1",
+  "source_commit": "5f634d171b83efca9640c5a87606c47b34d3d330",
+  "source_archive_url": "https://codeload.github.com/redis/memtier_benchmark/tar.gz/refs/tags/2.5.1",
+  "source_archive_sha256": "9b34e17a0d1d7e70b152eb442c6362161b5b764ce2ea98e97b7c74815bdd90b7",
+  "local_original_archive": "/tmp/vex-memtier-monotonic-20260922/memtier-2.5.1-original.tar.gz",
+  "local_patched_source": "/tmp/vex-memtier-monotonic-20260922/memtier_benchmark-2.5.1",
+  "patch_sha256": "aabf6515ce07936089ab304305e20e64b5f9c62b20f0bc3994cd775b3e5254ea",
+  "clock_source": "CLOCK_MONOTONIC",
+  "metadata_stderr_prefix": "MEMTIER_CLOCK ",
+  "timestamp_mapping": "synthetic_epoch_us = CLOCK_MONOTONIC_us + epoch_offset_us",
+  "replaced_calls": {
+    "client.cpp": 3,
+    "memtier_benchmark.cpp": 10,
+    "run_stats.cpp": 3,
+    "shard_connection.cpp": 9
+  },
+  "validation": {
+    "clean_archive_apply": true,
+    "only_expected_original_files_changed": true,
+    "deterministic_two_translation_unit_clock_test": true,
+    "full_client_build": true,
+    "docker_execution": true
+  },
+  "build": {
+    "base_image": "redislabs/memtier_benchmark@sha256:f5e23c14a55aafe5ab0455084c529195fefa42752503589c8fdbacc8d2407f77",
+    "image_id": "sha256:0cd87ec181c3570ee499a2768c02d8becfa87d2f13a3b4ab9facee043fbf83e7",
+    "architecture": "arm64",
+    "binary_sha256": "f894894dcfd4cf3f38636b7ec679762d2c6ac5ea0363f98e68703844cf9a3207",
+    "packages_sha256": "ec998b05e2dd35e7fea3ee5f95b5d86c3845c46cf81f2aa08e3832dcb3031d6e",
+    "raw_artifacts": "bench/loadtest/runs/2026-09-22-memtier-clock"
+  }
+}

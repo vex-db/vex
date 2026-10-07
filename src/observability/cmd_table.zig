@@ -167,6 +167,8 @@ pub const command_names = [_][]const u8{
     "MEMORY.DEL",
 
     // Catch-all for unknown / unlisted commands.
+    "LTRIM",
+    "ZREVRANK",
     "OTHER",
 };
 
@@ -187,7 +189,7 @@ const WRITE_PREFIXES = [_][]const u8{
     "INCR",     "INCRBY", "INCRTTL",   "DECR",   "DECRBY",
     "APPEND",   "EXPIRE", "PEXPIRE",   "PERSIST", "COPY",   "RENAME", "RENAMENX",
     "FLUSHDB",  "FLUSHALL",
-    "LPUSH",    "RPUSH",  "LPOP",      "RPOP",   "LPOPN",  "LSET",    "LREM",
+    "LPUSH",    "RPUSH",  "LPOP",      "RPOP",   "LPOPN",  "LSET",    "LREM", "LTRIM",
     "HSET",     "HDEL",   "HMSET",     "HINCRBY",
     "SADD",     "SREM",
     "ZADD",     "ZREM",   "ZINCRBY",

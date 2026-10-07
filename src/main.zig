@@ -202,7 +202,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     installSignalHandlers();
-    const config = parseArgs(init);
+    const config = try parseArgs(init);
     initGlobalLogger(allocator, config.log_file, config.log_level, config.log_format);
     defer vex_log.global.deinit();
     raiseFdLimit(config.maxclients);
@@ -405,8 +405,10 @@ pub fn main(init: std.process.Init) !void {
         config.enable_timings,
         config.slowlog_threshold_us,
     );
+    server.sorted_set_partitions = config.sorted_set_partitions;
     if (config.reactor) {
         server.runReactor(config.workers, &shutdown_requested) catch |err| {
+            if (err == error.InvalidExperimentalOwnerConfiguration) return err;
             log("server error: {s}", .{@errorName(err)});
         };
     } else {
@@ -450,6 +452,7 @@ const Config = struct {
     no_persistence: bool,
     reactor: bool,
     workers: usize,
+    sorted_set_partitions: usize,
     requirepass: ?[]const u8,
     maxclients: u32,
     max_client_buffer: usize,
@@ -466,7 +469,7 @@ const Config = struct {
     appendfsync: aof_mod.FsyncMode,
 };
 
-fn parseArgs(init: std.process.Init) Config {
+fn parseArgs(init: std.process.Init) !Config {
     var host: []const u8 = DEFAULT_HOST;
     var port: u16 = DEFAULT_PORT;
     var data_dir: []const u8 = DEFAULT_DATA_DIR;
@@ -480,6 +483,7 @@ fn parseArgs(init: std.process.Init) Config {
     var no_persistence = false;
     var reactor = false;
     var workers: usize = @min(std.Thread.getCpuCount() catch 4, 8);
+    var sorted_set_partitions: usize = @import("engine/types/sorted_set.zig").SortedSetStore.default_partition_count;
     var requirepass: ?[]const u8 = null;
     var maxclients: u32 = 10000;
     var max_client_buffer: usize = 1024 * 1024; // 1MB
@@ -499,9 +503,9 @@ fn parseArgs(init: std.process.Init) Config {
     // Each source overrides the previous; CLI args override everything.
     {
         // 1. Try default config file: ./vex.conf
-        applyConfigFile(init.io, "vex.conf", &host, &port, &data_dir, &requirepass,
+        try applyConfigFile(init.io, "vex.conf", &host, &port, &data_dir, &requirepass,
             &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
-            &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
+            &reactor, &workers, &sorted_set_partitions, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
             &enable_timings, &slowlog_threshold_us, &latency_threshold_us, &appendfsync);
 
         // 2. Try VEX_CONFIG environment variable
@@ -509,9 +513,9 @@ fn parseArgs(init: std.process.Init) Config {
         if (env_config) |env_path| {
             const path = std.mem.span(env_path);
             if (path.len > 0) {
-                applyConfigFile(init.io, path, &host, &port, &data_dir, &requirepass,
+                try applyConfigFile(init.io, path, &host, &port, &data_dir, &requirepass,
                     &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
-                    &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
+                    &reactor, &workers, &sorted_set_partitions, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
             &enable_timings, &slowlog_threshold_us, &latency_threshold_us, &appendfsync);
             }
         }
@@ -525,9 +529,9 @@ fn parseArgs(init: std.process.Init) Config {
             if (std.mem.eql(u8, pre_arg, "--config")) {
                 if (pre_it.next()) |cfg_path_z| {
                     const cfg_path = std.mem.sliceTo(cfg_path_z, 0);
-                    applyConfigFile(init.io, cfg_path, &host, &port, &data_dir, &requirepass,
+                    try applyConfigFile(init.io, cfg_path, &host, &port, &data_dir, &requirepass,
                         &maxclients, &max_client_buffer, &maxmemory, &maxmemory_policy,
-                        &reactor, &workers, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
+                        &reactor, &workers, &sorted_set_partitions, &log_level, &tls_cert, &tls_key, &log_file, &log_format,
             &enable_timings, &slowlog_threshold_us, &latency_threshold_us, &appendfsync);
                 }
                 break;
@@ -598,6 +602,9 @@ fn parseArgs(init: std.process.Init) Config {
             if (it.next()) |n| {
                 workers = std.fmt.parseInt(usize, std.mem.sliceTo(n, 0), 10) catch 4;
             }
+        } else if (std.mem.eql(u8, arg, "--sorted-set-partitions")) {
+            const value = it.next() orelse return error.MissingPartitionCount;
+            sorted_set_partitions = try @import("config.zig").parseSortedSetPartitions(std.mem.sliceTo(value, 0));
         } else if (std.mem.eql(u8, arg, "--requirepass")) {
             if (it.next()) |p| {
                 requirepass = std.mem.sliceTo(p, 0);
@@ -676,6 +683,7 @@ fn parseArgs(init: std.process.Init) Config {
         .no_persistence = no_persistence,
         .reactor = reactor,
         .workers = workers,
+        .sorted_set_partitions = sorted_set_partitions,
         .requirepass = requirepass,
         .maxclients = maxclients,
         .max_client_buffer = max_client_buffer,
@@ -732,6 +740,7 @@ fn applyConfigFile(
     maxmemory_policy: *@import("engine/kv/kv.zig").EvictionPolicy,
     reactor: *bool,
     workers: *usize,
+    sorted_set_partitions: *usize,
     log_level: *vex_log.Level,
     tls_cert: *?[]const u8,
     tls_key: *?[]const u8,
@@ -741,7 +750,7 @@ fn applyConfigFile(
     slowlog_threshold_us: *u64,
     latency_threshold_us: *u64,
     appendfsync: *aof_mod.FsyncMode,
-) void {
+) !void {
     const config_mod = @import("config.zig");
     // Use a page allocator since we can't access the gpa in parseArgs easily.
     // Config values are string slices that live for the process lifetime.
@@ -766,6 +775,7 @@ fn applyConfigFile(
         if (std.mem.eql(u8, v, "allkeys-lru")) maxmemory_policy.* = .allkeys_lru;
     }
     if (cfg.get("reactor")) |_| reactor.* = true;
+    if (cfg.get("sorted-set-partitions")) |v| sorted_set_partitions.* = try config_mod.parseSortedSetPartitions(v);
     if (cfg.get("workers")) |v| workers.* = std.fmt.parseInt(usize, v, 10) catch workers.*;
     if (cfg.get("log-level") orelse cfg.get("loglevel")) |v| log_level.* = vex_log.Level.parse(v);
     if (cfg.get("log-file") orelse cfg.get("logfile")) |v| {

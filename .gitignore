@@ -12,3 +12,7 @@ zig-x86_64-linux-*/
 zig-aarch64-linux-*/
 bench-logs/
 coverage/
+__pycache__/
+*.pyc
+# Local benchmark evidence and frozen executables stay outside source control.
+bench/loadtest/runs/

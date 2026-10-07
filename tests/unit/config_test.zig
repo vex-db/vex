@@ -41,3 +41,13 @@ test "parse config with comments only" {
     defer cfg.deinit();
     try std.testing.expectEqual(@as(usize, 0), cfg.entries.count());
 }
+
+test "sorted set partition count validates startup tuning" {
+    const parse = @import("../../src/config.zig").parseSortedSetPartitions;
+    for ([_][]const u8{ "1", "64", "256", "4096" }) |value| {
+        try std.testing.expectEqual(try std.fmt.parseInt(usize, value, 10), try parse(value));
+    }
+    for ([_][]const u8{ "", "0", "3", "8192", "-1", "many", "99999999999999999999999999999" }) |value| {
+        try std.testing.expectError(error.InvalidPartitionCount, parse(value));
+    }
+}

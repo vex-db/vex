@@ -1,0 +1,4 @@
+hypothesis==6.140.3
+attrs==26.1.0
+redis==6.4.0
+sortedcontainers==2.4.0

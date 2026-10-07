@@ -1,0 +1,93 @@
+{
+  "server": "c6gn.8xlarge",
+  "client": "c7g.16xlarge",
+  "zone": "ap-south-1b",
+  "cpu_quota": 8,
+  "memory": "8Gi",
+  "workers": 8,
+  "persistence": false,
+  "partitions": 256,
+  "unpinned": true,
+  "shapes": {
+    "hot": [
+      64,
+      4096
+    ],
+    "mixed": [
+      64,
+      4096
+    ],
+    "uniform64": [
+      64,
+      4096
+    ],
+    "uniform1024": [
+      1024,
+      256
+    ]
+  },
+  "order": [
+    {
+      "shape": "hot",
+      "engine": "after"
+    },
+    {
+      "shape": "hot",
+      "engine": "redis"
+    },
+    {
+      "shape": "hot",
+      "engine": "dragonfly"
+    },
+    {
+      "shape": "mixed",
+      "engine": "redis"
+    },
+    {
+      "shape": "mixed",
+      "engine": "dragonfly"
+    },
+    {
+      "shape": "mixed",
+      "engine": "after"
+    },
+    {
+      "shape": "uniform64",
+      "engine": "dragonfly"
+    },
+    {
+      "shape": "uniform64",
+      "engine": "after"
+    },
+    {
+      "shape": "uniform64",
+      "engine": "redis"
+    },
+    {
+      "shape": "uniform1024",
+      "engine": "after"
+    },
+    {
+      "shape": "uniform1024",
+      "engine": "redis"
+    },
+    {
+      "shape": "uniform1024",
+      "engine": "dragonfly"
+    }
+  ],
+  "connections": 32,
+  "pipeline": 16,
+  "client_gomaxprocs": 16,
+  "client_cpu_quota": 48,
+  "warmup_seconds": 10,
+  "measure_seconds": 60,
+  "repeats": 3,
+  "mix": "approximately 80% ZINCRBY / 20% ZRANK; deterministic modular key/member sequences",
+  "mixed": "24 hot connections; 8 cold connections across the other 63 sets; achieved operation shares vary",
+  "latency": "closed-loop full-pipeline round trip; not per-command service latency",
+  "client_gate": "max sampled thread average <0.9 cores, aggregate <12.8 cores, throttling <1% duration",
+  "network_gate": "zero ENA allowance-exceeded deltas",
+  "binary_sha256": "a0d74431a5a761903864ff276f698287d78afe54b6b1ca2cc82ed4bfc733472c",
+  "client_sha256": "d41ff0a85814fc238845fa721470ce9f1bf3b5a77e2190e18582e18b96473847"
+}

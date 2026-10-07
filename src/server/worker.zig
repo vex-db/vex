@@ -2773,8 +2773,8 @@ pub const Worker = struct {
                     const lookup_t0: u64 = if (probe_on) probes.start() else 0;
                     const entry_opt = stripe.map.getPtr(ns_key);
                     if (probe_on) probes.finish(&self.probes.get_hashmap_lookup, lookup_t0);
-                    if (entry_opt == null or entry_opt.?.flags.deleted or
-                        (entry_opt.?.flags.has_ttl and ckv.nowMillis() >= entry_opt.?.expires_at))
+                    if (entry_opt == null or entry_opt.?.flags().deleted or
+                        (entry_opt.?.hasTtl() and ckv.nowMillis() >= entry_opt.?.expiresAt()))
                     {
                         ckv.readUnlockStripePublic(stripe);
                         const missing_kind = contract.keyType(key);
@@ -2786,8 +2786,8 @@ pub const Worker = struct {
                     defer ckv.readUnlockStripePublic(stripe);
                     const entry = entry_opt.?;
 
-                    if (entry.flags.is_integer) {
-                        const int_val = entry.int_value;
+                    if (entry.isInteger()) {
+                        const int_val = entry.integerValue();
                         var int_buf: [24]u8 = undefined;
                         const int_str = std.fmt.bufPrint(&int_buf, "{d}", .{int_val}) catch return false;
                         var hdr_buf: [32]u8 = undefined;
